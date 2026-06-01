@@ -56,6 +56,22 @@ def test_chat_priv_unknown_raises(ser):
         _txt(ser, {"type": "chat", "mode": "priv", "to": "nobody", "text": "x"})
 
 
+def test_chat_party_normal_format_a14(ser):
+    # CR-21/A-14: party は '%' を付与せず normal 整形で送出。
+    assert _txt(ser, {"type": "chat", "mode": "party", "text": "集合"}) == "集合"
+
+
+def test_chat_party_no_percent_prefix(ser):
+    out = _txt(ser, {"type": "chat", "mode": "party", "text": "hello"})
+    assert not out.startswith("%")
+    assert out == "hello"
+
+
+def test_chat_party_leading_asterisk_escaped(ser):
+    # party でも normal 整形なので先頭 '*' は /**/ 付与(loud 誤認回避)。
+    assert _txt(ser, {"type": "chat", "mode": "party", "text": "*x"}) == "/**/*x"
+
+
 # --- move -----------------------------------------------------------------
 
 def test_move_north_fix_absolute(ser):

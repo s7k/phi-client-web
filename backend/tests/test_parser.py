@@ -317,3 +317,61 @@ def test_empty_line(parser):
 def test_user_table_populated(parser):
     parser.feed(load_synthetic("user.bin"))
     assert parser.ulist == {"ExampleChar": 12}
+
+
+# --- EagleEye (#ex-eagleeye 集約 構造化, CR-2) ----------------------------
+
+def _ee_row(size: int, y: int, cells: list[tuple[int, int]]) -> bytes:
+    """`#ex-eagleeye M %2.2d %2.2d ` ヘッダ(raw[:21]) + chip/attr バイナリ。"""
+    hdr = b"#ex-eagleeye M %02d %02d " % (size, y)
+    assert len(hdr) == 21
+    return hdr + b"".join(bytes([c, a]) for c, a in cells)
+
+
+def test_eagleeye_aggregated_to_contract(parser):
+    # start..M..pos..end を集約し契約形 eagleEye を emit。
+    assert parser.feed(b"#ex-eagleeye start") == []
+    assert parser.feed(_ee_row(1, 0, [(10, 0), (11, 1)])) == []
+    assert parser.feed(_ee_row(1, 1, [(20, 2), (21, 3)])) == []
+    assert parser.feed(b"#ex-eagleeye pos 1 0") == []
+    evs = parser.feed(b"#ex-eagleeye end")
+    assert len(evs) == 1
+    ev = evs[0]
+    assert ev["type"] == "eagleEye"
+    assert ev["width"] == 2 and ev["height"] == 2
+    assert ev["self"] == {"x": 1, "y": 0}
+    assert ev["cells"] == [
+        {"chip": 10, "attr": 0}, {"chip": 11, "attr": 1},
+        {"chip": 20, "attr": 2}, {"chip": 21, "attr": 3},
+    ]
+
+
+def test_eagleeye_includes_mapset_when_seen(parser):
+    # 直近 #mapset を payload に A-19 任意 mapset として付与。
+    parser.feed(b"#mapset mansion")
+    parser.feed(b"#ex-eagleeye start")
+    parser.feed(_ee_row(0, 0, [(5, 0)]))
+    parser.feed(b"#ex-eagleeye pos 0 0")
+    ev = parser.feed(b"#ex-eagleeye end")[0]
+    assert ev["mapset"] == "mansion"
+
+
+def test_eagleeye_no_internal_leak(parser):
+    # 旧実装の _internal は emit されない(増分は非露出)。
+    out = []
+    out += parser.feed(b"#ex-eagleeye start")
+    out += parser.feed(_ee_row(0, 0, [(1, 0)]))
+    assert all(e.get("type") != "_internal" for e in out)
+
+
+def test_eagleeye_reset_on_new_start(parser):
+    # 新 start で前スナップショットをリセット。
+    parser.feed(b"#ex-eagleeye start")
+    parser.feed(_ee_row(2, 0, [(1, 0), (2, 0), (3, 0)]))
+    parser.feed(b"#ex-eagleeye end")
+    parser.feed(b"#ex-eagleeye start")
+    parser.feed(_ee_row(0, 0, [(9, 0)]))
+    parser.feed(b"#ex-eagleeye pos 0 0")
+    ev = parser.feed(b"#ex-eagleeye end")[0]
+    assert ev["width"] == 1 and ev["height"] == 1
+    assert ev["cells"] == [{"chip": 9, "attr": 0}]

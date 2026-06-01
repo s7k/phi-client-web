@@ -422,6 +422,8 @@ export type MessageChannel = 'log' | 'priv' | 'loud' | 'system';
 export interface MessageEvent extends Envelope {
   type: 'message';
   channel: MessageChannel;
+  /** session毎の単調増加連番(重複抑止用, A-11, [07]§6.5)。 */
+  seq?: number;
   /** 発言者(なければ省略)。 */
   from?: string;
   /** UTF-8(SJISから変換済)。マークアップ含む生テキスト。 */

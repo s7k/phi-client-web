@@ -150,6 +150,13 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - R5: BE レート制限/登録/auth硬化/REST統合 / FE 登録フォーム/view.set。A-25〜A-27。登録は実サーバ未実行。
 - R6: BE app.main起動エントリ+config / FE devプロキシ+Playwright E2E。ルートREADME+CI追加。A-28(assets衝突回避: FEビルドは`dist/app/`)。
 
+## 6.5 コードレビュー是正(docs/14, CR-NN)
+
+- **F1(済)**: 契約片側未配線・堅牢性を是正。
+  - BE(279 tests): CR-1 settings.get/set配線(アカウント単位), CR-2 eagleEye構造化emit, CR-4 不正intentでクラッシュ回避(TypeError/Exception捕捉), CR-5 recv例外でclosed emit, CR-6 detachタイムアウト(300s), CR-7 task gather+detached emit, CR-20 map.request/ping-pong配線, CR-21 party=normal整形(A-14), 契約往復カバレッジテスト。
+  - FE(262 tests): CR-3 notice/worldTransfer/非相関error配線+noticeStore+表示, CR-14 request timeout/全pending reject, CR-15 再接続UI(帯+手動再接続), CR-16 message.seq型, 再接続時の自動再auth+reattach, 契約往復カバレッジテスト。
+  - **要確認(F2)**: 再アタッチ時BEが同一session id払出すか(FE前提)。CR-8〜13 security, CR-17 描画忠実度, CR-18 graceful shutdown, CR-19 WAL は F2。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

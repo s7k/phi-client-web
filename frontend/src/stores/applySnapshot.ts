@@ -10,6 +10,7 @@ import { useUserStore } from './userStore';
 import { useModeStore } from './modeStore';
 import { useListStore } from './listStore';
 import { useEditStore } from './editStore';
+import { useNoticeStore } from './noticeStore';
 
 export function applySnapshot(session: string, snap: SnapshotEvent): void {
   if (snap.map) {
@@ -26,6 +27,10 @@ export function applySnapshot(session: string, snap: SnapshotEvent): void {
   }
   if (snap.mode) {
     useModeStore.getState().setMode(session, snap.mode);
+  }
+  // notice(世界/エリア/名前/mapset)復元: 再アタッチで世界名等を復元(CR-3)。
+  if (snap.notice) {
+    useNoticeStore.getState().setNotice(session, snap.notice);
   }
   // A-04: list/edit はアクティブな対話状態がある場合のみ含まれる。
   if (snap.list) {

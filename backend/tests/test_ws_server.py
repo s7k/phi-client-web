@@ -354,3 +354,145 @@ async def test_ws_conn_limit_rejects_6th(server):
     for ws, t in [conns[1], (ws4, t4)]:
         ws.disconnect()
         await t
+
+
+# ======================================================================
+# 是正ラウンド F1: CR-1 settings / CR-4 堅牢性 / CR-20 map.request
+# ======================================================================
+
+
+class FakeStore:
+    """settings の account-scoped CRUD のみを持つ最小 Store。"""
+
+    def __init__(self) -> None:
+        self.data: dict[tuple[str, str], str | None] = {}
+
+    def set_account_setting(self, account_id, scope, value):
+        self.data[(account_id, scope)] = value
+
+    def get_account_setting(self, account_id, scope):
+        return self.data.get((account_id, scope))
+
+
+async def _auth_stub(ws, mgr, **kw):
+    """stub auth で account を確立した conn を起動。"""
+    conn = WsConnection(ws, mgr, **kw)
+    task = asyncio.create_task(conn.run())
+    ws.feed({"type": "auth", "id": "acc1"})
+    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws.sent))
+    return conn, task
+
+
+async def test_settings_set_then_get_roundtrip(server):
+    store = FakeStore()
+    ws = FakeWebSocket()
+    _, task = await _auth_stub(ws, server, store=store)
+    ws.feed({"type": "settings.set", "reqId": "s1", "scope": "keybind",
+             "value": {"up": "w"}})
+    await _wait(lambda: any(m["type"] == "settings" and m.get("reqId") == "s1"
+                            for m in ws.sent))
+    setresp = next(m for m in ws.sent if m.get("reqId") == "s1")
+    assert setresp["ok"] is True and setresp["scope"] == "keybind"
+    # get で同じ値が返る
+    ws.feed({"type": "settings.get", "reqId": "s2", "scope": "keybind"})
+    await _wait(lambda: any(m.get("reqId") == "s2" for m in ws.sent))
+    getresp = next(m for m in ws.sent if m.get("reqId") == "s2")
+    assert getresp["type"] == "settings" and getresp["ok"] is True
+    assert getresp["scope"] == "keybind"
+    assert getresp["value"] == {"up": "w"}
+    ws.disconnect()
+    await task
+
+
+async def test_settings_get_missing_returns_null(server):
+    store = FakeStore()
+    ws = FakeWebSocket()
+    _, task = await _auth_stub(ws, server, store=store)
+    ws.feed({"type": "settings.get", "reqId": "g", "scope": "notify"})
+    await _wait(lambda: any(m.get("reqId") == "g" for m in ws.sent))
+    resp = next(m for m in ws.sent if m.get("reqId") == "g")
+    assert resp["ok"] is True and resp["value"] is None
+    ws.disconnect()
+    await task
+
+
+async def test_settings_invalid_scope_bad_request(server):
+    store = FakeStore()
+    ws = FakeWebSocket()
+    _, task = await _auth_stub(ws, server, store=store)
+    ws.feed({"type": "settings.get", "reqId": "g", "scope": "bogus"})
+    await _wait(lambda: any(m["type"] == "error" for m in ws.sent))
+    err = next(m for m in ws.sent if m["type"] == "error")
+    assert err["error"]["code"] == "BAD_REQUEST"
+    ws.disconnect()
+    await task
+
+
+async def test_settings_account_scoped(server):
+    # 別アカウントの設定は混ざらない(所有キー=account id)。
+    store = FakeStore()
+    ws1 = FakeWebSocket()
+    conn1 = WsConnection(ws1, server, store=store)
+    t1 = asyncio.create_task(conn1.run())
+    ws1.feed({"type": "auth", "id": "accA"})
+    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws1.sent))
+    ws1.feed({"type": "settings.set", "reqId": "x", "scope": "display",
+              "value": {"theme": "dark"}})
+    await _wait(lambda: any(m.get("reqId") == "x" for m in ws1.sent))
+
+    ws2 = FakeWebSocket()
+    conn2 = WsConnection(ws2, server, store=store)
+    t2 = asyncio.create_task(conn2.run())
+    ws2.feed({"type": "auth", "id": "accB"})
+    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws2.sent))
+    ws2.feed({"type": "settings.get", "reqId": "y", "scope": "display"})
+    await _wait(lambda: any(m.get("reqId") == "y" for m in ws2.sent))
+    resp = next(m for m in ws2.sent if m.get("reqId") == "y")
+    assert resp["value"] is None  # accB は未設定
+    for ws, t in [(ws1, t1), (ws2, t2)]:
+        ws.disconnect()
+        await t
+
+
+async def test_list_select_missing_value_bad_request_not_crash(server, fake_sock):
+    # CR-4: list.select の value 欠落 → int(None) TypeError → BAD_REQUEST。
+    # 接続はクラッシュせず維持され、後続 intent も処理可能。
+    ws = FakeWebSocket()
+    _, task, sid = await _open_session(ws, server)
+    ws.feed({"type": "list.select", "session": sid})  # value 欠落
+    await _wait(lambda: any(
+        m["type"] == "error" and m["error"]["code"] == "BAD_REQUEST"
+        for m in ws.sent))
+    # 接続維持の確認: 後続 hit が処理される
+    fake_sock.sent.clear()
+    ws.feed({"type": "command", "session": sid, "name": "hit"})
+    await _wait(lambda: b"hit\n" in b"".join(fake_sock.sent))
+    ws.disconnect()
+    await task
+
+
+async def test_internal_error_returns_internal_keeps_conn(server, fake_sock):
+    # CR-4: 想定外例外(RuntimeError)で INTERNAL を返し接続維持。
+    ws = FakeWebSocket()
+    _, task, sid = await _open_session(ws, server)
+
+    async def boom(session_id, intent):
+        raise RuntimeError("unexpected")
+    server.handle_intent = boom  # type: ignore[assignment]
+    ws.feed({"type": "command", "session": sid, "name": "hit"})
+    await _wait(lambda: any(
+        m["type"] == "error" and m["error"]["code"] == "INTERNAL"
+        for m in ws.sent))
+    ws.disconnect()
+    await task
+
+
+async def test_map_request_sends_hash_map(server, fake_sock):
+    # CR-20: map.request → レガシーへ #map 送出。
+    ws = FakeWebSocket()
+    _, task, sid = await _open_session(ws, server)
+    fake_sock.sent.clear()
+    ws.feed({"type": "map.request", "session": sid})
+    await _wait(lambda: b"#map\n" in b"".join(fake_sock.sent))
+    ws.disconnect()
+    await task

@@ -41,6 +41,105 @@ _COND_KEYS = ["poison", "palsy", "panic", "confuse", "berserk", "silence", "blin
 # #status 11 項目のキー順(name 以外)
 _STATUS_KEYS = ["hp", "maxHp", "mp", "maxMp", "exp", "gp", "f", "w", "m", "c"]
 
+# EagleEye(#ex-eagleeye)グリッド上限(EagleEye.cpp MAX_EAGLE_EYE_COUNT)。
+MAX_EAGLE_EYE_COUNT = 15
+
+
+class _EagleEyeAccum:
+    """`#ex-eagleeye` 増分行を集約し契約形 eagleEye payload を構築。
+
+    移植元: phi-client phi/engine/eagle_eye.py。
+    ワイヤ形式(EagleEye.cpp::SetOneLine / phi_m57.c::eagleeye_m57):
+      - `#ex-eagleeye start`        → バッファ初期化
+      - `#ex-eagleeye M <sx> <y> <chip,attr...>` → 1 行(chip,attr ペア, raw[21]起点)
+      - `#ex-eagleeye pos <x> <y>`  → 自キャラ位置
+      - `#ex-eagleeye end`          → 確定(呼出側が build() で payload 取得)
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        # grid[y][x] = {"chip","attr"}。MAX×MAX を 0 初期化。
+        self.grid: list[list[dict]] = [
+            [{"chip": 0, "attr": 0} for _ in range(MAX_EAGLE_EYE_COUNT)]
+            for _ in range(MAX_EAGLE_EYE_COUNT)
+        ]
+        self.size_x = 0
+        self.size_y = 0
+        self.pos_x = 0
+        self.pos_y = 0
+
+    def feed_line(self, raw: bytes) -> None:
+        """`#ex-eagleeye …`(start/M/pos)の 1 行を統合。end は呼出側判定。"""
+        if len(raw) < 14:
+            return
+        # offset 13(0-based) = C++ Text[14](1-based)
+        marker = raw[13:14]
+        if raw[13:18].startswith(b"start"):
+            self.reset()
+        elif marker == b"M":
+            self._parse_row(raw)
+        elif raw[13:16].startswith(b"pos"):
+            self._parse_pos(raw)
+
+    def _parse_row(self, raw: bytes) -> None:
+        # ヘッダ `#ex-eagleeye M %2.2d %2.2d ` は raw[:21]。binary は raw[21]起点。
+        try:
+            header = raw[:21].decode("ascii", errors="strict")
+        except UnicodeDecodeError:
+            return
+        parts = header.split()
+        if len(parts) < 4:
+            return
+        try:
+            tmp_size = int(parts[2])
+            tmp_y = int(parts[3])
+        except ValueError:
+            return
+        if tmp_y < 0 or tmp_y >= MAX_EAGLE_EYE_COUNT:
+            return
+        self.size_y = max(self.size_y, tmp_y + 1)
+        self.size_x = min(tmp_size + 1, MAX_EAGLE_EYE_COUNT)
+        data_start = 21
+        for x in range(self.size_x):
+            i = data_start + x * 2
+            if i + 1 >= len(raw):
+                break
+            self.grid[tmp_y][x]["chip"] = raw[i]
+            self.grid[tmp_y][x]["attr"] = raw[i + 1]
+
+    def _parse_pos(self, raw: bytes) -> None:
+        try:
+            text = raw.decode("ascii", errors="strict")
+        except UnicodeDecodeError:
+            return
+        parts = text.split()
+        if len(parts) < 4:
+            return
+        try:
+            self.pos_x = int(parts[2])
+            self.pos_y = int(parts[3])
+        except ValueError:
+            return
+
+    def build(self) -> dict:
+        """確定 payload([07]§6.11)を返す。cells は width*height 行優先。"""
+        w = self.size_x
+        h = self.size_y
+        cells: list[dict] = []
+        for y in range(h):
+            for x in range(w):
+                c = self.grid[y][x]
+                cells.append({"chip": c["chip"], "attr": c["attr"]})
+        return {
+            "type": "eagleEye",
+            "width": w,
+            "height": h,
+            "self": {"x": self.pos_x, "y": self.pos_y},
+            "cells": cells,
+        }
+
 
 class ProtocolParser:
     """ステートフルな行パーサ。`feed(raw)` がイベント dict のリストを返す。
@@ -71,6 +170,11 @@ class ProtocolParser:
 
         # #user 表(name → 番号)。priv 宛先解決用に保持・公開。
         self.ulist: dict[str, int] = {}
+
+        # EagleEye 増分集約(start..end をバッファし end で確定 emit)。
+        self._eagle = _EagleEyeAccum()
+        # 直近 mapset(eagleEye payload の任意 mapset 付与用, A-19)。
+        self._mapset: str | None = None
 
     # ------------------------------------------------------------------
     # マップフレーム
@@ -219,12 +323,17 @@ class ProtocolParser:
                 self._parse_m57_O(b"#m57 O " + raw[75:142])
             return []
 
-        # --- EagleEye --------------------------------------------------
+        # --- EagleEye(#ex-eagleeye start/M/pos/end を集約し構造化, CR-2) ---
         if text == "#ex-eagleeye end":
-            return [{"type": "eagleEye", "state": "end"}]
+            payload = self._eagle.build()
+            # A-19: 別チップセット時のため任意 mapset を付与(あれば)。
+            if self._mapset:
+                payload["mapset"] = self._mapset
+            return [payload]
         if starts("#ex-eagleeye "):
-            # 増分ペイロード(start/row/pos)。R1 では透過のみ(B 拡張で構造化)。
-            return [{"type": "_internal", "action": "eagleeye", "raw": raw}]
+            # 増分(start/M/pos)を蓄積。end で確定 emit するため非露出。
+            self._eagle.feed_line(raw)
+            return []
 
         # --- #ex-obj S: 巨大グラ拡大登録(イベント非露出) -------------
         if starts("#ex-obj S "):
@@ -250,7 +359,8 @@ class ProtocolParser:
 
         # --- 環境通知 --------------------------------------------------
         if starts("#mapset "):
-            return [{"type": "notice", "mapset": text[8:].strip()}]
+            self._mapset = text[8:].strip()
+            return [{"type": "notice", "mapset": self._mapset}]
         if starts("#ex-notice land="):
             return [{"type": "notice", "world": text[16:]}]
         if starts("#ex-notice area="):

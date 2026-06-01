@@ -105,8 +105,10 @@ class CommandSerializer:
             return "*" + text
 
         if mode == "party":
-            # party(Ctrl 発言): 先頭 '%' 整形(phi-client 準拠)。
-            return "%" + text
+            # A-14: '%' プレフィクスは実機で否定済。party 送信仕様は未確定
+            # (ユーザーが別途実機検証, §0)。当面 normal 整形で送出 + TODO。
+            # TODO(A-14): party の実機送信仕様を確認後に整形を差し替える。
+            return self._normal_chat(text)
 
         if mode == "all":
             # 全セッション同報は上位(SessionManager)が各 session へ展開。

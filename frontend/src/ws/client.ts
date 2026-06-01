@@ -43,11 +43,26 @@ export interface WsClientOptions {
   reqIdGen?: () => string;
   /** 自動再接続するか。既定 true。 */
   autoReconnect?: boolean;
+  /** request() の応答待ちタイムアウト(ms)。既定 10000。0以下で無効。 */
+  requestTimeoutMs?: number;
 }
 
 interface PendingRequest {
   resolve: (msg: ServerMessage) => void;
   reject: (err: unknown) => void;
+  /** タイムアウトタイマ(あれば)。reject 時に必ずクリア。 */
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/** request() が未応答/切断で reject される際のエラー。 */
+export class WsRequestError extends Error {
+  constructor(
+    message: string,
+    readonly reason: 'timeout' | 'closed',
+  ) {
+    super(message);
+    this.name = 'WsRequestError';
+  }
 }
 
 export class WsClient {
@@ -58,6 +73,7 @@ export class WsClient {
   private readonly jitter: () => number;
   private readonly reqIdGen: () => string;
   private readonly autoReconnect: boolean;
+  private readonly requestTimeoutMs: number;
 
   private ws: WebSocket | null = null;
   private attempt = 0;
@@ -87,6 +103,7 @@ export class WsClient {
     this.jitter = options.jitter ?? (() => Math.random() * 1000);
     this.reqIdGen = options.reqIdGen ?? defaultReqId;
     this.autoReconnect = options.autoReconnect ?? true;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   }
 
   // ---------- 接続制御 ----------
@@ -96,10 +113,11 @@ export class WsClient {
     this.openSocket();
   }
 
-  /** 明示切断。以後 autoReconnect しない。 */
+  /** 明示切断。以後 autoReconnect しない。pending は全 reject(CR-14)。 */
   disconnect(code?: number, reason?: string): void {
     this.closedByUser = true;
     this.clearReconnect();
+    this.rejectAllPending('closed', 'WS切断により要求を中断');
     this.ws?.close(code, reason);
     this.ws = null;
   }
@@ -138,6 +156,8 @@ export class WsClient {
     };
 
     ws.onclose = (ev) => {
+      // 切断時、応答が来ない pending を全 reject(CR-14: 永久pending防止)。
+      this.rejectAllPending('closed', 'WS切断により応答未達');
       this.emitLifecycle('close', ev);
       this.ws = null;
       if (!this.closedByUser && this.autoReconnect) {
@@ -188,9 +208,34 @@ export class WsClient {
     const reqId = msg.reqId ?? this.reqIdGen();
     const full = { ...msg, reqId } as ClientMessage;
     return new Promise<ServerMessage>((resolve, reject) => {
-      this.pending.set(reqId, { resolve, reject });
+      // タイムアウト: 無応答時に reject(CR-14)。
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      if (this.requestTimeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (this.pending.delete(reqId)) {
+            reject(
+              new WsRequestError(
+                `要求 ${reqId} が ${this.requestTimeoutMs}ms 以内に応答なし`,
+                'timeout',
+              ),
+            );
+          }
+        }, this.requestTimeoutMs);
+      }
+      this.pending.set(reqId, { resolve, reject, timer });
       this.send(full);
     });
+  }
+
+  /** 全 pending を reject(切断/明示切断時)。タイマもクリア(CR-14)。 */
+  private rejectAllPending(reason: 'timeout' | 'closed', message: string): void {
+    if (this.pending.size === 0) return;
+    const entries = [...this.pending.values()];
+    this.pending.clear();
+    for (const p of entries) {
+      if (p.timer !== null) clearTimeout(p.timer);
+      p.reject(new WsRequestError(message, reason));
+    }
   }
 
   private flushOutbox(): void {
@@ -218,6 +263,7 @@ export class WsClient {
     if (msg.reqId && this.pending.has(msg.reqId)) {
       const p = this.pending.get(msg.reqId)!;
       this.pending.delete(msg.reqId);
+      if (p.timer !== null) clearTimeout(p.timer);
       p.resolve(msg);
       // 応答も通常 dispatch へ流す(購読者がいれば)
     }

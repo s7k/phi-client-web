@@ -8,11 +8,8 @@
 import { create } from 'zustand';
 import type { MessageEvent } from '../types/protocol';
 
-/** 表示用ログエントリ。連番(任意, 重複抑止用)を含む。 */
-export type ChatEntry = Omit<MessageEvent, 'type' | 'reqId'> & {
-  /** BE採番の連番(あれば)。重複抑止キー。 */
-  seq?: number;
-};
+/** 表示用ログエントリ。連番(seq, 任意)は MessageEvent 由来で重複抑止に使用。 */
+export type ChatEntry = Omit<MessageEvent, 'type' | 'reqId'>;
 
 /** リングバッファ上限(session毎)。 */
 const DEFAULT_CAPACITY = 1000;
@@ -22,12 +19,12 @@ interface ChatStoreState {
   bySession: Record<string, ChatEntry[]>;
   /** session別 未読数。 */
   unread: Record<string, number>;
-  addMessage: (session: string, msg: MessageEvent & { seq?: number }) => void;
+  addMessage: (session: string, msg: MessageEvent) => void;
   markRead: (session: string) => void;
   reset: () => void;
 }
 
-function toEntry(msg: MessageEvent & { seq?: number }): ChatEntry {
+function toEntry(msg: MessageEvent): ChatEntry {
   const { session, ts, channel, from, text, markup, seq } = msg;
   return { session, ts, channel, from, text, markup, seq };
 }

@@ -272,6 +272,54 @@ describe('WsClient', () => {
     expect(MockWebSocket.instances).toHaveLength(1);
   });
 
+  it('CR-14: request は無応答でタイムアウト reject', async () => {
+    const client = makeClient({ requestTimeoutMs: 10_000 });
+    client.connect();
+    MockWebSocket.last()._open();
+    const p = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    // reject を捕捉(unhandled rejection 防止)
+    const caught = p.catch((e) => e);
+    vi.advanceTimersByTime(10_000);
+    const err = await caught;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { reason?: string }).reason).toBe('timeout');
+  });
+
+  it('CR-14: 切断で pending を全 reject', async () => {
+    const client = makeClient();
+    client.connect();
+    MockWebSocket.last()._open();
+    const p1 = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const c1 = p1.catch((e) => e);
+    MockWebSocket.last().close();
+    const err = await c1;
+    expect((err as { reason?: string }).reason).toBe('closed');
+  });
+
+  it('CR-14: disconnect で pending を reject', async () => {
+    const client = makeClient();
+    client.connect();
+    MockWebSocket.last()._open();
+    const p = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const c = p.catch((e) => e);
+    client.disconnect();
+    const err = await c;
+    expect((err as { reason?: string }).reason).toBe('closed');
+  });
+
+  it('CR-14: 応答受信でタイムアウトタイマをクリア(後の advance で reject しない)', async () => {
+    const client = makeClient({ requestTimeoutMs: 10_000 });
+    client.connect();
+    MockWebSocket.last()._open();
+    const p = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const reqId = JSON.parse(MockWebSocket.last().sent[0]).reqId;
+    MockWebSocket.last()._emit({ type: 'auth', reqId, ok: true } as ServerMessage);
+    const res = await p;
+    expect((res as { ok: boolean }).ok).toBe(true);
+    // タイマが残っていれば reject されてしまうが、解決済みなので無害
+    vi.advanceTimersByTime(20_000);
+  });
+
   it('off でハンドラ解除', () => {
     const client = makeClient();
     const onMap = vi.fn();

@@ -18,6 +18,7 @@ recv が常にブロックするため、タイマータスクで silence を監
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from typing import Callable
 
@@ -37,6 +38,10 @@ WORLD_TRANSFER_TIMEOUT_SEC = 300.0
 EventCallback = Callable[[dict], None]
 
 
+class _ClosedEmitted(Exception):
+    """内部送信失敗で closed を emit 済みであることを recv_loop へ伝える番兵。"""
+
+
 class _SessionState:
     """1 キャラセッションの実行時状態。"""
 
@@ -54,6 +59,8 @@ class _SessionState:
         self._seq = 0
         self._recv_task: asyncio.Task | None = None
         self._keepalive_task: asyncio.Task | None = None
+        # detach タイムアウトタイマ(CR-6)。再アタッチでキャンセル。
+        self._detach_task: asyncio.Task | None = None
         self._last_recv = 0.0
 
         # snapshot 用の最新状態
@@ -110,7 +117,11 @@ class SessionManager:
         """
         existing = self._by_char.get(char_id)
         if existing is not None and existing.socket.connected:
-            # 再アタッチ: on_event を差し替え、現在状態を snapshot で再送。
+            # 再アタッチ: detach タイマをキャンセルし、on_event を差し替え、
+            # 現在状態を snapshot で再送(CR-6)。
+            if existing._detach_task is not None:
+                existing._detach_task.cancel()
+                existing._detach_task = None
             existing.on_event = on_event
             self._emit(existing, {"type": "connection", "state": "connected"})
             self._emit(existing, self.build_snapshot(existing.id))
@@ -160,15 +171,39 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     async def _recv_loop(self, st: _SessionState) -> None:
+        """レガシー受信ループ。CR-5: 全体を try/except で包み、例外時も
+        `connection:closed` を必ず emit してから break(無言死を防止)。"""
         loop = asyncio.get_running_loop()
-        while True:
-            raw = await st.socket.read_line()
-            if raw is None:  # 切断
-                self._emit(st, {"type": "connection", "state": "closed"})
-                break
-            st._last_recv = loop.time()
-            for ev in st.parser.feed(raw):
-                await self._handle_parser_event(st, ev)
+        try:
+            while True:
+                raw = await st.socket.read_line()
+                if raw is None:  # 切断
+                    self._emit(st, {"type": "connection", "state": "closed"})
+                    break
+                st._last_recv = loop.time()
+                for ev in st.parser.feed(raw):
+                    await self._handle_parser_event(st, ev)
+        except asyncio.CancelledError:
+            # close_session 由来のキャンセルは closed emit しない(正常終了)。
+            raise
+        except _ClosedEmitted:
+            # 内部応答送信失敗(_guarded_send)。closed は emit 済み。
+            pass
+        except Exception:  # noqa: BLE001 - 受信/応答の予期せぬ例外
+            logging.getLogger("phi.session").exception("recv loop failed")
+            self._emit(st, {"type": "connection", "state": "closed"})
+
+    async def _guarded_send(self, st: _SessionState, text: str) -> None:
+        """内部応答(#end-lag/#map 等)の送信。失敗時 closed emit(CR-5)。
+
+        送信失敗は recv_loop の except へ伝播させ closed を二重 emit しない
+        よう、ここでも closed を emit して例外を再送出する。
+        """
+        try:
+            await st.socket.send_line(text)
+        except (OSError, ConnectionError) as exc:
+            self._emit(st, {"type": "connection", "state": "closed"})
+            raise _ClosedEmitted() from exc
 
     async def _keepalive_loop(self, st: _SessionState) -> None:
         loop = asyncio.get_running_loop()
@@ -199,11 +234,12 @@ class SessionManager:
 
         if t == "_internal":
             action = ev.get("action")
+            # CR-5: 内部応答の send_line を個別 guard。送信失敗で closed emit。
             if action == "lag":
-                await st.socket.send_line("#end-lag")
+                await self._guarded_send(st, "#end-lag")
             elif action == "remap":
-                await st.socket.send_line("#map")
-            # eagleeye 等は R2 では透過しない(B 拡張で構造化予定)
+                await self._guarded_send(st, "#map")
+            # eagleEye 等は parser が構造化 emit するため _internal には来ない。
             return
 
         # 状態スナップショット更新
@@ -459,20 +495,50 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     def detach(self, session_id: str) -> None:
-        """FE 切断: on_event を外すがレガシー接続は維持(再アタッチ可)。"""
+        """FE 切断: レガシー接続は維持(再アタッチ可)。CR-6/CR-7。
+
+        - on_event を Null 化する**前**に `connection:detached` を emit(CR-7)。
+        - DETACH_TIMEOUT_SEC 後に close_session するタイマタスクを起動(CR-6)。
+          再アタッチ(open_session)でキャンセルされる。
+        """
+        st = self._sessions.get(session_id)
+        if st is None:
+            return
+        # CR-7: detached を on_event Null 化前に通知。
+        self._emit(st, {"type": "connection", "state": "detached"})
+        st.on_event = None
+        # 既存タイマがあれば張り替え。
+        if st._detach_task is not None:
+            st._detach_task.cancel()
+        st._detach_task = asyncio.create_task(self._detach_timeout(session_id))
+
+    async def _detach_timeout(self, session_id: str) -> None:
+        """detach から DETACH_TIMEOUT_SEC 経過で close_session(CR-6)。"""
+        try:
+            await asyncio.sleep(DETACH_TIMEOUT_SEC)
+        except asyncio.CancelledError:
+            return
         st = self._sessions.get(session_id)
         if st is not None:
-            st.on_event = None
+            st._detach_task = None
+        await self.close_session(session_id)
 
     async def close_session(self, session_id: str) -> None:
         st = self._sessions.pop(session_id, None)
         if st is None:
             return
         self._by_char.pop(st.char_id, None)
-        for task in (st._recv_task, st._keepalive_task):
-            if task is not None:
+        tasks = []
+        # 自身(detach タイマ)からの呼び出しでは自タスクを cancel/await しない。
+        current = asyncio.current_task()
+        for task in (st._recv_task, st._keepalive_task, st._detach_task):
+            if task is not None and task is not current:
                 task.cancel()
+                tasks.append(task)
         await st.socket.close()
+        # CR-7: cancel 後に gather で確実に回収(return_exceptions)。
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def close_all(self) -> None:
         for sid in list(self._sessions.keys()):

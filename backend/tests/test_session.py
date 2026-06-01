@@ -181,3 +181,121 @@ async def test_priv_user_map_wired_to_serializer(mgr):
                                   "to": "u7", "text": "hi"})
     sent = b"".join(mgr._fake.sent)
     assert b"7" in sent and b"hi" in sent
+
+
+# ======================================================================
+# CR-2/5/6/7 是正ラウンド F1
+# ======================================================================
+
+import app.session as session_mod  # noqa: E402
+
+
+def _ee_row(size: int, y: int, cells):
+    hdr = b"#ex-eagleeye M %02d %02d " % (size, y)
+    return hdr + b"".join(bytes([c, a]) for c, a in cells)
+
+
+async def test_eagleeye_passthrough_to_fe(mgr):
+    # CR-2: 構造化 eagleEye が session を付与して FE へ透過(破棄しない)。
+    out: list[dict] = []
+    sid = await mgr.open_session("char1", on_event=out.append)
+    mgr._fake.inject(
+        b"#ex-eagleeye start",
+        _ee_row(0, 0, [(7, 0)]),
+        b"#ex-eagleeye pos 0 0",
+        b"#ex-eagleeye end",
+    )
+    async def waiter():
+        while not any(e["type"] == "eagleEye" for e in out):
+            await asyncio.sleep(0.005)
+    await asyncio.wait_for(waiter(), 2.0)
+    ev = next(e for e in out if e["type"] == "eagleEye")
+    assert ev["session"] == sid
+    assert ev["width"] == 1 and ev["height"] == 1
+    assert ev["cells"] == [{"chip": 7, "attr": 0}]
+    # _internal は FE へ漏れない
+    assert all(e["type"] != "_internal" for e in out)
+
+
+async def test_recv_loop_emits_closed_on_disconnect(mgr):
+    # CR-5: read_line None(切断) で connection:closed を emit。
+    out: list[dict] = []
+    await mgr.open_session("char1", on_event=out.append)
+    mgr._fake._q.put_nowait(None)
+    async def waiter():
+        while not any(e.get("type") == "connection" and e.get("state") == "closed"
+                      for e in out):
+            await asyncio.sleep(0.005)
+    await asyncio.wait_for(waiter(), 2.0)
+
+
+async def test_recv_loop_emits_closed_on_internal_send_failure(mgr):
+    # CR-5: #lag 応答(#end-lag)送信失敗で closed emit して無言死しない。
+    out: list[dict] = []
+    sid = await mgr.open_session("char1", on_event=out.append)
+
+    async def boom(text):
+        raise ConnectionError("send broke")
+    mgr._sessions[sid].socket.send_line = boom  # type: ignore[assignment]
+    mgr._fake.inject(b"#lag")
+    async def waiter():
+        while not any(e.get("type") == "connection" and e.get("state") == "closed"
+                      for e in out):
+            await asyncio.sleep(0.005)
+    await asyncio.wait_for(waiter(), 2.0)
+    # closed は一度だけ
+    closed = [e for e in out if e.get("type") == "connection"
+              and e.get("state") == "closed"]
+    assert len(closed) == 1
+
+
+async def test_detach_emits_detached_before_null(mgr):
+    # CR-7: detach で connection:detached を on_event Null 化前に emit。
+    out: list[dict] = []
+    sid = await mgr.open_session("char1", on_event=out.append)
+    mgr.detach(sid)
+    assert any(e.get("type") == "connection" and e.get("state") == "detached"
+               for e in out)
+    # 以後 on_event は Null(以降の emit は届かない)
+    assert mgr._sessions[sid].on_event is None
+
+
+async def test_detach_timeout_closes_session(mgr, monkeypatch):
+    # CR-6: detach から DETACH_TIMEOUT_SEC 経過で close_session。
+    monkeypatch.setattr(session_mod, "DETACH_TIMEOUT_SEC", 0.05)
+    out: list[dict] = []
+    sid = await mgr.open_session("char1", on_event=out.append)
+    mgr.detach(sid)
+    async def waiter():
+        while sid in mgr._sessions:
+            await asyncio.sleep(0.005)
+    await asyncio.wait_for(waiter(), 2.0)
+    assert sid not in mgr._sessions
+    assert "char1" not in mgr._by_char
+
+
+async def test_detach_then_reattach_survives(mgr, monkeypatch):
+    # CR-6: 期限前の再アタッチでタイマがキャンセルされ存続。
+    monkeypatch.setattr(session_mod, "DETACH_TIMEOUT_SEC", 0.2)
+    out: list[dict] = []
+    sid = await mgr.open_session("char1", on_event=out.append)
+    mgr.detach(sid)
+    out2: list[dict] = []
+    sid2 = await mgr.open_session("char1", on_event=out2.append)
+    assert sid2 == sid
+    # detach タイマはキャンセル済
+    assert mgr._sessions[sid]._detach_task is None
+    # 期限相当を超えて待っても存続
+    await asyncio.sleep(0.3)
+    assert sid in mgr._sessions
+
+
+async def test_close_session_awaits_cancelled_tasks(mgr):
+    # CR-7: close_session が recv/keepalive を cancel 後に gather 回収。
+    sid = await mgr.open_session("char1", on_event=lambda e: None)
+    st = mgr._sessions[sid]
+    recv, keep = st._recv_task, st._keepalive_task
+    await mgr.close_session(sid)
+    assert recv.cancelled() or recv.done()
+    assert keep.cancelled() or keep.done()
+    assert sid not in mgr._sessions

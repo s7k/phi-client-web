@@ -23,6 +23,10 @@ import { Settings } from './components/Settings';
 import { TabBar } from './components/TabBar';
 import { ListView } from './components/ListView';
 import { EditDialog } from './components/EditDialog';
+import { ConnectionBanner } from './components/ConnectionBanner';
+import { ErrorBanners } from './components/ErrorBanners';
+import { WorldTransferIndicator } from './components/WorldTransferIndicator';
+import { WorldArea } from './components/WorldArea';
 import './App.css';
 
 function Game({
@@ -54,6 +58,7 @@ function Game({
       </aside>
       <main className="game__main" ref={mainRef}>
         <div className="game__toolbar">
+          <WorldArea session={session} />
           <button type="button" onClick={() => setSettingsOpen(true)}>
             設定
           </button>
@@ -61,6 +66,7 @@ function Game({
             スクリーンショット
           </button>
         </div>
+        <WorldTransferIndicator />
         {eagleEye ? <EagleEyeView session={session} /> : <MapView session={session} />}
         <Chat session={session} />
       </main>
@@ -73,6 +79,8 @@ export function App({ controller }: { controller: WsController }) {
   const activeTab = useUiStore((s) => s.activeTab);
   return (
     <WsProvider controller={controller}>
+      <ConnectionBanner />
+      <ErrorBanners />
       {activeTab ? (
         <>
           <TabBar />

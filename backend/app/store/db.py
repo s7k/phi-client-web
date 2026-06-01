@@ -263,6 +263,21 @@ class Store:
         )
         return {r["key"]: r["value"] for r in cur.fetchall()}
 
+    # ---- アカウント単位の設定(CR-1, [07]§5.7/§6.13) ----
+    # settings テーブルの所有キー(char_id 列)に account id を流用し、
+    # WS settings.get/set を scope 単位(keybind/notify/display/intervals)で
+    # 永続化する。値は JSON 文字列(任意構造)を value 列へ格納。
+
+    def set_account_setting(
+        self, account_id: str, scope: str, value: str | None
+    ) -> None:
+        """アカウント+scope の設定値(JSON 文字列)を upsert。"""
+        self.set_setting(account_id, scope, value)
+
+    def get_account_setting(self, account_id: str, scope: str) -> str | None:
+        """アカウント+scope の設定値(JSON 文字列 or None)を取得。"""
+        return self.get_setting(account_id, scope)
+
     # ------------------------------------------------------------------
     # chara_graphics([08]§4)
     # ------------------------------------------------------------------

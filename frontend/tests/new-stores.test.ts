@@ -8,6 +8,7 @@ import { useSettingsStore } from '../src/stores/settingsStore';
 import { useChatStore } from '../src/stores/chatStore';
 import { useMapStore } from '../src/stores/mapStore';
 import { useStatusStore } from '../src/stores/statusStore';
+import { useNoticeStore } from '../src/stores/noticeStore';
 import { applySnapshot } from '../src/stores/applySnapshot';
 import type { MessageEvent, SnapshotEvent } from '../src/types/protocol';
 
@@ -23,6 +24,18 @@ beforeEach(() => {
   useChatStore.getState().reset();
   useMapStore.getState().reset();
   useStatusStore.getState().reset();
+  useNoticeStore.getState().reset();
+});
+
+describe('noticeStore (CR-3)', () => {
+  it('部分更新: 届いたフィールドのみ上書き、未指定は温存', () => {
+    useNoticeStore.getState().setNotice(S, { world: 'W', area: 'A', mapset: 'm' });
+    useNoticeStore.getState().setNotice(S, { area: 'A2' });
+    const n = useNoticeStore.getState().bySession[S];
+    expect(n.world).toBe('W');
+    expect(n.area).toBe('A2');
+    expect(n.mapset).toBe('m');
+  });
 });
 
 describe('listStore', () => {
@@ -101,7 +114,8 @@ describe('settingsStore', () => {
 
 describe('chatStore 重複抑止', () => {
   it('seq一致は重複として無視', () => {
-    const mk = (text: string, seq: number): MessageEvent & { seq: number } => ({
+    // CR-16: seq は MessageEvent の正式フィールド(交差型不要)。
+    const mk = (text: string, seq: number): MessageEvent => ({
       type: 'message',
       session: S,
       channel: 'log',
@@ -149,5 +163,16 @@ describe('applySnapshot 拡張配線', () => {
       active: true,
       mode: 'multi',
     });
+  });
+
+  it('CR-3: snapshot.notice を noticeStore へ適用(世界名復元)', () => {
+    const snap: SnapshotEvent = {
+      type: 'snapshot',
+      session: S,
+      notice: { world: 'Fantasy Island', area: '港町', mapset: 'mansion' },
+    };
+    applySnapshot(S, snap);
+    expect(useNoticeStore.getState().bySession[S].world).toBe('Fantasy Island');
+    expect(useNoticeStore.getState().bySession[S].area).toBe('港町');
   });
 });

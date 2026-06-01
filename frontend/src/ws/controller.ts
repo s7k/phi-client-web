@@ -42,6 +42,8 @@ import { useSettingsStore } from '../stores/settingsStore';
 import type { NotifySettings } from '../stores/settingsStore';
 import { DEFAULT_NOTIFY } from '../stores/settingsStore';
 import { useEagleEyeStore } from '../stores/eagleEyeStore';
+import { useNoticeStore } from '../stores/noticeStore';
+import { useUiStore } from '../stores/uiStore';
 import { notify } from '../lib/notify';
 import { applySnapshot } from '../stores/applySnapshot';
 
@@ -61,6 +63,16 @@ function resolveSession(msgSession: string | undefined): string | null {
 export class WsController {
   readonly client: WsClient;
 
+  /**
+   * 再認証用に保持する資格(再接続時の自動 auth に使用)。
+   * 注: メモリ常駐のみ。永続化はせずブラウザリロードで消える。
+   */
+  private credentials: { id: string; password: string } | null = null;
+  /** 初回 open を消費済か(2回目以降の open=再接続とみなし reattach)。 */
+  private hadFirstOpen = false;
+  /** 再接続フロー多重起動防止。 */
+  private reattaching = false;
+
   constructor(client: WsClient) {
     this.client = client;
     this.wire();
@@ -69,9 +81,16 @@ export class WsController {
   private wire(): void {
     const c = this.client;
 
-    c.onLifecycle('open', () =>
-      useConnectionStore.getState().setSocketState('open'),
-    );
+    c.onLifecycle('open', () => {
+      useConnectionStore.getState().setSocketState('open');
+      // 初回 open はログインフロー(Login コンポーネント)が手動で進める。
+      // 2回目以降の open は再接続 → 自動で再認証+reattach(CR-5)。
+      if (this.hadFirstOpen) {
+        void this.reattach();
+      } else {
+        this.hadFirstOpen = true;
+      }
+    });
     c.onLifecycle('close', () =>
       useConnectionStore.getState().setSocketState('reconnecting'),
     );
@@ -143,6 +162,89 @@ export class WsController {
       const s = resolveSession(msg.session);
       if (s) useEagleEyeStore.getState().setEagleEye(s, msg);
     });
+
+    // CR-3: 環境通知(世界/エリア/名前/mapset)→ noticeStore。
+    c.on('notice', (msg) => {
+      const s = resolveSession(msg.session);
+      if (s) useNoticeStore.getState().setNotice(s, msg);
+    });
+
+    // CR-3: 世界移動の進行表示 → uiStore(FEは進行表示のみ, [07]§6.10)。
+    c.on('worldTransfer', (msg) => {
+      const s = resolveSession(msg.session) ?? undefined;
+      if (msg.state === 'start') {
+        useUiStore
+          .getState()
+          .setWorldTransfer({ session: s, state: 'start', server: msg.server });
+      } else {
+        // success/fail は一旦表示後にクリア(進行表示終了)。fail はエラーバナーも。
+        useUiStore
+          .getState()
+          .setWorldTransfer({ session: s, state: msg.state, server: msg.server });
+        if (msg.state === 'fail') {
+          useUiStore.getState().pushError(
+            { code: 'TRANSFER_FAILED', message: '世界移動に失敗しました' },
+            s,
+          );
+        }
+      }
+    });
+
+    // CR-3: 非相関エラー(レガシー切断等)→ エラーバナー/トースト。
+    // reqId付き応答エラーは request() 側で reject されるため、ここでは
+    // reqId 無し(非相関)のみ拾う。
+    c.on('error', (msg) => {
+      if (msg.reqId) return;
+      const s = resolveSession(msg.session) ?? undefined;
+      useUiStore.getState().pushError(msg.error, s);
+    });
+  }
+
+  /**
+   * 再接続(open)時の自動再認証+各アクティブセッション reattach(CR-5)。
+   * 1. 保持資格で auth(BEがcookie/資格照合)。
+   * 2. 開いている各 session の charId で session.open(reattach)。
+   *    → BE が connection + snapshot を返し、各 store が復元される。
+   */
+  private async reattach(): Promise<void> {
+    if (this.reattaching) return;
+    if (!this.credentials) return; // 未ログイン(再接続対象なし)。
+    this.reattaching = true;
+    try {
+      await this.auth(this.credentials.id, this.credentials.password);
+      const sessions = Object.values(useSessionStore.getState().sessions);
+      for (const info of sessions) {
+        try {
+          // openSession は応答 session を再登録(BEが同一 session を払い出す想定)。
+          await this.openSession(info.charId);
+        } catch (err) {
+          useUiStore.getState().pushError(
+            {
+              code: 'SESSION_NOT_FOUND',
+              message: `セッション再接続に失敗: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            },
+            info.session,
+          );
+        }
+      }
+    } catch (err) {
+      useUiStore.getState().pushError({
+        code: 'AUTH_FAILED',
+        message: `再接続時の認証に失敗: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    } finally {
+      this.reattaching = false;
+    }
+  }
+
+  /** 手動再接続(再接続ボタン用, CR-15 / [12]§6)。 */
+  reconnectNow(): void {
+    useConnectionStore.getState().setSocketState('connecting');
+    this.client.reconnectNow();
   }
 
   // ---------- intent 送信ヘルパ ----------
@@ -164,6 +266,8 @@ export class WsController {
     }
     const chars = auth.characters ?? [];
     useSessionStore.getState().setCharacters(chars);
+    // 再接続時の自動再認証用に資格を保持(CR-5)。
+    this.credentials = { id, password };
     return chars;
   }
 

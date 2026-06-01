@@ -30,6 +30,9 @@ from app.session import SessionManager
 
 PROTOCOL_VERSION = 1
 
+# settings scope([07]§5.7)。許可 scope 以外は BAD_REQUEST。
+_SETTINGS_SCOPES = ("keybind", "notify", "display", "intervals")
+
 # command.raw 監査ログ([07]§10)。session/text のみ記録。
 # 実 uid/パスワード等のアカウント情報は本ログに含めない。
 _audit_logger = logging.getLogger("phi.audit")
@@ -62,10 +65,13 @@ class WsConnection:
         *,
         rate_limiter=None,
         conn_limiter=None,
+        store=None,
     ) -> None:
         self._ws = ws
         self._mgr = manager
         self._auth = auth  # AuthService | None
+        # settings 永続化用 Store(CR-1)。未指定時は auth.store を流用。
+        self._store = store if store is not None else getattr(auth, "store", None)
         self._rl = rate_limiter   # RateLimiter | None(command.raw/chat)
         self._cl = conn_limiter   # ConcurrencyLimiter | None(WS同時接続)
         self._outbound: asyncio.Queue[dict] = asyncio.Queue()
@@ -127,6 +133,24 @@ class WsConnection:
             await self._dispatch(msg)
 
     async def _dispatch(self, msg: dict) -> None:
+        # CR-4: dispatch 全体を保護し、想定外例外で接続全体を落とさない。
+        # ValueError/KeyError/TypeError は意味づけして個別応答、それ以外は
+        # INTERNAL を返し接続は維持する。
+        try:
+            await self._dispatch_inner(msg)
+        except ValueError as exc:
+            await self._error(msg, "BAD_REQUEST", str(exc))
+        except KeyError as exc:
+            await self._error(msg, "SESSION_NOT_FOUND", str(exc))
+        except TypeError as exc:
+            await self._error(msg, "BAD_REQUEST", str(exc))
+        except _DISCONNECT_EXC:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 接続維持のため最終捕捉
+            logging.getLogger("phi.ws").exception("dispatch failed")
+            await self._error(msg, "INTERNAL", str(exc))
+
+    async def _dispatch_inner(self, msg: dict) -> None:
         t = msg.get("type")
         if t == "auth":
             await self._handle_auth(msg)
@@ -136,6 +160,19 @@ class WsConnection:
             return
         if t == "session.close":
             await self._handle_session_close(msg)
+            return
+        if t in ("settings.get", "settings.set"):
+            await self._handle_settings(msg)
+            return
+        if t == "map.request":
+            await self._handle_map_request(msg)
+            return
+        if t == "ping":
+            # アプリ層ハートビート(§8/§6.14)。pong を即返す。
+            await self._ws.send_json({
+                "type": "pong", "nonce": msg.get("nonce"),
+                "serverTime": int(time.time() * 1000),
+            })
             return
         # それ以外は intent。session 解決して SessionManager へ。
         await self._handle_intent(msg)
@@ -253,6 +290,50 @@ class WsConnection:
             self._sessions.remove(sid)
 
     # ------------------------------------------------------------------
+    # 設定(CR-1, [07]§5.7/§6.13)。アカウント単位で SQLite へ永続化。
+    # ------------------------------------------------------------------
+
+    async def _handle_settings(self, msg: dict) -> None:
+        import json
+
+        t = msg.get("type")
+        scope = msg.get("scope")
+        if scope not in _SETTINGS_SCOPES:
+            await self._error(msg, "BAD_REQUEST", f"invalid scope: {scope!r}")
+            return
+        if self._store is None or self._account_id is None:
+            # 未認証 or ストア未設定。get は空を返し、set は失敗扱い。
+            await self._error(msg, "SESSION_NOT_FOUND", "no authenticated account")
+            return
+
+        if t == "settings.get":
+            raw = self._store.get_account_setting(self._account_id, scope)
+            value = json.loads(raw) if raw is not None else None
+            await self._ws.send_json({
+                "type": "settings", "reqId": msg.get("reqId"),
+                "ok": True, "scope": scope, "value": value,
+            })
+            return
+
+        # settings.set: value を JSON 文字列で永続化し ok 応答。
+        value = msg.get("value")
+        self._store.set_account_setting(
+            self._account_id, scope, json.dumps(value)
+        )
+        await self._ws.send_json({
+            "type": "settings", "reqId": msg.get("reqId"),
+            "ok": True, "scope": scope, "value": value,
+        })
+
+    async def _handle_map_request(self, msg: dict) -> None:
+        """CR-20: map.request → レガシーへ `#map` 送出(再描画要求)。"""
+        sid = self._resolve_session(msg)
+        if sid is None:
+            await self._error(msg, "SESSION_NOT_FOUND", "no active session")
+            return
+        await self._mgr.handle_intent_raw(sid, "#map")
+
+    # ------------------------------------------------------------------
     # intent ディスパッチ
     # ------------------------------------------------------------------
 
@@ -280,6 +361,9 @@ class WsConnection:
             await self._mgr.handle_intent(sid, msg)
         except ValueError as exc:
             # serializer の未知 type / 不正値
+            await self._error(msg, "BAD_REQUEST", str(exc))
+        except TypeError as exc:
+            # CR-4: list.select の value 欠落で int(None) 等 → BAD_REQUEST。
             await self._error(msg, "BAD_REQUEST", str(exc))
         except KeyError as exc:
             await self._error(msg, "SESSION_NOT_FOUND", str(exc))
