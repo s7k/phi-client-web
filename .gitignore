@@ -39,6 +39,11 @@ build/
 /assets/
 *.bmp
 
+# === 録画フィクスチャ (実サーバ録画=実名/実IP/uid を含むため除外) ===
+# 実データ録画はここに置く(コミットしない)。合成フィクスチャは fixtures/ 直下に置きコミット可。
+**/tests/fixtures/recorded/
+*.rec.bin
+
 # === ログ・一時ファイル ===
 *.log
 tmp/

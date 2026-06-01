@@ -44,7 +44,7 @@
 
 | # | 項目 | 判定 | 備考 |
 |---|------|------|------|
-| T1 | pytest + fixtures(録画bin/期待JSON) | ⚠️ | **フィクスチャ録画が未実施**。`test_connect.py --record` を実装し実サーバから録画(環境変数で実値)。録画後✅ |
+| T1 | pytest + fixtures(録画→合成/期待JSON) | ⚠️ | **録画＋サニタイズが未実施**。録画は `fixtures/recorded/`(**gitignore**)、CI用はサニタイズ済 `fixtures/synthetic/`([11]§4)。録画後✅ |
 | T2 | モックTCP/WS サーバ | ✅ | フィクスチャ再生。実装可 |
 | T3 | Vitest + RTL | ✅ | 即構築可 |
 | T4 | Playwright E2E | ✅ | モックBE前提 |
@@ -69,8 +69,7 @@
 
 ### 着手前に片付ける軽作業(ブロッカー小)
 1. **scaffold生成**: `backend/`(pyproject, app/, tests/, conftest) と `frontend/`(Vite+TS+Vitest) の雛形。
-2. **フィクスチャ録画(T1)**: `test_connect.py --record` 実装 → 実サーバから受信bin録画(環境変数で実値、binはgit管理: 秘匿値が含まれぬよう**録画データもキャラ名/IP等をマスクするか .gitignore**)。
-   - 注意: 録画bin内にチャットログ等の実名・実IPが入りうる → **マスク処理 or fixtures/ を gitignore**。
+2. **フィクスチャ録画(T1)**: `test_connect.py --record` 実装 → 録画は `backend/tests/fixtures/recorded/`(**.gitignore済**, 実名/IP/uid含む・非コミット)。サニタイズ→ `fixtures/synthetic/`(コミット, CI用)([11]§4)。
 3. **透過アセット バッチ変換**: tools/gfx_convert で chip/chara/items + フォールバック6種を `assets/` へ。
 
 ### 確認後に着手(⚠️)
@@ -80,6 +79,6 @@
 B1→B2→B3(要T1)→B4→B5(要T2)→B6→B7→B8→B9/B11→B10→B12→B13 / 並行でFE F1→F2→各UI→E2E。
 
 ## 6. 残リスク
-- フィクスチャ録画データの秘匿(実名/IP混入)→ マスク or gitignore 必須(§5-2)。
+- フィクスチャ録画データの秘匿(実名/IP混入)→ `fixtures/recorded/` を gitignore 済。CI用はサニタイズ済 `synthetic/` のみコミット([11]§4)。
 - 単一プロセス制約([12]§7.1)→ 同時接続多数時のスケールは将来課題。
 - 登録 uid 規則の実機差異([12]§2.4)。

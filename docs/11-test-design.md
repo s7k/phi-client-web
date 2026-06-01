@@ -35,13 +35,26 @@ CI: GitHub Actions。`pytest --cov`(BE) / `vitest run --coverage`(FE) / `playwri
 
 ## 4. フィクスチャ
 
-`backend/tests/fixtures/`:
-- `legacy_stream/*.bin` — 実サーバ受信バイト列(SJIS生)。`backend/test_connect.py` を拡張し録画。例: `login_welcome.bin`(#name/#ex-notice/#m57…), `status_cond.bin`, `m57_map.bin`, `ex_obj_list.bin`。
-- `expected/*.json` — 各binをParserに通した期待イベント列(ゴールデン)。
-- `chip/`, `chara/`, `items/` — 変換前BMP少数 + 期待透過PNG(画素チェック用)。
-- `m57_O_lines.txt` — `#m57 O` 各種(plain/giant/object/特殊文字グラ名)。
+**2階層に分離**(実データ録画はコミットしない):
 
-> 録画手順: `test_connect.py --record <file>` でソケット受信rawを保存(別途実装)。SJISのままコミット(gitattributes で binary 指定)。
+### 4.1 録画フィクスチャ(実データ・**gitignore**)
+`backend/tests/fixtures/recorded/`(**.gitignore対象**):
+- `legacy_stream/*.bin` — 実サーバ受信バイト列(SJIS生)。`backend/test_connect.py --record` で録画。
+- **実名/実IP/uid を含むため絶対にコミットしない**。各開発者がローカルで録画。
+- このディレクトリと `*.rec.bin` は `.gitignore` 済。
+
+### 4.2 合成フィクスチャ(サニタイズ済・**コミット**)
+`backend/tests/fixtures/`(直下、コミット可):
+- `synthetic/*.bin` — 録画から**実名/実IP/uidをマスク**(ExampleChar/`<SERVER_IP>`等)した、または手書きの合成バイト列。CI用の主フィクスチャ。
+- `expected/*.json` — 合成binをParserに通した期待イベント列(ゴールデン)。
+- `m57_O_lines.txt` — `#m57 O` 各種(plain/giant/object/特殊文字グラ名)。合成。
+- `chip/`, `chara/`, `items/` — 変換前BMP少数 + 期待透過PNG(画素チェック用)。**legacy由来BMPは `.gitignore`(`*.bmp`/`/assets/`)に該当するため、合成/サイズ縮小した検証用のみ別途用意**。
+
+### 4.3 録画→合成の手順
+1. `test_connect.py --record <name>` でローカル録画 → `fixtures/recorded/`(gitignore)。
+2. サニタイズスクリプトで実名/IP/uid をプレースホルダ置換 → `fixtures/synthetic/` へ出力(コミット対象)。
+3. CI・通常テストは `synthetic/` のみ使用(実サーバ・実データ不要)。
+4. binは gitattributes で binary 指定。
 
 ## 5. BE ユニットテスト設計
 
