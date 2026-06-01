@@ -132,8 +132,29 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 | R3 | ✅ B8 Store/SQLite + B12 認証(uid暗号/PBKDF2暫定) + priv修正(149 tests) | ✅ F8 キーハンドラ + F9 リスト/編集/タブUI(160 tests) | R3コミット済 |
 | R4 | ✅ B9 gfx + B10 REST chara + B11 fallback + B13 世界移動 + move整合(185 tests) | ✅ F10 設定UI + F11 通知/SS/画像 + EagleEye(191 tests) | R4コミット済 |
 | R5 | ✅ B14 レート制限 + B15 登録 + auth硬化(argon2/CSRF) + REST統合 + view.set(231 tests) | ✅ F12 登録フォーム + view.set連動 + 統合(210 tests) | R5コミット済 |
-| R6 | リード: 全テスト実走確認 + E2E/glue/ルートREADME + 起動確認 | (統合検証) | — |
+| R6 | ✅ app.main起動エントリ+config+REST統合(238 tests) | ✅ devプロキシ+wsUrl+Playwright E2E(217 tests+e2e 2) | R6コミット済 |
 
 ## 6. コミットログ（リード記入）
 
 - R0: BE/FE scaffold + 最初のTDDコンポーネント。契約決定(A-01〜A-05, A1〜A3)を[07]反映。
+- R1: BE Parser/Serializer+合成フィクスチャ / FE 残stores+ログイン+ステータス+チャット。決定A-06〜A-12。
+- R2: BE 接続/セッション/WS+実機録画検証 / FE マップ描画+グラ解決。priv契約修正(A-13)。
+- R3: BE Store/認証+priv修正 / FE キーハンドラ+リスト/編集/タブ。A-17/18。
+- R4: BE gfx/REST chara/世界移動/move整合 / FE 設定/通知/SS/画像/EagleEye。**他者迷惑送信ガード追加(§0)**。A-19〜A-24。
+- R5: BE レート制限/登録/auth硬化/REST統合 / FE 登録フォーム/view.set。A-25〜A-27。登録は実サーバ未実行。
+- R6: BE app.main起動エントリ+config / FE devプロキシ+Playwright E2E。ルートREADME+CI追加。A-28(assets衝突回避: FEビルドは`dist/app/`)。
+
+## 7. 総括サマリ（起床時用）
+
+**到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。
+
+**実装済み**:
+- BE: LineBuffer/CodeConverter/ProtocolParser/CommandSerializer、LegacySocket、SessionManager(snapshot/reattach/seq/keepalive)、WsServer(エンベロープ/認証/レート制限)、Store/SQLite(全スキーマ+Index)、認証(argon2id+uid暗号+webセッション+CSRF)、世界移動(#ch-srv 300s+last_server)、gfx透過変換、REST(chara graphics/index/manifest, register, auth, healthz)、view.set、app.main+config。
+- FE: 型(契約)、WSクライアント(再接続/snapshot)、stores(11分割)、ログイン/キャラ選択、ステータス/cond、マップ描画(Canvas,chip/chara/items)、グラ解決(fallback)、チャット(カラーマークアップ/送信種別)、キーハンドラ、リスト/編集/タブUI、設定UI、通知/SS/画像、EagleEye、登録フォーム、devプロキシ、Playwright。
+
+**残TODO / 要ユーザー確認(迷惑回避で我々が実機検証しない)**:
+- A-14 大声/パーティ送信仕様、A-25 登録uid供給元(#ex-put UID?)、A-23 `img=`実形 → **ユーザーが実機(登録/発言)で確認**。
+- A-15 `#m57 W`(2スロット)実形未検証(出現せず)。
+- 低優先: 水縁/巨大magnify描画(FE-Q15)、command.raw監査ログ、tools/convert.pyのapp.gfx委譲(A-20)、本番デプロイ(reverse proxy/systemd)。
+
+**契約の単一情報源**: [07](07-ws-protocol.md) + 本DEVLOG §4(A-NN決定)。

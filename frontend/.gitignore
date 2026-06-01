@@ -3,3 +3,9 @@ node_modules/
 dist/
 coverage/
 *.local
+
+# Playwright(E2E)成果物
+test-results/
+playwright-report/
+blob-report/
+.playwright/

@@ -1,0 +1,118 @@
+"""B-final app.main 起動エントリ検証([12]§7)。
+
+- `import app.main` が通る(実サーバ非接続)。
+- Config.from_env が env を正しく解釈。
+- TestClient: GET /healthz 200、未認証で保護 REST 401。
+- 一時鍵フォールバック / allowed_origins。
+"""
+from __future__ import annotations
+
+import importlib
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import Config
+from app.main import build_app
+
+
+def test_import_main():
+    """`import app.main`(= uvicorn ターゲット)が成功する。"""
+    mod = importlib.import_module("app.main")
+    assert hasattr(mod, "app")  # ASGI app が公開されている
+
+
+# ----------------------------------------------------------------------
+# Config.from_env
+# ----------------------------------------------------------------------
+
+def test_config_from_env_full():
+    from app.auth import UidCipher
+    env = {
+        "PHI_DB_PATH": "/tmp/x.db",
+        "PHI_SECRET_KEY": UidCipher.generate_key().decode(),
+        "PHI_ALLOWED_ORIGINS": "https://a.example, https://b.example",
+        "PHI_ASSETS_DIR": "/tmp/assets",
+        "PHI_HOST": "legacy.example",
+        "PHI_PORT": "1234",
+    }
+    cfg = Config.from_env(env)
+    assert cfg.db_path == "/tmp/x.db"
+    assert cfg.secret_key_ephemeral is False
+    assert cfg.allowed_origins == {"https://a.example", "https://b.example"}
+    assert cfg.assets_dir == "/tmp/assets"
+    assert cfg.legacy_host == "legacy.example"
+    assert cfg.legacy_port == 1234
+
+
+def test_config_defaults_and_ephemeral_key():
+    """env 最小: db_path None / origins None / 一時鍵生成。"""
+    cfg = Config.from_env({})
+    assert cfg.db_path is None
+    assert cfg.allowed_origins is None
+    assert cfg.assets_dir.endswith("assets")
+    assert cfg.legacy_host == ""
+    assert cfg.legacy_port == 0
+    assert cfg.secret_key_ephemeral is True
+    assert len(cfg.secret_key) > 0  # Fernet 鍵
+
+
+# ----------------------------------------------------------------------
+# TestClient(実サーバ非接続: session.open しない)
+# ----------------------------------------------------------------------
+
+@pytest.fixture()
+def client(tmp_path):
+    from app.auth import UidCipher
+    cfg = Config(
+        db_path=":memory:",
+        secret_key=UidCipher.generate_key(),
+        allowed_origins=None,
+        assets_dir=str(tmp_path / "assets"),  # 無し → /assets マウントスキップ
+        legacy_host="",
+        legacy_port=0,
+        secret_key_ephemeral=False,
+    )
+    app = build_app(cfg)
+    return TestClient(app)
+
+
+def test_healthz_ok(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["sessions"] == 0  # レガシー非接続
+
+
+def test_protected_rest_requires_auth(client):
+    """未認証(cookie 無し)で保護 REST は 401。"""
+    # chara index 更新(要認証 + 変更系)。
+    r = client.put("/api/chara/index/foo", json={"graName": "bar"})
+    assert r.status_code == 401
+
+
+def test_login_wrong_credentials_401(client):
+    r = client.post("/api/auth/login", json={"id": "nobody", "password": "x"})
+    assert r.status_code == 401
+
+
+def test_assets_mount_when_dir_exists(tmp_path):
+    """assets ディレクトリありなら /assets が配信される。"""
+    from app.auth import UidCipher
+    adir = tmp_path / "assets"
+    adir.mkdir()
+    (adir / "hello.txt").write_text("hi", encoding="utf-8")
+    cfg = Config(
+        db_path=":memory:",
+        secret_key=UidCipher.generate_key(),
+        allowed_origins=None,
+        assets_dir=str(adir),
+        legacy_host="",
+        legacy_port=0,
+        secret_key_ephemeral=False,
+    )
+    client = TestClient(build_app(cfg))
+    r = client.get("/assets/hello.txt")
+    assert r.status_code == 200
+    assert r.text == "hi"
