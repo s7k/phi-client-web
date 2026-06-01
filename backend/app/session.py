@@ -543,3 +543,20 @@ class SessionManager:
     async def close_all(self) -> None:
         for sid in list(self._sessions.keys()):
             await self.close_session(sid)
+
+    async def shutdown(self) -> None:
+        """CR-18: graceful shutdown。全アクティブセッションへ `#x`(ログアウト)を
+        送出してからレガシー接続を閉じる。
+
+        プロセス再起動でゲーム状態が揮発する([07]§4.2 / [02]§6)ため、せめて
+        レガシー側に正規ログアウトを通知し、宙吊り接続/キャラ残留を避ける。
+        送信失敗(既に切断)は無視し、必ず close_session で後始末する。
+        """
+        for sid in list(self._sessions.keys()):
+            st = self._sessions.get(sid)
+            if st is not None and st.socket.connected:
+                try:
+                    await st.socket.send_line("#x")
+                except (OSError, ConnectionError):
+                    pass
+            await self.close_session(sid)

@@ -6,7 +6,7 @@
  * self(自キャラ位置)はマーカーで強調。
  */
 import type { MapCell } from '../types/protocol';
-import { chipIndices, chipSrcRect } from './mapRender';
+import { CHIP_HEIGHT, CHIP_SIZE, chipIndices, chipSrcRect } from './mapRender';
 
 /** EagleEye 1セルの描画サイズ(px)。map の 32px より小さい俯瞰用。 */
 export const EE_CELL = 16;
@@ -48,14 +48,28 @@ export function drawEagleEye(
 
   const chipImg = imgs.chip;
   if (chipImg) {
+    // 移植元(eagle_eye_widget.py)は map_widget の _ChipRenderer.draw を流用し
+    // 48px高チップ全体を cs幅×CHIP_HEIGHT高で等倍描画(上16px透過分はセル外上方へ)。
+    // ここでは map(32px) を cs(16px) へ縮める縮尺で同じ配置を再現する。
+    //   scale = cs / CHIP_SIZE      ; 本体32px → cs(=16px)
+    //   描画高 = CHIP_HEIGHT * scale ; 48 → 24px
+    //   上オフセット = (CHIP_HEIGHT - CHIP_SIZE) * scale ; 透過16px → 8px 上シフト
+    // これにより本体(下32px相当)が正しく cs 角へ収まり、上16px透過分が潰されない。
+    const scale = cs / CHIP_SIZE;
+    const dstH = CHIP_HEIGHT * scale; // 24
+    const yOffset = (CHIP_HEIGHT - CHIP_SIZE) * scale; // 8
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const cell = input.cells[eeCellIndex(x, y, width)];
         if (!cell) continue;
         for (const idx of chipIndices(cell.chip)) {
           const r = chipSrcRect(idx);
-          // 高48pxチップを cs 角へ縮小描画(下16pxの本体相当を表示)。
-          ctx.drawImage(chipImg, r.sx, r.sy, r.sw, r.sh, x * cs, y * cs, cs, cs);
+          if (!r) continue; // 未知index → スキップ
+          ctx.drawImage(
+            chipImg,
+            r.sx, r.sy, r.sw, r.sh,
+            x * cs, y * cs - yOffset, cs, dstH,
+          );
         }
       }
     }

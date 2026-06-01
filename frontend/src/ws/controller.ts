@@ -60,6 +60,30 @@ function resolveSession(msgSession: string | undefined): string | null {
   return useSessionStore.getState().active;
 }
 
+/** 当該 session の自キャラ名(status 優先、無ければ notice)。 */
+export function selfNameOf(session: string): string | undefined {
+  return (
+    useStatusStore.getState().bySession[session]?.status?.name ??
+    useNoticeStore.getState().bySession[session]?.name
+  );
+}
+
+/**
+ * 自キャラ発言のエコー(自己通知抑止対象)か判定(L4)。
+ * channel='log'(通常ログ)かつ from が自キャラ名と一致する場合のみ true。
+ * priv/loud/system は対象外(他者宛/他者発を含むため抑止しない)。
+ */
+export function isSelfEcho(
+  session: string,
+  channel: string,
+  from: string | undefined,
+): boolean {
+  if (channel !== 'log') return false;
+  if (!from) return false;
+  const self = selfNameOf(session);
+  return self !== undefined && self === from;
+}
+
 export class WsController {
   readonly client: WsClient;
 
@@ -127,6 +151,9 @@ export class WsController {
     c.on('message', (msg) => {
       const s = resolveSession(msg.session);
       if (s) useChatStore.getState().addMessage(s, msg);
+      // L4: 自キャラ発言のエコー(channel='log')での自己通知を抑止。
+      // 自キャラ名は status / notice から取得(snapshot/status で設定済み前提)。
+      if (s && isSelfEcho(s, msg.channel, msg.from)) return;
       // F11 通知判定([05]§10)。設定は notify scope(無ければ既定)。
       const ns =
         (useSettingsStore.getState().byScope['notify'] as NotifySettings | undefined) ??

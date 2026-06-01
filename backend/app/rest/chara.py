@@ -23,7 +23,16 @@ import io
 import urllib.parse
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from PIL import Image, UnidentifiedImageError
 
 from app.gfx import convert_colorkey, parse_color_key
@@ -33,6 +42,12 @@ from app.store.db import Store
 CHARA_STD_W, CHARA_STD_H = 96, 160
 # アップロード最大サイズ(bytes)。
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+# CR-12: decompression bomb 対策。decode/全画素ループ前に寸法を強制。
+# キャラグラは 96x160 が標準。マスク分割(横2倍)も考慮し余裕を持たせるが、
+# 巨大画像で CPU/メモリを溶かさない上限を設ける。
+MAX_IMAGE_W = 256
+MAX_IMAGE_H = 512
+MAX_IMAGE_PIXELS = MAX_IMAGE_W * MAX_IMAGE_H  # Pillow の bomb 検知にも使用
 
 
 class CharaStorage:
@@ -94,6 +109,15 @@ def build_chara_router(
     else:
         account_dep = require_account
 
+    def _enforce_get_rate(request: Request) -> None:
+        """CR-12: chara GET(無認証配信)を IP 単位でレート制限。"""
+        if rate_limiter is None:
+            return
+        from app.rest.register import client_ip
+        ip = client_ip(request)
+        if not rate_limiter.allow("chara_get", ip):
+            raise HTTPException(429, "リクエストが多すぎます(chara GET)")
+
     # ------------------------------------------------------------------
     # 7.1 グラフィック
     # ------------------------------------------------------------------
@@ -130,13 +154,35 @@ def build_chara_router(
         except ValueError as exc:
             raise HTTPException(400, f"colorKey が不正: {exc}") from exc
 
+        # CR-12: decompression bomb 対策。
+        # 1) ヘッダのみ open(全画素 decode 前)で寸法を取得し上限検査。
+        # 2) Pillow の MAX_IMAGE_PIXELS で多段 bomb も検知。
+        # 3) 上限内のみ load()/全画素ループへ進む。
         try:
             img = Image.open(io.BytesIO(raw))
-            img.load()
         except (UnidentifiedImageError, OSError) as exc:
             raise HTTPException(400, "画像として開けない") from exc
 
-        # 透過変換(キャラは colorkey 既定)。
+        w0, h0 = img.size
+        if w0 <= 0 or h0 <= 0:
+            raise HTTPException(400, "画像寸法が不正")
+        if w0 > MAX_IMAGE_W or h0 > MAX_IMAGE_H or w0 * h0 > MAX_IMAGE_PIXELS:
+            raise HTTPException(
+                413, f"画像が大きすぎます(最大 {MAX_IMAGE_W}x{MAX_IMAGE_H})"
+            )
+
+        prev_limit = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+        try:
+            img.load()
+        except Image.DecompressionBombError as exc:
+            raise HTTPException(413, "画像が大きすぎます(bomb 検知)") from exc
+        except (UnidentifiedImageError, OSError) as exc:
+            raise HTTPException(400, "画像として開けない") from exc
+        finally:
+            Image.MAX_IMAGE_PIXELS = prev_limit
+
+        # 透過変換(キャラは colorkey 既定)。寸法検査済みのため全画素ループは安全。
         rgba = convert_colorkey(img, key_rgb)
         w, h = rgba.size
 
@@ -170,7 +216,8 @@ def build_chara_router(
         return _graphic_meta(g, dimension_warning=dimension_warning)
 
     @router.get("/graphics")
-    async def list_graphics() -> list[dict]:
+    async def list_graphics(request: Request) -> list[dict]:
+        _enforce_get_rate(request)
         cur = store.conn.execute(
             "SELECT * FROM chara_graphics ORDER BY gra_key"
         )
@@ -182,14 +229,16 @@ def build_chara_router(
         return out
 
     @router.get("/graphics/{gra_name}")
-    async def get_graphic_meta(gra_name: str) -> dict:
+    async def get_graphic_meta(gra_name: str, request: Request) -> dict:
+        _enforce_get_rate(request)
         g = store.get_graphic(urllib.parse.unquote(gra_name))
         if g is None:
             raise HTTPException(404, "グラフィック未登録")
         return _graphic_meta(g)
 
     @router.get("/graphics/{gra_name}/png")
-    async def get_graphic_png(gra_name: str) -> Response:
+    async def get_graphic_png(gra_name: str, request: Request) -> Response:
+        _enforce_get_rate(request)
         g = store.get_graphic(urllib.parse.unquote(gra_name))
         if g is None:
             raise HTTPException(404, "グラフィック未登録")
@@ -287,7 +336,8 @@ def build_chara_router(
     # ------------------------------------------------------------------
 
     @router.get("/manifest")
-    async def manifest() -> dict:
+    async def manifest(request: Request) -> dict:
+        _enforce_get_rate(request)
         graphics: dict[str, str] = {}
         cur = store.conn.execute("SELECT gra_name FROM chara_graphics")
         for row in cur.fetchall():

@@ -299,3 +299,14 @@ async def test_close_session_awaits_cancelled_tasks(mgr):
     assert recv.cancelled() or recv.done()
     assert keep.cancelled() or keep.done()
     assert sid not in mgr._sessions
+
+
+async def test_shutdown_sends_x_and_closes_all(mgr):
+    # CR-18: graceful shutdown で全アクティブセッションへ #x 送出 + close。
+    sid = await mgr.open_session("char1", on_event=lambda e: None)
+    sock = mgr._fake
+    sock.sent.clear()  # ログインシーケンス分を捨てて #x のみ検査。
+    await mgr.shutdown()
+    assert b"#x\n" in sock.sent  # ログアウトを送出。
+    assert sid not in mgr._sessions  # 後始末済み。
+    assert not mgr._sessions

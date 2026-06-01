@@ -106,6 +106,66 @@ def test_upload_invalid_image(client):
     assert r.status_code == 400
 
 
+# --- CR-12: decompression bomb / 巨大画像拒否 ----------------------------
+
+def test_upload_oversized_dimensions_rejected(client):
+    """寸法上限(256x512)超の画像は decode/変換前に 413 で拒否。"""
+    big = _bmp_bytes(size=(300, 300))  # 幅 300 > MAX_IMAGE_W=256
+    r = client.post(
+        "/api/chara/graphics",
+        files={"file": ("big.bmp", big, "image/bmp")},
+        data={"graName": "big"},
+    )
+    assert r.status_code == 413, r.text
+
+
+def test_upload_pixel_bomb_rejected(client):
+    """総画素が上限超の画像も 413(全画素ループ前に拒否)。"""
+    # 256x512=131072 が上限。513 行で超過。幅は上限内。
+    bomb = _bmp_bytes(size=(256, 513))
+    r = client.post(
+        "/api/chara/graphics",
+        files={"file": ("bomb.bmp", bomb, "image/bmp")},
+        data={"graName": "bomb"},
+    )
+    assert r.status_code == 413, r.text
+
+
+def test_upload_within_limits_ok(client):
+    """上限内(192x320 等)は許可される。"""
+    ok = _bmp_bytes(size=(192, 320))
+    r = client.post(
+        "/api/chara/graphics",
+        files={"file": ("ok.bmp", ok, "image/bmp")},
+        data={"graName": "ok"},
+    )
+    assert r.status_code == 200, r.text
+
+
+# --- CR-12: chara GET レート制限 -----------------------------------------
+
+def test_chara_get_rate_limited(tmp_path):
+    """rate_limiter 注入時、GET png は IP レート超過で 429。"""
+    from app.ratelimit import RateLimiter
+    store = Store.open(":memory:")
+    app = FastAPI()
+    # chara_get を 2 req に絞った RateLimiter。
+    rl = RateLimiter()
+    rl._specs["chara_get"] = (2, 60.0)
+    app.include_router(build_chara_router(store, tmp_path / "assets",
+                                          rate_limiter=rl))
+    c = TestClient(app)
+    # まず1件アップロード(upload レートは別枠)。
+    c.post("/api/chara/graphics",
+           files={"file": ("a.bmp", _bmp_bytes(), "image/bmp")},
+           data={"graName": "g"})
+    url = "/api/chara/graphics/g/png"
+    assert c.get(url).status_code == 200
+    assert c.get(url).status_code == 200
+    assert c.get(url).status_code == 429  # 3回目超過
+    store.close()
+
+
 def test_case_insensitive_resolution(client):
     client.post(
         "/api/chara/graphics",

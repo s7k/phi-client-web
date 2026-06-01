@@ -18,7 +18,7 @@ import {
   hasBoard,
   hasItem,
   itemNo,
-  itemSrcRect,
+  itemDrawRect,
   buildWaterGrid,
   waterQuarterPatterns,
   waterQuarterChip,
@@ -92,6 +92,7 @@ export function drawMap(
         const dstY = row * cs - chipYOffset;
         for (const idx of chipIndices(cell.chip)) {
           const r = chipSrcRect(idx);
+          if (!r) continue; // 未知index → 描画スキップ(index0誤描画を避ける)
           ctx.drawImage(chipImg, r.sx, r.sy, r.sw, r.sh, dstX, dstY, cs, CHIP_HEIGHT);
         }
       }
@@ -110,6 +111,7 @@ export function drawMap(
           const hit = waterQuarterChip(q, patterns[q]);
           if (!hit) continue;
           const sr = chipQuarterSrcRect(hit.chipIndex, hit.srcQuarter);
+          if (!sr) continue;
           const dstX = cellX + (q & 1) * half;
           const dstY = cellY + ((q >> 1) & 1) * half;
           ctx.drawImage(chipImg, sr.sx, sr.sy, sr.sw, sr.sh, dstX, dstY, half, half);
@@ -123,6 +125,7 @@ export function drawMap(
         const cell = input.cells[cellIndex(col, row, dim)];
         if (!cell || !hasBoard(cell.attr)) continue;
         const r = chipSrcRect(boardChipIndex(cell.chip));
+        if (!r) continue;
         ctx.drawImage(
           chipImg,
           r.sx, r.sy, r.sw, r.sh,
@@ -136,20 +139,20 @@ export function drawMap(
       for (let col = 0; col < dim; col++) {
         const cell = input.cells[cellIndex(col, row, dim)];
         if (!cell || !hasItem(cell.attr)) continue;
-        const r = itemSrcRect(itemNo(cell.attr));
-        // アイテムはチップ上から8px下げ(C++ YPos+8)。
+        // 防御円('x'/'%')上は上11pxクリップで円内に収める(itemDrawRect)。
+        const r = itemDrawRect(itemNo(cell.attr), cell.chip, col * cs, row * cs);
         ctx.drawImage(
           imgs.items,
           r.sx, r.sy, r.sw, r.sh,
-          col * cs, row * cs + 8, r.sw, r.sh,
+          r.dx, r.dy, r.dw, r.dh,
         );
       }
     }
 
-    // 4. キャラ(この行)。x昇順で描画。
+    // 4. キャラ(この行)。移植元準拠で (x, layer) 昇順に描画(C++同順)。
     const rowChars = input.chars
       .filter((c) => c.y === row && c.x >= 0 && c.x < dim)
-      .sort((a, b) => a.x - b.x);
+      .sort((a, b) => (a.x - b.x) || (a.layer - b.layer));
     for (const ch of rowChars) {
       drawChara(ctx, ch, cs, imgs, animFrame);
     }
@@ -157,6 +160,14 @@ export function drawMap(
 
   // 5. キャラ名ラベル(中心=自キャラは除外)。
   drawCharaNames(ctx, input.chars, cs, dim);
+
+  // 6. 中心セル(自キャラ位置)ハイライト(移植元: QColor(255,255,255,40))。
+  const cx = Math.floor(dim / 2);
+  const cy = Math.floor(dim / 2);
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+  ctx.fillRect(cx * cs + 1, cy * cs + 1, cs - 2, cs - 2);
+  ctx.restore();
 }
 
 /** 1キャラを描画(スプライト or placeholder)。 */

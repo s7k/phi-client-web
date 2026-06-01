@@ -77,6 +77,57 @@ describe('drawMap 看板/アイテムoverlay', () => {
     // chip=null なのでベースなし、items 1回のみ。
     expect(drawImage).toHaveBeenCalledTimes(1);
   });
+
+  it('CR-17b: 通常チップ上アイテムは32×32等倍 +8px', () => {
+    const { ctx, drawImage } = makeCtx();
+    const c = cells(5);
+    c[0] = { chip: 0x20, attr: 0x10 }; // item_no=1, 通常床
+    const imgs: ImageRefs = { chip: null, items: dummyImg, chara: () => null };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: c, chars: [] }, imgs, 0);
+    const [, sx, sy, sw, sh, dx, dy, dw, dh] = drawImage.mock.calls[0];
+    expect([sx, sy, sw, sh]).toEqual([32, 0, 32, 32]);
+    expect([dx, dy, dw, dh]).toEqual([0, 8, 32, 32]);
+  });
+
+  it("CR-17b: 防御円('x')上アイテムは上11pxクリップ(高21px)", () => {
+    const { ctx, drawImage } = makeCtx();
+    const c = cells(5);
+    c[0] = { chip: 'x'.charCodeAt(0), attr: 0x10 }; // item_no=1, 円
+    const imgs: ImageRefs = { chip: null, items: dummyImg, chara: () => null };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: c, chars: [] }, imgs, 0);
+    const [, , sy, , sh, , dy, , dh] = drawImage.mock.calls[0];
+    expect(sy).toBe(0);
+    expect(sh).toBe(21);
+    expect(dy).toBe(8);
+    expect(dh).toBe(21);
+  });
+});
+
+describe('drawMap CR-17c 未知chip index スキップ', () => {
+  it('CHIP_BYTE_TO_INDEX 未マップbyteは index0(ground)へフォールバック描画', () => {
+    const { ctx, drawImage } = makeCtx();
+    const c = cells(5);
+    c[0] = { chip: 0xff, attr: 0 }; // 未マップbyte → chipIndices=[0]
+    const imgs: ImageRefs = { chip: dummyImg, items: null, chara: () => null };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: c, chars: [] }, imgs, 0);
+    // index0は有効 → 25回(全セル描画)。
+    expect(drawImage).toHaveBeenCalledTimes(25);
+  });
+});
+
+describe('drawMap CR-17d 中心セルハイライト', () => {
+  it('中心セルに半透明白枠を fillRect(rgba 0.16)', () => {
+    const fillRect = vi.fn();
+    const ctx = {
+      clearRect: vi.fn(), fillRect, drawImage: vi.fn(), fillText: vi.fn(),
+      save: vi.fn(), restore: vi.fn(),
+      fillStyle: '', font: '', textAlign: '', textBaseline: '',
+    } as unknown as CanvasRenderingContext2D;
+    drawMap(ctx, { size: 5, mapset: 'def', cells: cells(5), chars: [] }, { chip: null, items: null, chara: () => null }, 0);
+    // 5x5中心=(2,2), cs=32 → (65,65,30,30)。
+    const calls = (fillRect as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toContainEqual([2 * 32 + 1, 2 * 32 + 1, 30, 30]);
+  });
 });
 
 describe('drawMap キャラ描画', () => {
@@ -118,6 +169,29 @@ describe('drawMap キャラ描画', () => {
     // 5x5中心=(2,2)。名前ラベルfillTextは呼ばれない(スプライトはdrawImage)。
     const texts = fillText.mock.calls.map((c) => c[0]);
     expect(texts).not.toContain('Me');
+  });
+
+  it('CR-17a: 同セルは layer 昇順で描画(x同値→layer)', () => {
+    const { ctx, fillText } = makeCtx();
+    // 同セル(1,1)に2体。placeholder頭文字で描画順を観測。
+    // スプライト描画は名前ラベルより先に行われるため、先頭2件で順序を判定。
+    const top: MapChar = { ...baseChar, name: 'Top', gra: 'x', layer: 5 };
+    const bottom: MapChar = { ...baseChar, name: 'Bot', gra: 'x', layer: 1 };
+    const imgs: ImageRefs = { chip: null, items: null, chara: () => null };
+    // 入力順は top→bottom(逆順)。layer昇順なら描画は B(ottom)→T(op)。
+    drawMap(ctx, { size: 5, mapset: 'def', cells: cells(5), chars: [top, bottom] }, imgs, 0);
+    const sprites = fillText.mock.calls.slice(0, 2).map((c) => c[0]);
+    expect(sprites).toEqual(['B', 'T']);
+  });
+
+  it('CR-17a: x昇順が layer より優先', () => {
+    const { ctx, fillText } = makeCtx();
+    const a: MapChar = { ...baseChar, x: 3, name: 'A', gra: 'x', layer: 9 };
+    const b: MapChar = { ...baseChar, x: 0, name: 'B', gra: 'x', layer: 0 };
+    const imgs: ImageRefs = { chip: null, items: null, chara: () => null };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: cells(5), chars: [a, b] }, imgs, 0);
+    const sprites = fillText.mock.calls.slice(0, 2).map((c) => c[0]);
+    expect(sprites).toEqual(['B', 'A']);
   });
 
   it('magnify指定時は拡大サイズ+補正位置でdrawImage', () => {

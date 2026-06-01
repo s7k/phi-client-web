@@ -13,7 +13,17 @@ def test_safe_methods_always_allowed():
 
 
 def test_no_allowed_set_skips_check():
+    # 開発(fail_closed=False): 未設定は検査スキップで許可。
     assert is_origin_allowed("POST", "https://evil.com", None, None)
+
+
+def test_no_allowed_set_fail_closed_rejects():
+    # CR-8: 本番(fail_closed=True)では未設定で変更系を全拒否。
+    assert not is_origin_allowed("POST", "https://evil.com", None, None,
+                                 fail_closed=True)
+    assert not is_origin_allowed("PUT", None, None, None, fail_closed=True)
+    # 安全メソッドは fail_closed でも許可。
+    assert is_origin_allowed("GET", None, None, None, fail_closed=True)
 
 
 def test_post_origin_match():

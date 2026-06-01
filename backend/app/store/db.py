@@ -69,6 +69,14 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # CR-19: WAL モード([12]§7)。読み書きの並行性向上+書込時の読取ブロック軽減。
+    # synchronous=NORMAL は WAL 併用で耐障害性とスループットのバランスが良い。
+    # :memory: は WAL 非対応(memory のまま)だが PRAGMA は無害(エラーにしない)。
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+    except sqlite3.Error:  # pragma: no cover - 環境依存(:memory: 等)
+        pass
     return conn
 
 
@@ -167,6 +175,12 @@ class Store:
     # ------------------------------------------------------------------
     # sessions(ゲーム)
     # ------------------------------------------------------------------
+    # CR-18 補足: ライブのゲームセッション状態(socket/snapshot/seq)は設計上
+    # **インメモリ**(SessionManager 保持)で、本テーブルへは永続化していない。
+    # プロセス再起動でライブ状態は揮発する([07]§4.2 / [02]§6)。graceful
+    # shutdown(SessionManager.shutdown)で全セッションへ #x を送り後始末する。
+    # 本テーブル+以下 CRUD は将来の永続化/監査用に予約(現状ライブ未配線)。
+    # スキーマからは削除せず、用途を本コメントで明示(設計乖離の解消)。
 
     def create_session(
         self, session_id: str, char_id: str, state: str = "attached"

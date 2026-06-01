@@ -207,19 +207,31 @@ class LegacyRegistrar:
             raise RegisterTransport(f"送信失敗: {exc}") from exc
 
 
+def _has_control_chars(s: str) -> bool:
+    """改行・タブ等の制御文字(C0 + DEL)を含むか(CR-13 プロトコル行注入対策)。
+
+    `#ex-register name=<名> pass=<pass> ...` の1行に連結して送るため、改行や
+    制御文字が混入すると行を割って任意プロトコルコマンドを注入され得る。
+    """
+    return any(ord(c) < 0x20 or ord(c) == 0x7F for c in s)
+
+
 def validate_register_input(
-    name: str, password: str, image_index: int
+    name: str, password: str, image_index: int, mail: str = ""
 ) -> list[str]:
     """送信前のローカル検証([12]§2.1 準拠)。欠陥項目 list を返す(空=OK)。
 
     name: 2字以上 / pass: 正確に6字 / image: 0以上。
+    CR-13: name/pass/mail に改行・制御文字を含む場合は拒否(プロトコル行注入)。
     サーバ側でも再検証されるが事前弾きで往復削減。
     """
     fields: list[str] = []
-    if len(name) < 2:
+    if len(name) < 2 or _has_control_chars(name):
         fields.append("name")
-    if len(password) != PASS_LEN:
+    if len(password) != PASS_LEN or _has_control_chars(password):
         fields.append("pass")
     if image_index < 0:
         fields.append("image")
+    if mail and _has_control_chars(mail):
+        fields.append("mail")
     return fields

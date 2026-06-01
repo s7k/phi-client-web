@@ -12,7 +12,7 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import Config
+from app.config import Config, ConfigError, is_production
 from app.main import build_app
 
 
@@ -55,6 +55,53 @@ def test_config_defaults_and_ephemeral_key():
     assert cfg.legacy_port == 0
     assert cfg.secret_key_ephemeral is True
     assert len(cfg.secret_key) > 0  # Fernet 鍵
+    assert cfg.production is False
+
+
+# ----------------------------------------------------------------------
+# CR-8/CR-9: 本番 fail-closed(未設定で起動失敗)
+# ----------------------------------------------------------------------
+
+def test_is_production_flag():
+    assert is_production({"PHI_ENV": "production"})
+    assert is_production({"PHI_ENV": "Production"})
+    assert not is_production({"PHI_ENV": "development"})
+    assert not is_production({})
+
+
+def test_prod_missing_secret_key_fails():
+    """CR-9: 本番で PHI_SECRET_KEY 未設定 → ConfigError(揮発鍵禁止)。"""
+    env = {
+        "PHI_ENV": "production",
+        "PHI_ALLOWED_ORIGINS": "https://phi.example",
+    }
+    with pytest.raises(ConfigError):
+        Config.from_env(env)
+
+
+def test_prod_missing_allowed_origins_fails():
+    """CR-8: 本番で PHI_ALLOWED_ORIGINS 未設定 → ConfigError(fail-open 禁止)。"""
+    from app.auth import UidCipher
+    env = {
+        "PHI_ENV": "production",
+        "PHI_SECRET_KEY": UidCipher.generate_key().decode(),
+    }
+    with pytest.raises(ConfigError):
+        Config.from_env(env)
+
+
+def test_prod_full_config_ok():
+    """本番でも両方設定済なら起動可・production=True。"""
+    from app.auth import UidCipher
+    env = {
+        "PHI_ENV": "production",
+        "PHI_SECRET_KEY": UidCipher.generate_key().decode(),
+        "PHI_ALLOWED_ORIGINS": "https://phi.example",
+    }
+    cfg = Config.from_env(env)
+    assert cfg.production is True
+    assert cfg.secret_key_ephemeral is False
+    assert cfg.allowed_origins == {"https://phi.example"}
 
 
 # ----------------------------------------------------------------------

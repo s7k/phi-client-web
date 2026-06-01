@@ -58,6 +58,7 @@ def build_app(config: Config | None = None):
         assets_dir=cfg.assets_dir,
         registrar_factory=registrar_factory,
         allowed_origins=cfg.allowed_origins,
+        production=cfg.production,
     )
     app.state.config = cfg
 

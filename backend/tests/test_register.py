@@ -169,3 +169,69 @@ def test_validate_input():
     assert validate_register_input("Hero", "short", 0) == ["pass"]
     assert validate_register_input("Hero", "abc123", -1) == ["image"]
     assert set(validate_register_input("H", "x", -1)) == {"name", "pass", "image"}
+
+
+# --- CR-13: プロトコル行注入(改行/制御文字)拒否 ------------------------
+
+def test_validate_rejects_newline_in_name():
+    assert "name" in validate_register_input("He\nro", "abc123", 0)
+    assert "name" in validate_register_input("He\r\n#x", "abc123", 0)
+
+
+def test_validate_rejects_control_char_in_pass():
+    # 6字だが制御文字混入 → pass 欠陥。
+    assert "pass" in validate_register_input("Hero", "ab\x00d12", 0)
+    assert "pass" in validate_register_input("Hero", "ab\tc12", 0)
+
+
+def test_validate_rejects_newline_in_mail():
+    bad = validate_register_input("Hero", "abc123", 0, mail="a@b\n#kill")
+    assert "mail" in bad
+
+
+def test_validate_clean_mail_ok():
+    assert validate_register_input("Hero", "abc123", 0, mail="a@b.example") == []
+
+
+# --- CR-10: XFF 詐称耐性(client_ip) -------------------------------------
+
+class _FakeClient:
+    def __init__(self, host):
+        self.host = host
+
+
+class _FakeReq:
+    def __init__(self, peer, xff=None):
+        self.client = _FakeClient(peer)
+        self.headers = {}
+        if xff is not None:
+            self.headers["x-forwarded-for"] = xff
+
+
+def test_client_ip_ignores_xff_when_no_trusted_proxy():
+    from app.rest.register import client_ip
+    # trusted_hops=0(既定): XFF を信用せず peer IP のみ。
+    req = _FakeReq("10.0.0.1", xff="1.2.3.4, 5.6.7.8")
+    assert client_ip(req, trusted_hops=0) == "10.0.0.1"
+
+
+def test_client_ip_uses_real_client_behind_one_proxy():
+    from app.rest.register import client_ip
+    # trusted_hops=1: 右から1段(=直近プロキシ=peer 相当)を剥がした手前。
+    # XFF = "<client>, <proxy>" の形。peer=プロキシ。
+    req = _FakeReq("10.0.0.1", xff="203.0.113.9, 10.0.0.1")
+    assert client_ip(req, trusted_hops=1) == "203.0.113.9"
+
+
+def test_client_ip_spoofed_left_xff_not_used():
+    from app.rest.register import client_ip
+    # 攻撃者が左に偽 IP を詰めても、trusted_hops=1 では右から1段手前を採用。
+    req = _FakeReq("10.0.0.1", xff="9.9.9.9, 203.0.113.9, 10.0.0.1")
+    # hops=1 → idx = 3-1-1 = 1 → 203.0.113.9(偽の 9.9.9.9 は無視)。
+    assert client_ip(req, trusted_hops=1) == "203.0.113.9"
+
+
+def test_client_ip_no_xff_falls_back_to_peer():
+    from app.rest.register import client_ip
+    req = _FakeReq("198.51.100.2")
+    assert client_ip(req, trusted_hops=2) == "198.51.100.2"

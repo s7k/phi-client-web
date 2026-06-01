@@ -157,6 +157,13 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
   - FE(262 tests): CR-3 notice/worldTransfer/非相関error配線+noticeStore+表示, CR-14 request timeout/全pending reject, CR-15 再接続UI(帯+手動再接続), CR-16 message.seq型, 再接続時の自動再auth+reattach, 契約往復カバレッジテスト。
   - **要確認(F2)**: 再アタッチ時BEが同一session id払出すか(FE前提)。CR-8〜13 security, CR-17 描画忠実度, CR-18 graceful shutdown, CR-19 WAL は F2。
 
+## 6.6 コードレビュー是正 F2(セキュリティ+アーキ+描画忠実度)
+
+- BE(310 tests): CR-8 CSRF fail-closed(本番), CR-9 一時鍵は開発のみ(本番起動失敗), CR-10 XFF信頼段数(PHI_TRUSTED_PROXY_HOPS)+レートバケットLRU/TTL GC, CR-11 login総当たりスロットル, CR-12 画像bomb寸法上限+chara GETレート, CR-13 register制御文字拒否, CR-18 graceful shutdownで全#x, CR-19 SQLite WAL, L-4 内部エラー非露出。新env: PHI_ENV/PHI_TRUSTED_PROXY_HOPS。
+- FE(278 tests): CR-17a layer順ソート, CR-17b アイテム円クリップ, CR-17c 未知chip→スキップ, CR-17d center-cellハイライト, L2 EagleEye縮尺補正, L4 自己通知抑止。
+- Docker: 本番モード既定(PHI_ENV=production)+XFF1段、`docker compose up`で起動・疎通200を実機確認。
+- 残: WS経路のXFF信頼段数(現状peer host)、chara GETは認証でなくレートで対応(将来認証)。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WsClient } from '../src/ws/client';
-import { WsController } from '../src/ws/controller';
+import { WsController, isSelfEcho, selfNameOf } from '../src/ws/controller';
 import { useSessionStore } from '../src/stores/sessionStore';
 import { useStatusStore } from '../src/stores/statusStore';
 import { useChatStore } from '../src/stores/chatStore';
@@ -303,6 +303,39 @@ describe('CR-3 notice/worldTransfer/error 配線', () => {
       error: { code: 'BAD_REQUEST', message: 'x' },
     } as ServerMessage);
     expect(useUiStore.getState().errors).toHaveLength(0);
+  });
+});
+
+describe('L4 自己通知抑止(isSelfEcho / selfNameOf)', () => {
+  function setSelfName(session: string, name: string) {
+    useStatusStore.getState().setStatus(session, {
+      name, hp: 1, maxHp: 1, mp: 0, maxMp: 0, exp: 0, gp: 0, f: 0, w: 0, m: 0, c: 0,
+    });
+  }
+
+  it('selfNameOf: status 優先、無ければ notice', () => {
+    setSelfName('s1', 'Hero');
+    expect(selfNameOf('s1')).toBe('Hero');
+    useNoticeStore.getState().setNotice('s2', { name: 'Mage' });
+    expect(selfNameOf('s2')).toBe('Mage');
+    expect(selfNameOf('s3')).toBeUndefined();
+  });
+
+  it('channel=log かつ from=自キャラ名 → 抑止対象', () => {
+    setSelfName('s1', 'Hero');
+    expect(isSelfEcho('s1', 'log', 'Hero')).toBe(true);
+  });
+
+  it('他者発言/他チャネル/from無しは抑止しない', () => {
+    setSelfName('s1', 'Hero');
+    expect(isSelfEcho('s1', 'log', 'Other')).toBe(false);
+    expect(isSelfEcho('s1', 'priv', 'Hero')).toBe(false); // priv は抑止外
+    expect(isSelfEcho('s1', 'loud', 'Hero')).toBe(false);
+    expect(isSelfEcho('s1', 'log', undefined)).toBe(false);
+  });
+
+  it('自キャラ名未取得時は抑止しない', () => {
+    expect(isSelfEcho('s9', 'log', 'Hero')).toBe(false);
   });
 });
 

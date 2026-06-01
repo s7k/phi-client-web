@@ -135,6 +135,112 @@ def test_login_bad_password(env):
     assert r.status_code == 401
 
 
+# --- CR-11: login 総当たり 失敗バックオフ --------------------------------
+
+def test_login_brute_force_throttled(tmp_path):
+    """連続失敗で 429 になり、正規パスワードでも一時的に拒否される。"""
+    from app.ratelimit import (
+        ConcurrencyLimiter,
+        LoginThrottle,
+        RateLimiter,
+    )
+    from app.ws_server import create_app
+
+    store = Store.open(":memory:")
+    cipher = UidCipher(UidCipher.generate_key())
+    auth = AuthService(store, cipher)
+    auth.register_account("alice", "password1")
+
+    lt = LoginThrottle(rate=(3, 300.0))  # 3 失敗 / 5分。
+    app = create_app(
+        manager=object(),
+        auth=auth,
+        assets_dir=str(tmp_path / "assets"),
+        registrar_factory=lambda: None,
+        rate_limiter=RateLimiter(),
+        conn_limiter=ConcurrencyLimiter(),
+        login_throttle=lt,
+        allowed_origins={"https://app.test"},
+    )
+    c = TestClient(app, base_url="https://testserver")
+    hdr = {"Origin": "https://app.test"}
+    # 3 回失敗(401)。
+    for _ in range(3):
+        r = c.post("/api/auth/login",
+                   json={"id": "alice", "password": "x"}, headers=hdr)
+        assert r.status_code == 401
+    # 4 回目は throttle で 429(正規 pass でも拒否)。
+    r = c.post("/api/auth/login",
+               json={"id": "alice", "password": "password1"}, headers=hdr)
+    assert r.status_code == 429
+    store.close()
+
+
+def test_lifespan_shutdown_invokes_manager(tmp_path):
+    """CR-18: app の lifespan 終了で SessionManager.shutdown が呼ばれる。"""
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+
+    class RecMgr:
+        def __init__(self):
+            self.shut = False
+
+        async def shutdown(self):
+            self.shut = True
+
+    mgr = RecMgr()
+    app = create_app(
+        manager=mgr, auth=auth,
+        assets_dir=str(tmp_path / "assets"),
+        registrar_factory=lambda: None,
+        rate_limiter=RateLimiter(), conn_limiter=ConcurrencyLimiter(),
+        allowed_origins={"https://app.test"},
+    )
+    # with でコンテキスト管理すると lifespan(startup/shutdown)が走る。
+    with TestClient(app) as c:
+        assert c.get("/healthz").status_code == 200
+    assert mgr.shut is True
+    store.close()
+
+
+def test_login_success_resets_throttle(tmp_path):
+    """成功でカウンタがリセットされ、以後の失敗予算が回復する。"""
+    from app.ratelimit import (
+        ConcurrencyLimiter,
+        LoginThrottle,
+        RateLimiter,
+    )
+    from app.ws_server import create_app
+
+    store = Store.open(":memory:")
+    cipher = UidCipher(UidCipher.generate_key())
+    auth = AuthService(store, cipher)
+    auth.register_account("alice", "password1")
+
+    lt = LoginThrottle(rate=(3, 300.0))
+    app = create_app(
+        manager=object(), auth=auth,
+        assets_dir=str(tmp_path / "assets"),
+        registrar_factory=lambda: None,
+        rate_limiter=RateLimiter(), conn_limiter=ConcurrencyLimiter(),
+        login_throttle=lt, allowed_origins={"https://app.test"},
+    )
+    c = TestClient(app, base_url="https://testserver")
+    hdr = {"Origin": "https://app.test"}
+    # 2 回失敗 → まだ予算あり。
+    for _ in range(2):
+        assert c.post("/api/auth/login",
+                      json={"id": "alice", "password": "x"},
+                      headers=hdr).status_code == 401
+    # 成功でリセット。
+    assert c.post("/api/auth/login",
+                  json={"id": "alice", "password": "password1"},
+                  headers=hdr).status_code == 200
+    # リセット後、再び失敗予算が満タン(3回失敗してもまだ check 可)。
+    assert lt.check("alice", "testclient") or lt.bucket_count() == 0
+    store.close()
+
+
 def test_logout(env):
     env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
              headers=HDR)

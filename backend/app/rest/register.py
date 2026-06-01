@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,13 +27,49 @@ from app.register import (
 )
 from app.store.db import Store
 
+logger = logging.getLogger("app.rest.register")
 
-def _client_ip(request: Request) -> str:
-    """クライアント IP(プロキシ前提で X-Forwarded-For 先頭 → fallback peer)。"""
+
+def _trusted_proxy_hops() -> int:
+    """信頼するリバースプロキシ段数(env `PHI_TRUSTED_PROXY_HOPS`, 既定 0)。
+
+    0 = XFF を一切信用せず peer IP(`request.client.host`)のみ使用。
+    N = XFF の **右から N+1 番目**(=信頼プロキシ群の手前=実クライアント)を採用。
+    """
+    try:
+        return max(0, int(os.environ.get("PHI_TRUSTED_PROXY_HOPS", "0") or 0))
+    except ValueError:
+        return 0
+
+
+def client_ip(request: Request, *, trusted_hops: int | None = None) -> str:
+    """レート制限キー用のクライアント IP(CR-10: XFF 詐称耐性)。
+
+    `trusted_hops=0`(既定)では XFF を無視し peer IP のみ使う。逆プロキシ配下で
+    運用する場合のみ `PHI_TRUSTED_PROXY_HOPS` に段数を設定し、XFF の右から
+    信頼段数分を剥がした先頭(=実クライアント)を採用する。これにより攻撃者が
+    付与した左側の偽 XFF をキーに混ぜられない。
+    """
+    hops = _trusted_proxy_hops() if trusted_hops is None else trusted_hops
+    peer = request.client.host if request.client else "unknown"
+    if hops <= 0:
+        return peer
     xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    if not xff:
+        return peer
+    parts = [p.strip() for p in xff.split(",") if p.strip()]
+    if not parts:
+        return peer
+    # 右から hops 段(信頼プロキシ)を剥がした手前を実クライアントとする。
+    idx = len(parts) - hops - 1
+    if idx < 0:
+        # 段数が XFF 長を超える(想定外)→ 最左を採用。
+        idx = 0
+    return parts[idx]
+
+
+# 後方互換エイリアス。
+_client_ip = client_ip
 
 
 def build_register_router(
@@ -89,8 +127,8 @@ def build_register_router(
         except (TypeError, ValueError) as exc:
             raise HTTPException(400, "imageIndex が不正") from exc
 
-        # 事前ローカル検証([12]§2.1)。
-        bad = validate_register_input(name, password, image_index)
+        # 事前ローカル検証([12]§2.1, CR-13: mail も改行/制御文字検査)。
+        bad = validate_register_input(name, password, image_index, mail)
         if bad:
             raise HTTPException(
                 400,
@@ -120,7 +158,9 @@ def build_register_router(
                 legacy_uid_enc=uid_enc,
             )
         except Exception as exc:  # noqa: BLE001 - FK 等
-            raise HTTPException(500, f"キャラ登録の永続化失敗: {exc}") from exc
+            # L-4: 内部例外文字列はレスポンスに載せず、詳細はサーバログのみ。
+            logger.exception("キャラ登録の永続化失敗 char_id=%s", char_id)
+            raise HTTPException(500, "内部エラー") from exc
 
         return {"charId": char_id, "name": result.name}
 

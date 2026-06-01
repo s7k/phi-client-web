@@ -57,16 +57,24 @@ export function chipIndices(chipByte: number): number[] {
   return Array.isArray(v) ? v : [v];
 }
 
-/** 透過PNGチップシート上の index → 矩形(sx,sy,sw,sh)。 */
+/** 有効チップindexか(0..CHIP_COUNT-1)。範囲外は描画スキップ対象。 */
+export function chipIndexValid(index: number): boolean {
+  return Number.isInteger(index) && index >= 0 && index < CHIP_COUNT;
+}
+
+/**
+ * 透過PNGチップシート上の index → 矩形(sx,sy,sw,sh)。
+ * 範囲外indexは null(移植元 `_ChipRenderer.draw` の `idx >= len(chips)` スキップ準拠)。
+ */
 export function chipSrcRect(index: number): {
   sx: number;
   sy: number;
   sw: number;
   sh: number;
-} {
-  const i = index >= 0 && index < CHIP_COUNT ? index : 0;
-  const col = i % CHIPS_PER_ROW;
-  const row = Math.floor(i / CHIPS_PER_ROW);
+} | null {
+  if (!chipIndexValid(index)) return null;
+  const col = index % CHIPS_PER_ROW;
+  const row = Math.floor(index / CHIPS_PER_ROW);
   return {
     sx: col * CHIP_SIZE,
     sy: row * CHIP_HEIGHT,
@@ -124,6 +132,68 @@ export function itemSrcRect(no: number): {
     sw: ITEM_SPRITE_SIZE,
     sh: ITEM_SPRITE_SIZE,
   };
+}
+
+/** 防御円チップbyte('x'=14, '%'=15)。円内に収めるためアイテム上端をクリップ。 */
+const CIRCLE_CHIPS: ReadonlySet<number> = new Set(
+  ['x', '%'].map((c) => c.charCodeAt(0)),
+);
+
+/** 防御円チップか('x'/'%')。 */
+export function isCircleChip(chipByte: number): boolean {
+  return CIRCLE_CHIPS.has(chipByte);
+}
+
+/** アイテムクリップ高(円内に収める可視高 = 32-11)。 */
+export const ITEM_CLIP_H = ITEM_SPRITE_SIZE - 11; // 21
+
+/**
+ * アイテム描画の src/dst 矩形を算出(map_widget.py `_ItemRenderer.draw` 移植)。
+ *
+ * - 通常セル: 32×32 を (col*cs, row*cs+8) に等倍描画。
+ * - 防御円('x'/'%')上: 上11pxをクリップし高21pxのみ描画(円内に収める)。
+ *   item_no 5/6 はスプライト先頭が空きのため src_y を +5 して内容をずらす。
+ *
+ * @param no       item_no(0-7)。
+ * @param chipByte 下地チップbyte(防御円判定)。
+ * @param dstX     セル左上X(col*cs)。
+ * @param dstY     セル左上Y(row*cs)。
+ */
+export function itemDrawRect(
+  no: number,
+  chipByte: number,
+  dstX: number,
+  dstY: number,
+): {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+} {
+  const s = ITEM_SPRITE_SIZE;
+  const srcX = no * s;
+  // アイテムはチップ上端から8px下げ(C++ YPos+8)。
+  const drawY = dstY + 8;
+
+  if (isCircleChip(chipByte)) {
+    // DrawPart: 上11pxクリップで可視21pxのみ。item 5/6 は内容を src_y+5。
+    const srcYOffset = no === 5 || no === 6 ? 5 : 0;
+    return {
+      sx: srcX,
+      sy: srcYOffset,
+      sw: s,
+      sh: ITEM_CLIP_H,
+      dx: dstX,
+      dy: drawY,
+      dw: s,
+      dh: ITEM_CLIP_H,
+    };
+  }
+  return { sx: srcX, sy: 0, sw: s, sh: s, dx: dstX, dy: drawY, dw: s, dh: s };
 }
 
 // ── キャラ ────────────────────────────────────────────────
@@ -308,8 +378,9 @@ export function waterQuarterChip(
 export function chipQuarterSrcRect(
   chipIndex: number,
   quarter: number,
-): { sx: number; sy: number; sw: number; sh: number } {
+): { sx: number; sy: number; sw: number; sh: number } | null {
   const base = chipSrcRect(chipIndex);
+  if (!base) return null;
   const half = CHIP_SIZE / 2; // 16
   const sx = base.sx + (quarter & 1) * half;
   // 内容はチップ先頭から16px下。上16px透過 + quarter下段でさらに+16。

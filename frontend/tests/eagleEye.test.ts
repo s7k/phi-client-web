@@ -58,6 +58,17 @@ describe('drawEagleEye', () => {
     );
   });
 
+  it('L2: 48pxチップを縮尺で配置(本体潰さず: 高24px・上8pxシフト)', () => {
+    const ctx = mockCtx();
+    const input: EagleEyeInput = {
+      width: 1, height: 1, self: { x: 0, y: 0 }, cells: grid(1),
+    };
+    drawEagleEye(ctx, input, { chip: chipImg });
+    const [, , , , , dx, dy, dw, dh] = ctx.drawImage.mock.calls[0];
+    // scale = 16/32 = 0.5 → dstH=48*0.5=24, yOffset=(48-32)*0.5=8。
+    expect([dx, dy, dw, dh]).toEqual([0, -8, EE_CELL, 24]);
+  });
+
   it('chip 未ロード時はタイル描画スキップ(枠は出す)', () => {
     const ctx = mockCtx();
     const input: EagleEyeInput = {

@@ -18,6 +18,10 @@ import {
   hasItem,
   itemNo,
   itemSrcRect,
+  itemDrawRect,
+  isCircleChip,
+  ITEM_CLIP_H,
+  chipIndexValid,
   gridDim,
   cellIndex,
   magnifiedDst,
@@ -65,9 +69,11 @@ describe('chipSrcRect(透過PNG 16列×2行)', () => {
   it('index 31 → 2行目最終', () => {
     expect(chipSrcRect(31)).toEqual({ sx: 15 * 32, sy: 48, sw: 32, sh: 48 });
   });
-  it('範囲外は0扱い', () => {
-    expect(chipSrcRect(99)).toEqual(chipSrcRect(0));
-    expect(chipSrcRect(-1)).toEqual(chipSrcRect(0));
+  it('範囲外indexはnull(CR-17c: index0誤描画でなくスキップ)', () => {
+    expect(chipSrcRect(99)).toBeNull();
+    expect(chipSrcRect(32)).toBeNull();
+    expect(chipSrcRect(-1)).toBeNull();
+    expect(chipSrcRect(1.5)).toBeNull();
   });
 });
 
@@ -148,6 +154,48 @@ describe('アイテムoverlay', () => {
   it('itemSrcRect 横一列32px', () => {
     expect(itemSrcRect(0)).toEqual({ sx: 0, sy: 0, sw: 32, sh: 32 });
     expect(itemSrcRect(5)).toEqual({ sx: 160, sy: 0, sw: 32, sh: 32 });
+  });
+});
+
+describe('CR-17c: chipIndexValid', () => {
+  it('0..31 のみ有効、範囲外/非整数は無効', () => {
+    expect(chipIndexValid(0)).toBe(true);
+    expect(chipIndexValid(31)).toBe(true);
+    expect(chipIndexValid(32)).toBe(false);
+    expect(chipIndexValid(-1)).toBe(false);
+    expect(chipIndexValid(1.5)).toBe(false);
+  });
+});
+
+describe('CR-17b: アイテム円クリップ(itemDrawRect)', () => {
+  it('防御円判定 isCircleChip', () => {
+    expect(isCircleChip('x'.charCodeAt(0))).toBe(true);
+    expect(isCircleChip('%'.charCodeAt(0))).toBe(true);
+    expect(isCircleChip(' '.charCodeAt(0))).toBe(false);
+  });
+
+  it('通常チップ: 32×32 等倍、dst は +8px 下げ', () => {
+    const r = itemDrawRect(2, ' '.charCodeAt(0), 64, 96);
+    expect(r).toEqual({
+      sx: 2 * 32, sy: 0, sw: 32, sh: 32,
+      dx: 64, dy: 96 + 8, dw: 32, dh: 32,
+    });
+  });
+
+  it("防御円('x')上: 上11pxクリップで高21px(item 0)", () => {
+    const r = itemDrawRect(0, 'x'.charCodeAt(0), 0, 0);
+    expect(ITEM_CLIP_H).toBe(21);
+    expect(r).toEqual({
+      sx: 0, sy: 0, sw: 32, sh: 21,
+      dx: 0, dy: 8, dw: 32, dh: 21,
+    });
+  });
+
+  it("防御円('%')上の item 5/6 は src_y を +5", () => {
+    expect(itemDrawRect(5, '%'.charCodeAt(0), 0, 0).sy).toBe(5);
+    expect(itemDrawRect(6, '%'.charCodeAt(0), 0, 0).sy).toBe(5);
+    // item 5/6 以外は src_y=0
+    expect(itemDrawRect(4, '%'.charCodeAt(0), 0, 0).sy).toBe(0);
   });
 });
 

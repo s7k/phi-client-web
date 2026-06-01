@@ -25,6 +25,34 @@ def test_migrate_idempotent(store):
     store.migrate()
 
 
+# ----------------------------------------------------------------------
+# CR-19: SQLite WAL / synchronous
+# ----------------------------------------------------------------------
+
+def test_wal_mode_on_file_db(tmp_path):
+    """ファイル DB で journal_mode=WAL / synchronous=NORMAL(=1)が反映。"""
+    from app.store.db import connect
+    conn = connect(str(tmp_path / "wal.db"))
+    try:
+        jm = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert jm.lower() == "wal"
+        sync = conn.execute("PRAGMA synchronous").fetchone()[0]
+        assert sync == 1  # NORMAL
+    finally:
+        conn.close()
+
+
+def test_memory_db_pragma_no_error():
+    """:memory: でも WAL PRAGMA でエラーにならず接続できる。"""
+    from app.store.db import connect
+    conn = connect(":memory:")
+    try:
+        # :memory: は WAL 非対応(memory のまま)だが接続自体は成功する。
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_tables_present(store):
     rows = store.conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"

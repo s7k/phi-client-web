@@ -65,6 +65,7 @@ class WsConnection:
         *,
         rate_limiter=None,
         conn_limiter=None,
+        login_throttle=None,
         store=None,
     ) -> None:
         self._ws = ws
@@ -74,6 +75,7 @@ class WsConnection:
         self._store = store if store is not None else getattr(auth, "store", None)
         self._rl = rate_limiter   # RateLimiter | None(command.raw/chat)
         self._cl = conn_limiter   # ConcurrencyLimiter | None(WS同時接続)
+        self._lt = login_throttle  # LoginThrottle | None(CR-11 総当たり抑止)
         self._outbound: asyncio.Queue[dict] = asyncio.Queue()
         # この接続が開いた session 群(切断時に detach)。
         self._sessions: list[str] = []
@@ -146,9 +148,10 @@ class WsConnection:
             await self._error(msg, "BAD_REQUEST", str(exc))
         except _DISCONNECT_EXC:
             raise
-        except Exception as exc:  # noqa: BLE001 - 接続維持のため最終捕捉
+        except Exception:  # noqa: BLE001 - 接続維持のため最終捕捉
+            # L-4: 内部例外文字列はクライアントへ返さず、詳細はサーバログのみ。
             logging.getLogger("phi.ws").exception("dispatch failed")
-            await self._error(msg, "INTERNAL", str(exc))
+            await self._error(msg, "INTERNAL", "内部エラー")
 
     async def _dispatch_inner(self, msg: dict) -> None:
         t = msg.get("type")
@@ -204,8 +207,22 @@ class WsConnection:
         if sid:
             account_id = self._auth.validate(sid)
         elif msg.get("id") is not None and msg.get("password") is not None:
-            if self._auth.authenticate(msg["id"], msg["password"]):
-                account_id = msg["id"]
+            # CR-11: WS auth(id+password)も account+IP で失敗バックオフ。
+            cand = str(msg["id"])
+            ip = self._client_ip()
+            if self._lt is not None and not self._lt.check(cand, ip):
+                await self._ws.send_json({
+                    "type": "auth", "reqId": msg.get("reqId"), "ok": False,
+                    "error": {"code": "RATE_LIMITED", "message": "ログイン試行が多すぎます"},
+                })
+                return
+            if self._auth.authenticate(cand, msg["password"]):
+                account_id = cand
+                if self._lt is not None:
+                    self._lt.reset_key(cand, ip)
+            else:
+                if self._lt is not None:
+                    self._lt.record_failure(cand, ip)
 
         if account_id is None:
             await self._ws.send_json({
@@ -219,6 +236,12 @@ class WsConnection:
             return
         self._account_id = account_id
         await self._send_auth_ok(msg, account_id, stub=False)
+
+    def _client_ip(self) -> str:
+        """WS 接続元 IP(throttle キー用)。取得不能は "unknown"。"""
+        client = getattr(self._ws, "client", None)
+        host = getattr(client, "host", None)
+        return host or "unknown"
 
     def _acquire_conn(self, account_id: str) -> bool:
         """WS同時接続数を確保(5/account, [12]§4)。確保済なら True 維持。"""
@@ -430,7 +453,9 @@ def create_app(
     registrar_factory=None,
     rate_limiter=None,
     conn_limiter=None,
+    login_throttle=None,
     allowed_origins=None,
+    production=False,
 ):
     """FastAPI アプリを生成(REST 統合 + WS)。
 
@@ -449,18 +474,28 @@ def create_app(
 
     *auth* 省略時は `PHI_DB_PATH` から Store を開き AuthService を構築。
     """
+    import contextlib
     import os
 
     from fastapi import FastAPI, WebSocket
 
     from app.csrf import is_origin_allowed, load_allowed_origins
-    from app.ratelimit import ConcurrencyLimiter, RateLimiter
+    from app.ratelimit import ConcurrencyLimiter, LoginThrottle, RateLimiter
 
-    app = FastAPI(title="phi-web gateway")
     mgr = manager or SessionManager(
         host=os.environ.get("PHI_HOST", ""),
         port=int(os.environ.get("PHI_PORT", "0") or 0),
     )
+
+    # CR-18: graceful shutdown で全アクティブセッションへ #x + detach。
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        yield
+        shutdown = getattr(mgr, "shutdown", None)
+        if callable(shutdown):
+            await shutdown()
+
+    app = FastAPI(title="phi-web gateway", lifespan=lifespan)
     app.state.session_manager = mgr
 
     if auth is None:  # pragma: no cover - 統合層(本番起動)
@@ -471,10 +506,12 @@ def create_app(
 
     rate_limiter = rate_limiter if rate_limiter is not None else RateLimiter()
     conn_limiter = conn_limiter if conn_limiter is not None else ConcurrencyLimiter()
+    login_throttle = login_throttle if login_throttle is not None else LoginThrottle()
     if allowed_origins is None:
         allowed_origins = load_allowed_origins()
     app.state.rate_limiter = rate_limiter
     app.state.conn_limiter = conn_limiter
+    app.state.login_throttle = login_throttle
 
     require_account = make_require_account(auth)
 
@@ -488,6 +525,7 @@ def create_app(
             request.headers.get("origin"),
             request.headers.get("referer"),
             allowed_origins,
+            fail_closed=production,
         ):
             return Response(status_code=403, content="CSRF: origin 不許可")
         return await call_next(request)
@@ -497,10 +535,20 @@ def create_app(
     # ------------------------------------------------------------------
     @app.post("/api/auth/login")
     async def login(request: Request, response: Response):
+        from app.rest.register import client_ip
+
         body = await request.json()
-        sid = auth.login(body.get("id", ""), body.get("password", ""))
+        account = str(body.get("id", ""))
+        ip = client_ip(request)
+        # CR-11: account+IP の失敗バックオフ。残トークン無しは 429。
+        if not login_throttle.check(account, ip):
+            return Response(status_code=429, content="ログイン試行が多すぎます")
+        sid = auth.login(account, body.get("password", ""))
         if sid is None:
+            login_throttle.record_failure(account, ip)
             return Response(status_code=401)
+        # 成功で失敗カウントをリセット。
+        login_throttle.reset_key(account, ip)
         response.set_cookie(
             COOKIE_NAME, sid, httponly=True, secure=True, samesite="strict"
         )
@@ -553,6 +601,7 @@ def create_app(
         conn = WsConnection(
             websocket, mgr, auth=auth,
             rate_limiter=rate_limiter, conn_limiter=conn_limiter,
+            login_throttle=login_throttle,
         )
         await conn.run()
 

@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS characters (
 );
 
 -- ゲームセッション([02]§6)
+-- CR-18: ライブのゲームセッション状態は設計上インメモリ(SessionManager)で
+-- 管理し、本テーブルへは永続化しない(プロセス再起動で揮発)。将来の永続化/
+-- 監査用に予約。現状ライブフローからは未使用(db.py の CRUD コメント参照)。
 CREATE TABLE IF NOT EXISTS sessions (
   session_id   TEXT PRIMARY KEY,
   char_id      TEXT NOT NULL REFERENCES characters(char_id),

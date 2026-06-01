@@ -12,6 +12,10 @@ services:
       PHI_ALLOWED_ORIGINS: ${PHI_ALLOWED_ORIGINS:-http://localhost:8080}
       PHI_DB_PATH: /data/phi.db
       PHI_ASSETS_DIR: /srv/assets
+      # 本番モード: PHI_SECRET_KEY/PHI_ALLOWED_ORIGINS 未設定なら起動失敗(fail-closed)
+      PHI_ENV: ${PHI_ENV:-production}
+      # エッジ(nginx)を1段信頼しXFFから実クライアントIPを取得(レート制限の正確化)
+      PHI_TRUSTED_PROXY_HOPS: ${PHI_TRUSTED_PROXY_HOPS:-1}
       # レガシー既定接続先(キャラ未指定時の既定。任意)
       PHI_HOST: ${PHI_HOST:-}
       PHI_PORT: ${PHI_PORT:-20000}

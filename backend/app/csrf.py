@@ -43,18 +43,25 @@ def is_origin_allowed(
     origin_header: str | None,
     referer_header: str | None,
     allowed: set[str] | None,
+    *,
+    fail_closed: bool = False,
 ) -> bool:
     """CSRF 判定。許可 → True / 拒否 → False。
 
     - 安全メソッド → 常に許可。
-    - allowed=None(未設定)→ 検査スキップで許可。
+    - allowed=None(未設定):
+        - fail_closed=False(開発)→ 検査スキップで許可(従来挙動)。
+        - fail_closed=True(本番, CR-8)→ 変更系を全拒否(fail-closed)。
     - Origin(無ければ Referer)の origin が allowed に含まれれば許可。
     - どちらも無い変更系 → 拒否。
+
+    本番では起動時に `Config.from_env` が未設定を `ConfigError` で弾くため
+    通常 allowed=None には到達しないが、多層防御として本フラグでも拒否する。
     """
     if method.upper() in SAFE_METHODS:
         return True
     if allowed is None:
-        return True
+        return not fail_closed
     src = origin_header or referer_header
     origin = _origin_of(src) if src else None
     if origin is None:
