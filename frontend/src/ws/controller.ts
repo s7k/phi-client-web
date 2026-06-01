@@ -16,6 +16,11 @@ import type {
   AuthResponse,
   CharacterSummary,
   ChatMode,
+  CommandRequest,
+  Dir,
+  ListSelectRequest,
+  MoveMode,
+  TurnDir,
   ServerMessage,
   SessionOpenRequest,
 } from '../types/protocol';
@@ -30,6 +35,13 @@ import { useListStore } from '../stores/listStore';
 import { useEditStore } from '../stores/editStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { applySnapshot } from '../stores/applySnapshot';
+
+/** union を分配して各メンバから共通エンベロープキーを除いた command ペイロード型。 */
+type CommandPayload = CommandRequest extends infer R
+  ? R extends CommandRequest
+    ? Omit<R, 'type' | 'session' | 'reqId' | 'ts'>
+    : never
+  : never;
 
 /** session 欠落時の補完(A-03の単一キャラ省略ケース)。 */
 function resolveSession(msgSession: string | undefined): string | null {
@@ -154,7 +166,11 @@ export class WsController {
     return session;
   }
 
-  /** チャット送信。priv は to(userKey)必須。 */
+  /**
+   * チャット送信。priv は to(userKey)必須。
+   * all は全アクティブsessionへ同報(A-08: SessionManager同報相当をFEループで代替。
+   *   A-14: party在籍未確認のため party単独機構は未実装、all=normal同報)。
+   */
   sendChat(
     session: string,
     mode: ChatMode,
@@ -164,8 +180,45 @@ export class WsController {
     if (mode === 'priv') {
       if (!to) throw new Error('priv 発言には宛先(to)が必要');
       this.client.send({ type: 'chat', session, mode, text, to });
-    } else {
-      this.client.send({ type: 'chat', session, mode, text });
+      return;
     }
+    if (mode === 'all') {
+      // 全開放session へ normal 同報(当面FE側ループ送信, A-08)
+      const sessions = Object.keys(useSessionStore.getState().sessions);
+      const targets = sessions.length > 0 ? sessions : [session];
+      for (const s of targets) {
+        this.client.send({ type: 'chat', session: s, mode: 'normal', text });
+      }
+      return;
+    }
+    this.client.send({ type: 'chat', session, mode, text });
+  }
+
+  /** 移動intent送信(F8 キーハンドラ→ここ)。dir/mode はBEがレガシー整形。 */
+  sendMove(
+    session: string,
+    move: { dir: Dir | TurnDir; mode: MoveMode; repeat?: boolean },
+  ): void {
+    this.client.send({ type: 'move', session, ...move });
+  }
+
+  /** 汎用コマンド送信(name + 付随パラメータを透過)。 */
+  sendCommand(session: string, payload: CommandPayload): void {
+    this.client.send({ type: 'command', session, ...payload } as CommandRequest);
+  }
+
+  /** リスト選択(数値 | "all"(=-) | "cancel"(=.))。 */
+  sendListSelect(session: string, value: ListSelectRequest['value']): void {
+    this.client.send({ type: 'list.select', session, value });
+  }
+
+  /** s-edit/m-edit 確定(lines送出。multi終端`.`はBE整形, A)。 */
+  submitEdit(session: string, mode: 'single' | 'multi', lines: string[]): void {
+    this.client.send({ type: 'edit.submit', session, mode, lines });
+  }
+
+  /** 入力キャンセル(multi=`.!`, single=空送信等はBE整形)。 */
+  cancelEdit(session: string): void {
+    this.client.send({ type: 'edit.cancel', session });
   }
 }

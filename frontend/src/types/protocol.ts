@@ -52,6 +52,9 @@ export type CompassDir = 'N' | 'E' | 'S' | 'W';
 export type RelativeDir = 'B' | 'R' | 'F' | 'L';
 export type Dir = CompassDir | RelativeDir;
 
+/** 回転方向(DEVLOG A-05/06/07: `mode:"turn"` + `dir:"l|r|b"` で turn l/r/b)。 */
+export type TurnDir = 'l' | 'r' | 'b';
+
 /** レガシー接続状態([07]§6.1)。 */
 export type ConnectionState =
   | 'connecting'
@@ -89,7 +92,8 @@ export type MoveMode = 'step' | 'turn' | 'strafe';
 
 export interface MoveRequest extends Envelope {
   type: 'move';
-  dir: Dir;
+  /** step/strafe は Dir(絶対/相対)、turn は TurnDir(l/r/b)(A-05/06/07)。 */
+  dir: Dir | TurnDir;
   mode: MoveMode;
   /** 連続移動([07]§5.2)。 */
   repeat?: boolean;

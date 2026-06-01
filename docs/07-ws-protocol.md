@@ -86,7 +86,12 @@ FE                                   BE
 ### 5.2 移動
 | type | フィールド | レガシー変換 |
 |------|-----------|--------------|
-| `move` | `dir`("N/E/S/W"等), `mode`("step"\|"turn"\|"strafe"), `repeat`(bool) | モード/マップ仕様(5x5/7x7)に応じ `go N` / `turn l` / `go fl` 等へ(phi-client key_handler準拠) |
+| `move` | `mode`+`dir`(下記, A-17), `repeat?`(bool) | BE serializerが整形 |
+
+move契約(DEVLOG A-17):
+- 北固定(solid): `{mode:"step", dir:"N"\|"E"\|"S"\|"W"}` → `go N` 等。
+- turn(相対): `{mode:"step", dir:"F"\|"B"}` → `go`/`go b`、`{mode:"strafe", dir:"L"\|"R"}` → `go l`/`go r`。
+- 共通: `{mode:"turn", dir:"l"\|"r"\|"b"}` → `turn l/r/b`。
 
 ### 5.3 チャット([05] §1)
 | type | フィールド | レガシー変換 |

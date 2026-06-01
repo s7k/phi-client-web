@@ -163,4 +163,71 @@ describe('WsController.sendChat', () => {
     expect(sent.mode).toBe('priv');
     expect(sent.to).toBe('u1');
   });
+
+  it('all は全アクティブsessionへ同報(ループ送信, A-08/14)', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    useSessionStore.getState().addSession('s1', 'c1');
+    useSessionStore.getState().addSession('s2', 'c2');
+    ws.sent = [];
+    controller.sendChat('s1', 'all', 'hi');
+    const sent = ws.sent.map((d) => JSON.parse(d));
+    // 各 session に normal で同報
+    expect(sent).toHaveLength(2);
+    expect(sent.map((m) => m.session).sort()).toEqual(['s1', 's2']);
+    expect(sent.every((m) => m.mode === 'normal')).toBe(true);
+  });
+});
+
+describe('WsController 操作intent送信', () => {
+  it('sendMove: move エンベロープ', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    controller.sendMove('s1', { dir: 'N', mode: 'step' });
+    const sent = ws.lastSent();
+    expect(sent.type).toBe('move');
+    expect(sent.session).toBe('s1');
+    expect(sent.dir).toBe('N');
+    expect(sent.mode).toBe('step');
+  });
+
+  it('sendCommand: command エンベロープ(付随フィールド透過)', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    controller.sendCommand('s1', { name: 'castMagic', spell: 'heal' });
+    const sent = ws.lastSent();
+    expect(sent.type).toBe('command');
+    expect(sent.name).toBe('castMagic');
+    expect(sent.spell).toBe('heal');
+  });
+
+  it('sendListSelect: 数値/all/cancel', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    controller.sendListSelect('s1', 3);
+    expect(ws.lastSent().value).toBe(3);
+    controller.sendListSelect('s1', 'all');
+    expect(ws.lastSent().value).toBe('all');
+    controller.sendListSelect('s1', 'cancel');
+    expect(ws.lastSent().value).toBe('cancel');
+  });
+
+  it('submitEdit / cancelEdit', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    controller.submitEdit('s1', 'multi', ['a', 'b']);
+    let sent = ws.lastSent();
+    expect(sent.type).toBe('edit.submit');
+    expect(sent.mode).toBe('multi');
+    expect(sent.lines).toEqual(['a', 'b']);
+    controller.cancelEdit('s1');
+    sent = ws.lastSent();
+    expect(sent.type).toBe('edit.cancel');
+    expect(sent.session).toBe('s1');
+  });
 });

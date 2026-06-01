@@ -6,11 +6,17 @@ import { Login } from '../src/components/Login';
 import { StatusPanel } from '../src/components/StatusPanel';
 import { Chat } from '../src/components/Chat';
 import { ConfirmDialog } from '../src/components/ConfirmDialog';
+import { ListView } from '../src/components/ListView';
+import { EditDialog } from '../src/components/EditDialog';
+import { TabBar } from '../src/components/TabBar';
 import { useSessionStore } from '../src/stores/sessionStore';
 import { useStatusStore } from '../src/stores/statusStore';
 import { useChatStore } from '../src/stores/chatStore';
 import { useUserStore } from '../src/stores/userStore';
 import { useUiStore } from '../src/stores/uiStore';
+import { useListStore } from '../src/stores/listStore';
+import { useEditStore } from '../src/stores/editStore';
+import { useConnectionStore } from '../src/stores/connectionStore';
 
 /** controller の最小スタブ。 */
 function makeController(over: Partial<WsController> = {}): WsController {
@@ -18,6 +24,11 @@ function makeController(over: Partial<WsController> = {}): WsController {
     auth: vi.fn(async () => []),
     openSession: vi.fn(async () => 's1'),
     sendChat: vi.fn(),
+    sendMove: vi.fn(),
+    sendCommand: vi.fn(),
+    sendListSelect: vi.fn(),
+    submitEdit: vi.fn(),
+    cancelEdit: vi.fn(),
     ...over,
   } as unknown as WsController;
 }
@@ -32,6 +43,9 @@ beforeEach(() => {
   useChatStore.getState().reset();
   useUserStore.getState().reset();
   useUiStore.getState().reset();
+  useListStore.getState().reset();
+  useEditStore.getState().reset();
+  useConnectionStore.getState().reset();
 });
 
 describe('Login (F3)', () => {
@@ -164,5 +178,115 @@ describe('Chat (F7)', () => {
     });
     fireEvent.click(screen.getByText('送信'));
     expect(sendChat).toHaveBeenCalledWith('s1', 'priv', 'psst', 'u1');
+  });
+});
+
+describe('ListView (F9)', () => {
+  it('非activeなら非表示', () => {
+    useListStore.getState().setList('s1', { active: false });
+    const { container } = renderWith(makeController(), <ListView session="s1" />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('項目を番号付き表示・クリックで list.select(数値)', () => {
+    const sendListSelect = vi.fn();
+    useListStore.getState().setList('s1', {
+      active: true,
+      lines: ['1: 短剣', '2: 鉄の剣'],
+    });
+    renderWith(makeController({ sendListSelect }), <ListView session="s1" />);
+    expect(screen.getByText('短剣')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('鉄の剣'));
+    expect(sendListSelect).toHaveBeenCalledWith('s1', 2);
+  });
+
+  it('全選択(+)・キャンセル', () => {
+    const sendListSelect = vi.fn();
+    useListStore.getState().setList('s1', { active: true, lines: ['1: x'] });
+    renderWith(makeController({ sendListSelect }), <ListView session="s1" />);
+    fireEvent.click(screen.getByText('全選択 (+)'));
+    expect(sendListSelect).toHaveBeenCalledWith('s1', 'all');
+    fireEvent.click(screen.getByText('キャンセル (Esc)'));
+    expect(sendListSelect).toHaveBeenCalledWith('s1', 'cancel');
+  });
+});
+
+describe('EditDialog (F9)', () => {
+  it('非activeなら非表示', () => {
+    const { container } = renderWith(
+      makeController(),
+      <EditDialog session="s1" />,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('single: 1行確定で submitEdit(lines=[値])', () => {
+    const submitEdit = vi.fn();
+    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    renderWith(makeController({ submitEdit }), <EditDialog session="s1" />);
+    fireEvent.change(screen.getByLabelText('入力本文'), {
+      target: { value: 'hello' },
+    });
+    fireEvent.click(screen.getByText('確定'));
+    expect(submitEdit).toHaveBeenCalledWith('s1', 'single', ['hello']);
+  });
+
+  it('multi: 複数行を改行分割して submitEdit', () => {
+    const submitEdit = vi.fn();
+    useEditStore.getState().setEdit('s1', { mode: 'multi' });
+    renderWith(makeController({ submitEdit }), <EditDialog session="s1" />);
+    fireEvent.change(screen.getByLabelText('入力本文'), {
+      target: { value: 'line1\nline2\n' },
+    });
+    fireEvent.click(screen.getByText('確定 (Ctrl+Enter)'));
+    expect(submitEdit).toHaveBeenCalledWith('s1', 'multi', ['line1', 'line2']);
+  });
+
+  it('キャンセルで cancelEdit', () => {
+    const cancelEdit = vi.fn();
+    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    renderWith(makeController({ cancelEdit }), <EditDialog session="s1" />);
+    fireEvent.click(screen.getByText('キャンセル'));
+    expect(cancelEdit).toHaveBeenCalledWith('s1');
+  });
+});
+
+describe('TabBar (F9)', () => {
+  it('session無しなら非表示', () => {
+    const { container } = renderWith(makeController(), <TabBar />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('複数session切替・接続マーク・未読バッジ', () => {
+    useSessionStore.getState().setCharacters([
+      { charId: 'c1', name: 'Alice' },
+      { charId: 'c2', name: 'Bob' },
+    ]);
+    useSessionStore.getState().addSession('s1', 'c1');
+    useSessionStore.getState().addSession('s2', 'c2');
+    useConnectionStore.getState().setSessionConnection('s1', 'connected');
+    useConnectionStore.getState().setSessionConnection('s2', 'closed');
+    useChatStore.getState().addMessage('s2', {
+      type: 'message',
+      session: 's2',
+      channel: 'log',
+      text: 'hi',
+    });
+    useUiStore.getState().setActiveTab('s1');
+
+    renderWith(makeController(), <TabBar />);
+    expect(screen.getByText('Alice')).toBeInTheDocument();
+    expect(screen.getByText('Bob')).toBeInTheDocument();
+    // s2 未読 1
+    expect(screen.getByText('1')).toBeInTheDocument();
+    // s2 接続マーク(closed)
+    expect(screen.getByLabelText('切断')).toBeInTheDocument();
+
+    // タブ切替
+    fireEvent.click(screen.getByText('Bob'));
+    expect(useUiStore.getState().activeTab).toBe('s2');
+    expect(useSessionStore.getState().active).toBe('s2');
+    // 未読クリア
+    expect(useChatStore.getState().unread['s2']).toBe(0);
   });
 });

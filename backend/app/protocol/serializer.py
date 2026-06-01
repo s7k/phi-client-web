@@ -89,7 +89,8 @@ class CommandSerializer:
             no = self._lookup_user(intent.get("to"))
             if no is None:
                 raise ValueError(f"unknown priv recipient: {intent.get('to')!r}")
-            return f"#priv {no}\n{text}"
+            # A-13: priv は `priv <番号> <本文>`(1行, `#`なし)。実機検証準拠。
+            return f"priv {no} {text}"
 
         if mode == "loud":
             # loud は先頭 '*'。本文が既に '*' でも二重付与しない方針ではなく

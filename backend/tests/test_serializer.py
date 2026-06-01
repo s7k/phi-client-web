@@ -36,19 +36,19 @@ def test_chat_normal_starting_asterisk_escaped(ser):
 def test_chat_priv_resolution(ser):
     ser.user_map = {"u12": 12}
     out = _txt(ser, {"type": "chat", "mode": "priv", "to": "u12", "text": "やあ"})
-    assert out == "#priv 12\nやあ"
+    assert out == "priv 12 やあ"
 
 
 def test_chat_priv_resolution_via_key_format(ser):
     # user_map 未登録でも "u<番号>" 形式キーから番号抽出
     out = _txt(ser, {"type": "chat", "mode": "priv", "to": "u7", "text": "hi"})
-    assert out == "#priv 7\nhi"
+    assert out == "priv 7 hi"
 
 
 def test_chat_priv_callback(ser):
     s = CommandSerializer(resolve_user=lambda k: {"alice": 99}.get(k))
     out = s.to_legacy_text({"type": "chat", "mode": "priv", "to": "alice", "text": "x"})
-    assert out == "#priv 99\nx"
+    assert out == "priv 99 x"
 
 
 def test_chat_priv_unknown_raises(ser):
@@ -179,7 +179,7 @@ def test_serialize_encodes_cp932(ser):
 def test_serialize_priv_cp932(ser):
     ser.user_map = {"u5": 5}
     raw = ser.serialize({"type": "chat", "mode": "priv", "to": "u5", "text": "漢字"})
-    assert raw == "#priv 5\n漢字".encode("cp932")
+    assert raw == "priv 5 漢字".encode("cp932")
 
 
 def test_unknown_intent_raises(ser):

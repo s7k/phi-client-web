@@ -9,8 +9,11 @@
   (受信ループと送信ループを分離し、イベント順序を保つ)。
 - session 省略時はアクティブ(直近 open)セッションへ解決(A-03)。
 
-認証([07]§4.1, [12]§1)は **stub**: 任意 id を通し、charId=id の 1 キャラを返す。
-  TODO(B12): SQLite accounts 照合・パスワード検証・キャラ一覧取得。
+認証([07]§4.1, [12]§1, B12):
+  - WS `auth` は **Web セッション(cookie の sessionId)検証**(`AuthService.validate`)、
+    または id+password 直接検証([12]§1.3 のフォールバック)。認証成功で
+    当該アカウントのキャラ一覧(store)を返す。
+  - REST `/api/auth/login` / `/api/auth/logout` も最小実装(httpOnly cookie)。
 """
 from __future__ import annotations
 
@@ -41,12 +44,15 @@ class WsConnection:
     (starlette WebSocket / テスト用 Fake いずれも可)。
     """
 
-    def __init__(self, ws, manager: SessionManager) -> None:
+    def __init__(self, ws, manager: SessionManager, auth=None) -> None:
         self._ws = ws
         self._mgr = manager
+        self._auth = auth  # AuthService | None
         self._outbound: asyncio.Queue[dict] = asyncio.Queue()
         # この接続が開いた session 群(切断時に detach)。
         self._sessions: list[str] = []
+        # 認証済みアカウント(auth 成功後にセット)。
+        self._account_id: str | None = None
 
     # ------------------------------------------------------------------
     # エントリポイント
@@ -110,19 +116,57 @@ class WsConnection:
         await self._handle_intent(msg)
 
     # ------------------------------------------------------------------
-    # auth(stub)
+    # auth(B12 本実装)
     # ------------------------------------------------------------------
 
     async def _handle_auth(self, msg: dict) -> None:
-        # TODO(B12): SQLite accounts 照合・パスワード検証。現状は任意 id を通す。
-        acc = msg.get("id", "")
+        """WS auth: Web セッション(sessionId)検証 or id+password 検証。
+
+        - auth サービス未設定時は従来 stub 互換(任意 id を通す)。
+        - sessionId 提示時: `AuthService.validate` で account 解決。
+        - id+password 提示時: `AuthService.authenticate` で検証。
+        成功時、store からキャラ一覧を返す([12]§1.2)。
+        """
+        if self._auth is None:
+            # 後方互換 stub(テスト/開発用)。
+            acc = msg.get("id", "")
+            self._account_id = acc
+            await self._send_auth_ok(msg, acc, stub=True)
+            return
+
+        account_id = None
+        sid = msg.get("sessionId")
+        if sid:
+            account_id = self._auth.validate(sid)
+        elif msg.get("id") is not None and msg.get("password") is not None:
+            if self._auth.authenticate(msg["id"], msg["password"]):
+                account_id = msg["id"]
+
+        if account_id is None:
+            await self._ws.send_json({
+                "type": "auth", "reqId": msg.get("reqId"), "ok": False,
+                "error": {"code": "AUTH_FAILED", "message": "認証失敗"},
+            })
+            return
+
+        self._account_id = account_id
+        await self._send_auth_ok(msg, account_id, stub=False)
+
+    async def _send_auth_ok(self, msg: dict, account_id: str, *, stub: bool) -> None:
+        if stub or self._auth is None:
+            characters = [{"charId": account_id, "name": account_id, "lastServer": None}]
+        else:
+            characters = [
+                {
+                    "charId": r["char_id"],
+                    "name": r["display_name"] or r["char_id"],
+                    "lastServer": r["last_server"],
+                }
+                for r in self._auth.store.list_characters(account_id)
+            ]
         await self._ws.send_json({
-            "type": "auth",
-            "reqId": msg.get("reqId"),
-            "ok": True,
-            "characters": [
-                {"charId": acc, "name": acc, "lastServer": None},
-            ],
+            "type": "auth", "reqId": msg.get("reqId"),
+            "ok": True, "characters": characters,
         })
 
     # ------------------------------------------------------------------
@@ -205,9 +249,16 @@ class WsConnection:
 # FastAPI アプリ(本番エンドポイント)
 # ----------------------------------------------------------------------
 
-def create_app(manager: SessionManager | None = None):
-    """FastAPI アプリを生成。`/ws` に WebSocket エンドポイントを公開。"""
-    from fastapi import FastAPI, WebSocket
+def create_app(manager: SessionManager | None = None, auth=None):
+    """FastAPI アプリを生成。
+
+    - `/ws`: WebSocket エンドポイント([07])。
+    - `/api/auth/login` / `/api/auth/logout`: Web 認証([12]§1.3)。
+      cookie 名 `phi_session`、httpOnly/Secure/SameSite=Strict。
+
+    *auth* 省略時は `PHI_DB_PATH` から Store を開き AuthService を構築。
+    """
+    from fastapi import FastAPI, Request, Response, WebSocket
 
     app = FastAPI(title="phi-web gateway")
     import os
@@ -217,9 +268,37 @@ def create_app(manager: SessionManager | None = None):
     )
     app.state.session_manager = mgr
 
+    if auth is None:  # pragma: no cover - 統合層(本番起動)
+        from app.auth import AuthService
+        from app.store import Store
+        auth = AuthService(Store.open(os.environ.get("PHI_DB_PATH")))
+    app.state.auth = auth
+
+    COOKIE = "phi_session"
+
+    @app.post("/api/auth/login")
+    async def login(request: Request, response: Response):
+        body = await request.json()
+        sid = auth.login(body.get("id", ""), body.get("password", ""))
+        if sid is None:
+            return Response(status_code=401)
+        # [12]§1.3: httpOnly + Secure + SameSite=Strict cookie。
+        response.set_cookie(
+            COOKIE, sid, httponly=True, secure=True, samesite="strict"
+        )
+        return {"ok": True}
+
+    @app.post("/api/auth/logout")
+    async def logout(request: Request, response: Response):
+        sid = request.cookies.get(COOKIE)
+        if sid:
+            auth.logout(sid)
+        response.delete_cookie(COOKIE)
+        return {"ok": True}
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket):  # pragma: no cover - 統合層
-        conn = WsConnection(websocket, mgr)
+        conn = WsConnection(websocket, mgr, auth=auth)
         await conn.run()
 
     return app

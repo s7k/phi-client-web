@@ -92,6 +92,16 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **FE-Q13 [確認] チップシート512×96**: gfx_convert出力(画像半分512×96, 32×48セル)で正。FE実装前提と一致。確定。
 - **FE-Q15 [FE] 水縁/巨大magnify(#ex-obj)**: 後続R(R4頃)で移植。OPEN(低優先)。
 
+### R3 由来（リード裁定）
+
+- **A-17 [共通] move intent契約(確定)**: FEは抽象intent、BE serializerが整形。
+  - 北固定(solid): `move{mode:"step", dir:"N|E|S|W"}` → `go N` 等。
+  - turn(相対): `move{mode:"step", dir:"F|B"}` → `go`/`go b`、`move{mode:"strafe", dir:"L|R"}` → `go l`/`go r`。
+  - 共通: `move{mode:"turn", dir:"l|r|b"}` → `turn l/r/b`。
+  → **R4でBE serializerをこの契約に整合**(R1簡約版を置換)。[07]§5.2更新。
+- **A-18 [共通] shortcut/magic送信**: F1-F7=`command{name:"castMagic", spell:<名>}`→`cast\n<名>`。F8-F12=`command{name:"raw", text:<語>}`→そのまま(rate-limited)。確定。
+- **TODO(軽微, R4/R5)**: argon2-cffi導入(暫定PBKDF2 Q-14)、`pyproject` package-data に schema.sql(Q-15)、CSRFトークン/Origin検査(Q-16)。
+
 ## 5. ステータスボード
 
 | ラウンド | BE | FE | コミット |
@@ -99,7 +109,8 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 | R0 | ✅ scaffold + B1 LineBuffer + B2 CodeConverter (40 tests, cov100%) | ✅ scaffold + 型 + F1 WSクライアント + F2 stores骨格 (23 tests) | R0コミット済 |
 | R1 | ✅ B3 Parser + B4 Serializer + 合成フィクスチャ (101 tests) | ✅ 残stores+配線 + F3ログイン + F6ステータス + F7チャット(markup) (54 tests) | R1コミット済 |
 | R2 | ✅ B5 LegacySocket + B6 SessionManager + B7 WsServer + 実機録画検証(121 tests) | ✅ F4マップ描画(Canvas) + F5グラ解決(110 tests) | R2コミット済 |
-| R3 | B8 Store/SQLite + B12 認証(uid暗号) + serializer priv修正(A-13) | F8 キーハンドラ(移動/操作) + F9 リスト/編集/priv/タブUI | — |
+| R3 | ✅ B8 Store/SQLite + B12 認証(uid暗号/PBKDF2暫定) + priv修正(149 tests) | ✅ F8 キーハンドラ + F9 リスト/編集/タブUI(160 tests) | R3コミット済 |
+| R4 | B9 gfx共有module + B10 REST chara + B11 fallback + B13 世界移動 + **serializer move整合(A-17)** | F10 設定UI + F11 通知/SS/画像 + EagleEye表示 | — |
 
 ## 6. コミットログ（リード記入）
 
