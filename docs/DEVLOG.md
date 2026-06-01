@@ -55,14 +55,31 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 
 > 形式: `Q-NN [BE/FE/共通] 疑問` → `A-NN [決定/リード] 回答`。未解決は `OPEN`。
 
-- (まだなし)
+### R0 由来
+
+- **Q1 [BE]** CodeConverterと Parserの責務境界(#m57 O 構造化)。
+  → **A1**: CodeConverterは**エンコード専任**(バイナリ/テキスト判定・name/gra部分decode)。`#m57 O`の全フィールド構造化・複数スロット(raw[7:74]/[75:142])は**ProtocolParser(B3)**。エージェント方針で正。
+- **Q2 [BE]** gra 15バイト枠でのマルチバイト切れ懸念。
+  → **A2**: 15バイトオフセット採用・rstrip・errors=replace。日本語gra切れは実データ録画(B3/R1)で確認。未知graは fallback([09])で吸収するため致命でない。
+- **Q3 [BE]** #m57 O 二重オブジェクト行。
+  → **A3**: Parser(B3)で raw[7:74]/[75:142] 2スロット対応。
+- **Q-02 [共通]** reqId採番。
+  → **A-02**: FEがUUID採番、**BEは応答に同reqIdをエコー**([07]§2)。確定。
+- **Q-03 [共通]** session省略時の扱い。
+  → **A-03**: **S→C(BE→FE)は常に`session`を付与**(単一キャラでも)。C→S(FE→BE)は単一時のみ省略可→BEがアクティブsessionに解決。FEは常にsessionIdキーでStore管理。[07]§2に追記。
+- **Q-04 [共通]** snapshotにlist/edit状態を含むか。
+  → **A-04**: snapshotに任意フィールド `list?`/`edit?` を**追加**(再アタッチ時にアクティブなら含める)。[07]§6.1更新。
+- **Q-05 [共通]** dir型(数値 vs 文字)。
+  → **A-05**: **BEで正規化**。`map.dir`=数値0-7(自キャラ方角)、`map.chars[].dir`=文字`"B|R|F|L"`(キャラ向き)。FEはこの前提。[07]§6.2明確化。
+- **Q-01 [FE]** snapshotのmode/userList store未配線 → R1で配線。問題なし。
 
 ## 5. ステータスボード
 
 | ラウンド | BE | FE | コミット |
 |----------|----|----|----------|
-| R0 | scaffold + B1/B2 着手 | scaffold + F1/F2 着手 | — |
+| R0 | ✅ scaffold + B1 LineBuffer + B2 CodeConverter (40 tests, cov100%) | ✅ scaffold + 型 + F1 WSクライアント + F2 stores骨格 (23 tests) | R0コミット済 |
+| R1 | B3 ProtocolParser + B4 CommandSerializer + 合成フィクスチャ | 残stores配線 + F3ログイン + F6ステータス + F7チャット(markup) | — |
 
 ## 6. コミットログ（リード記入）
 
-- (これから)
+- R0: BE/FE scaffold + 最初のTDDコンポーネント。契約決定(A-01〜A-05, A1〜A3)を[07]反映。

@@ -29,13 +29,15 @@ phi-web の BE(ゲートウェイ) と FE(ブラウザ) 間の通信プロトコ
 
 - 予約キー: `type` `session` `reqId` `ts` `ok` `error`。ペイロードはこれらと衝突させない。
 - **応答**(`reqId`を伴う要求への返信)は `ok`(bool) を持ち、失敗時 `error` を含む(§9)。
+- **session付与規約**(DEVLOG A-03): **S→C(BE→FE)は常に `session` を付与**(単一キャラでも)。C→S(FE→BE)は単一セッション時のみ省略可で、BEがアクティブsessionに解決。
+- **reqId**(A-02): 要求側(FE)がUUID等で採番、BEは応答に**同`reqId`をエコー**。
 - バージョン: 初回 `hello`(§4) で `protocolVersion` を交換。本仕様 = **v1**。
 
 ## 3. 命名・型規約
 
 - `type` はドット階層なしの小文字+必要に応じ`.`区切り(例 `list.select`)。
 - フィールドは camelCase。
-- 座標 `x`/`y` は 0始まりのマップセル。方角 `dir` は文字列 `"N"|"E"|"S"|"W"` か `"B"|"R"|"F"|"L"`(キャラ向き, Back/Right/Front/Left)。
+- 座標 `x`/`y` は 0始まりのマップセル。方角(DEVLOG A-05でBE正規化): **`map.dir`=数値0-7**(自キャラ方角)、**`map.chars[].dir`=文字`"B"|"R"|"F"|"L"`**(キャラ向き, Back/Right/Front/Left)。移動intentの`dir`は`"N"|"E"|"S"|"W"`(絶対)。
 - 列挙は文字列。バイト値(chip/attribute)は 0-255 の整数。
 
 ---
@@ -144,7 +146,7 @@ FE                                   BE
 | `hello` | `protocolVersion`, `serverTime` | 接続直後 |
 | `auth` (応答) | `ok`, `characters`[{`charId`,`name`,`lastServer`}], `error?` | reqId相関 |
 | `connection` | `state`("connecting"\|"connected"\|"detached"\|"closed"), `reason?` | レガシー接続状態. `#x`/`#close`→closed |
-| `snapshot` | `map?`, `status?`, `cond?`, `userList?`, `mode?`, `notice?` | 再アタッチ時の一括状態(§4.2) |
+| `snapshot` | `map?`, `status?`, `cond?`, `userList?`, `mode?`, `notice?`, `list?`, `edit?` | 再アタッチ時の一括状態(§4.2)。`list?`/`edit?` はアクティブな対話状態がある場合のみ(DEVLOG A-04) |
 
 ### 6.2 マップ(`#map`/`#m57`)
 BEがバイナリを構造化。グリッドは小さい(最大7×7=49セル)ため整数配列で送る(base64不要)。
@@ -154,7 +156,7 @@ BEがバイナリを構造化。グリッドは小さい(最大7×7=49セル)た
   "type": "map",
   "session": "char1",
   "size": 7,                 // 7(=m57,7x7) | 5(=5x5)
-  "dir": 2,                  // 自キャラ方角(0-7 or 文字). turnモード時の上方向
+  "dir": 2,                  // 自キャラ方角=数値0-7(BE正規化, DEVLOG A-05). turnモード時の上方向
   "style": "solid",          // "turn" | "solid"
   "mapset": "mansion",       // チップセット名(#mapset)
   "cells": [                 // size*size 要素, 行優先(index=y*size+x)

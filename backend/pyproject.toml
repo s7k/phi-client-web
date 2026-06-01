@@ -1,0 +1,32 @@
+[project]
+name = "phi-web-backend"
+version = "0.1.0"
+description = "phi-web ゲートウェイ (Python/FastAPI). レガシーSJISソケット ⇔ ブラウザ(UTF-8 JSON)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "cryptography",
+    "Pillow",
+    "websockets",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"

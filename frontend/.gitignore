@@ -1,0 +1,5 @@
+# frontend ビルド/テスト成果物
+node_modules/
+dist/
+coverage/
+*.local

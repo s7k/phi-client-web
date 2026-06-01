@@ -1,0 +1,286 @@
+/**
+ * F1 WebSocket クライアント（契約 = docs/07-ws-protocol.md, 再接続 = docs/12 §6）。
+ *
+ * 機能:
+ * - エンベロープ送受信(UTF-8 JSON, 1フレーム=1メッセージ)。
+ * - type別の型安全 dispatch(on/off)。
+ * - reqId採番付き request/応答相関。
+ * - snapshot 受信フック。
+ * - 再接続: 指数バックオフ min(30s, 1s*2^n) + jitter([12]§6)。
+ *
+ * 注: WS切断中のFE送信はキューせず破棄(ゲーム操作は最新状態前提)が原則([12]§6)。
+ *     ただし「open前(接続確立待ち)」の送信は接続後にフラッシュする。
+ */
+
+import type {
+  ClientMessage,
+  ConnectionState,
+  ServerMessage,
+  ServerMessageOf,
+  ServerMessageType,
+  SnapshotEvent,
+} from '../types/protocol';
+
+/** 各 S→C type に対応するハンドラ。payload は narrow 済み。 */
+type MessageHandler<T extends ServerMessageType> = (
+  msg: ServerMessageOf<T>,
+) => void;
+
+/** ライフサイクルイベント。 */
+type LifecycleEvent = 'open' | 'close' | 'error';
+type LifecycleHandler = (info?: unknown) => void;
+
+export interface WsClientOptions {
+  /** WebSocket 実装の差し替え(テスト用)。既定はグローバル WebSocket。 */
+  WebSocketImpl?: typeof WebSocket;
+  /** バックオフ基準(ms)。既定 1000。 */
+  backoffBaseMs?: number;
+  /** バックオフ上限(ms)。既定 30000。 */
+  backoffMaxMs?: number;
+  /** jitter(ms)生成器。既定はランダム(0..1000)。テストで決定化可。 */
+  jitter?: () => number;
+  /** reqId 生成器。既定はランダム。 */
+  reqIdGen?: () => string;
+  /** 自動再接続するか。既定 true。 */
+  autoReconnect?: boolean;
+}
+
+interface PendingRequest {
+  resolve: (msg: ServerMessage) => void;
+  reject: (err: unknown) => void;
+}
+
+export class WsClient {
+  private readonly url: string;
+  private readonly WebSocketImpl: typeof WebSocket;
+  private readonly backoffBaseMs: number;
+  private readonly backoffMaxMs: number;
+  private readonly jitter: () => number;
+  private readonly reqIdGen: () => string;
+  private readonly autoReconnect: boolean;
+
+  private ws: WebSocket | null = null;
+  private attempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private closedByUser = false;
+
+  /** open 前に積まれた送信(接続確立でフラッシュ)。 */
+  private outbox: string[] = [];
+
+  /** レガシー接続状態(connection イベント由来)。 */
+  private connectionState: ConnectionState = 'connecting';
+
+  /** type別ハンドラ集合。 */
+  private handlers = new Map<string, Set<(msg: ServerMessage) => void>>();
+  /** ライフサイクルハンドラ。 */
+  private lifecycle = new Map<LifecycleEvent, Set<LifecycleHandler>>();
+  /** snapshot 専用フック。 */
+  private snapshotHandlers = new Set<(msg: SnapshotEvent) => void>();
+  /** reqId → pending。 */
+  private pending = new Map<string, PendingRequest>();
+
+  constructor(url: string, options: WsClientOptions = {}) {
+    this.url = url;
+    this.WebSocketImpl = options.WebSocketImpl ?? globalThis.WebSocket;
+    this.backoffBaseMs = options.backoffBaseMs ?? 1000;
+    this.backoffMaxMs = options.backoffMaxMs ?? 30_000;
+    this.jitter = options.jitter ?? (() => Math.random() * 1000);
+    this.reqIdGen = options.reqIdGen ?? defaultReqId;
+    this.autoReconnect = options.autoReconnect ?? true;
+  }
+
+  // ---------- 接続制御 ----------
+
+  connect(): void {
+    this.closedByUser = false;
+    this.openSocket();
+  }
+
+  /** 明示切断。以後 autoReconnect しない。 */
+  disconnect(code?: number, reason?: string): void {
+    this.closedByUser = true;
+    this.clearReconnect();
+    this.ws?.close(code, reason);
+    this.ws = null;
+  }
+
+  /** 手動再接続(再接続ボタン用 [12]§6)。 */
+  reconnectNow(): void {
+    this.clearReconnect();
+    this.attempt = 0;
+    this.openSocket();
+  }
+
+  getConnectionState(): ConnectionState {
+    return this.connectionState;
+  }
+
+  isOpen(): boolean {
+    return this.ws?.readyState === this.WebSocketImpl.OPEN;
+  }
+
+  private openSocket(): void {
+    const ws = new this.WebSocketImpl(this.url);
+    this.ws = ws;
+
+    ws.onopen = (ev) => {
+      this.attempt = 0; // 成功でリセット
+      this.flushOutbox();
+      this.emitLifecycle('open', ev);
+    };
+
+    ws.onmessage = (ev: MessageEvent) => {
+      this.handleRaw(ev.data);
+    };
+
+    ws.onerror = (ev) => {
+      this.emitLifecycle('error', ev);
+    };
+
+    ws.onclose = (ev) => {
+      this.emitLifecycle('close', ev);
+      this.ws = null;
+      if (!this.closedByUser && this.autoReconnect) {
+        this.scheduleReconnect();
+      }
+    };
+  }
+
+  private scheduleReconnect(): void {
+    const delay =
+      Math.min(this.backoffMaxMs, this.backoffBaseMs * 2 ** this.attempt) +
+      this.jitter();
+    this.attempt++;
+    this.clearReconnect();
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.openSocket();
+    }, delay);
+  }
+
+  private clearReconnect(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  // ---------- 送信 ----------
+
+  /** エンベロープを送信。open前なら outbox に積む。 */
+  send(msg: ClientMessage): void {
+    const withTs = { ts: Date.now(), ...msg };
+    const data = JSON.stringify(withTs);
+    if (this.isOpen()) {
+      this.ws!.send(data);
+    } else {
+      this.outbox.push(data);
+    }
+  }
+
+  /**
+   * reqId付き要求を送り、同 reqId の応答で resolve する Promise を返す。
+   * 呼び出し側は reqId を省略(自動採番)。
+   */
+  request<T extends ClientMessage>(
+    msg: Omit<T, 'reqId'> & { reqId?: string },
+  ): Promise<ServerMessage> {
+    const reqId = msg.reqId ?? this.reqIdGen();
+    const full = { ...msg, reqId } as ClientMessage;
+    return new Promise<ServerMessage>((resolve, reject) => {
+      this.pending.set(reqId, { resolve, reject });
+      this.send(full);
+    });
+  }
+
+  private flushOutbox(): void {
+    if (this.outbox.length === 0) return;
+    const pending = this.outbox;
+    this.outbox = [];
+    for (const data of pending) {
+      this.ws!.send(data);
+    }
+  }
+
+  // ---------- 受信・dispatch ----------
+
+  private handleRaw(data: string): void {
+    let msg: ServerMessage;
+    try {
+      msg = JSON.parse(data) as ServerMessage;
+    } catch {
+      // 不正JSONは無視([07] 前方互換方針)
+      return;
+    }
+    if (!msg || typeof msg.type !== 'string') return;
+
+    // reqId応答の相関
+    if (msg.reqId && this.pending.has(msg.reqId)) {
+      const p = this.pending.get(msg.reqId)!;
+      this.pending.delete(msg.reqId);
+      p.resolve(msg);
+      // 応答も通常 dispatch へ流す(購読者がいれば)
+    }
+
+    // 接続状態の追跡
+    if (msg.type === 'connection') {
+      this.connectionState = msg.state;
+    }
+
+    // snapshot 専用フック
+    if (msg.type === 'snapshot') {
+      for (const h of this.snapshotHandlers) h(msg as SnapshotEvent);
+    }
+
+    // type別 dispatch
+    const set = this.handlers.get(msg.type);
+    if (set) {
+      for (const h of set) h(msg);
+    }
+    // 未知 type はハンドラ無し → 無視(前方互換)
+  }
+
+  // ---------- 購読 ----------
+
+  /** type別ハンドラ登録。 */
+  on<T extends ServerMessageType>(type: T, handler: MessageHandler<T>): void {
+    let set = this.handlers.get(type);
+    if (!set) {
+      set = new Set();
+      this.handlers.set(type, set);
+    }
+    set.add(handler as (msg: ServerMessage) => void);
+  }
+
+  off<T extends ServerMessageType>(type: T, handler: MessageHandler<T>): void {
+    this.handlers.get(type)?.delete(handler as (msg: ServerMessage) => void);
+  }
+
+  /** snapshot 受信フック([07]§4.2)。 */
+  onSnapshot(handler: (msg: SnapshotEvent) => void): () => void {
+    this.snapshotHandlers.add(handler);
+    return () => this.snapshotHandlers.delete(handler);
+  }
+
+  /** ライフサイクル(open/close/error)購読。 */
+  onLifecycle(event: LifecycleEvent, handler: LifecycleHandler): void {
+    let set = this.lifecycle.get(event);
+    if (!set) {
+      set = new Set();
+      this.lifecycle.set(event, set);
+    }
+    set.add(handler);
+  }
+
+  private emitLifecycle(event: LifecycleEvent, info?: unknown): void {
+    const set = this.lifecycle.get(event);
+    if (set) for (const h of set) h(info);
+  }
+}
+
+/** 既定 reqId 生成器(crypto.randomUUID があれば使用)。 */
+function defaultReqId(): string {
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}

@@ -14,6 +14,10 @@ ENV/
 .ruff_cache/
 *.egg-info/
 .python-version
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
 # === Node / フロントエンド ===
 node_modules/
