@@ -40,6 +40,18 @@ npx vitest run         # ユニット(217件)
 npm run test:e2e       # Playwright E2E(要 npx playwright install chromium)
 ```
 
+## Docker
+
+```bash
+cp .env.docker.example .env       # PHI_SECRET_KEY 等を設定(.env はgitignore)
+# 透過PNGを ./assets に配置(tools/gfx_convert で生成。レガシーBMP別途)
+docker compose up --build         # web=:8080(エッジ), backend=:8000(内部)
+```
+- `web`(nginx): FE静的配信 + `/api`・`/ws`・`/assets` を backend へプロキシ。
+- `backend`(uvicorn): SQLiteは名前付きボリューム`db`(/data)に永続化、`./assets`をroマウント。非root実行。
+- `PHI_SECRET_KEY` 未設定は compose が起動拒否(uid暗号鍵)。本番は前段でTLS終端(Caddy/LB等, wss)。
+- 検証済: 両イメージbuild・`docker compose up`でFE/`/api`疎通200。
+
 ## テスト方針(TDD)
 - 全コンポーネントをテスト先行で実装。BE=pytest、FE=Vitest+RTL、E2E=Playwright。
 - レガシー応答は合成フィクスチャ(`backend/tests/fixtures/synthetic/`)で検証。実サーバ録画は `recorded/`(gitignore)。
