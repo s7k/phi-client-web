@@ -83,13 +83,23 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **A-11 [共通] message.seq**: BEが**session毎の単調増加`seq`**を`message`に付与。FEはseqで重複抑止(無ければ内容一致fallback)。[07]更新。
 - **A-12 [共通] mode は常に全フラグ送出**: BEが attack/magic/list/more 全量を毎回送る。FEは全置換。確定。
 
+### R2 由来（実機録画で判明・リード裁定）
+
+- **A-13 [共通] priv送信整形(契約修正)**: 実機+phi-client両方 **`priv <番号> <本文>`(1行, `#`なし)** が正(旧契約`#priv\n`は誤り)。受信=`[<送信者>] > <本文>`。[07]§5.3・[05]§1修正済。**serializerをR3で修正+テスト更新**(Q-13対応)。
+- **A-14 [共通] party送信**: `%`プレフィクスは実機で否定(normal扱い)。party単独発言の送信機構はパーティ在籍環境でないと不明。**当面 partyはnormal整形+TODO**、パーティ環境で再録画し確定。OPEN。
+- **A-15 [BE] `#m57 W`(2スロット)**: ログイン〜通常マップでは出現せず未検証。eagleeye/特定状況で再録画し確定。OPEN。
+- **A-16 [確認] dir/自キャラ**: 自キャラ=`#m57 O C`行(layer 0xC=12)、他=`B`(11)。`map.dir`数値化(S=4)・`chars[].dir`文字 を実機確認。A-05/06正。
+- **FE-Q13 [確認] チップシート512×96**: gfx_convert出力(画像半分512×96, 32×48セル)で正。FE実装前提と一致。確定。
+- **FE-Q15 [FE] 水縁/巨大magnify(#ex-obj)**: 後続R(R4頃)で移植。OPEN(低優先)。
+
 ## 5. ステータスボード
 
 | ラウンド | BE | FE | コミット |
 |----------|----|----|----------|
 | R0 | ✅ scaffold + B1 LineBuffer + B2 CodeConverter (40 tests, cov100%) | ✅ scaffold + 型 + F1 WSクライアント + F2 stores骨格 (23 tests) | R0コミット済 |
 | R1 | ✅ B3 Parser + B4 Serializer + 合成フィクスチャ (101 tests) | ✅ 残stores+配線 + F3ログイン + F6ステータス + F7チャット(markup) (54 tests) | R1コミット済 |
-| R2 | B5 LegacySocket(モックTCP) + B6 SessionManager + B7 WsServer + **実機録画でA-08/09検証** | F4マップ描画(Canvas) + F5グラ解決(fallback/manifest) | — |
+| R2 | ✅ B5 LegacySocket + B6 SessionManager + B7 WsServer + 実機録画検証(121 tests) | ✅ F4マップ描画(Canvas) + F5グラ解決(110 tests) | R2コミット済 |
+| R3 | B8 Store/SQLite + B12 認証(uid暗号) + serializer priv修正(A-13) | F8 キーハンドラ(移動/操作) + F9 リスト/編集/priv/タブUI | — |
 
 ## 6. コミットログ（リード記入）
 

@@ -92,7 +92,7 @@ FE                                   BE
 | type | フィールド | レガシー変換 |
 |------|-----------|--------------|
 | `chat` | `mode`("normal"\|"loud"\|"party"\|"all"), `text` | normal=そのまま / loud=先頭`*` / 先頭`*`の通常発言は`/**/`付与 / party=Ctrl発言整形 / all=全セッション同報 |
-| `chat` (priv) | `mode`:"priv", `to`(userKey), `text` | `#priv <番号>\n<本文>`. 番号はBE保持の`#user`表で解決 |
+| `chat` (priv) | `mode`:"priv", `to`(userKey), `text` | **`priv <番号> <本文>`(1行, `#`なし)**(実機検証 DEVLOG A-13)。番号はBE保持の`#user`表で解決。受信は `[<送信者>] > <本文>` |
 
 ### 5.4 汎用コマンド([05] §2,6,7)
 | type | フィールド | レガシー変換 |

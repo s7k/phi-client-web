@@ -10,6 +10,7 @@ import { useUiStore } from './stores/uiStore';
 import { Login } from './components/Login';
 import { StatusPanel } from './components/StatusPanel';
 import { Chat } from './components/Chat';
+import { MapView } from './components/MapView';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import './App.css';
 
@@ -20,6 +21,7 @@ function Game({ session }: { session: string }) {
         <StatusPanel session={session} />
       </aside>
       <main className="game__main">
+        <MapView session={session} />
         <Chat session={session} />
       </main>
     </div>
