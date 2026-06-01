@@ -60,7 +60,7 @@
 
 | Web key | カテゴリ(ja) | フォールバックグラ(webFallbackGra) | 備考 |
 |---------|--------------|-----------------------------------|------|
-| `human` | 人・銅像 | **t_elf** | プレイヤー既定 |
+| `human` | 人・銅像 | **t_Man** | プレイヤー既定。指定の`t_man`は実ファイル`t_Man.bmp`(大文字M) |
 | `intelligent` | 知的生物 | **t_elf** | type未一致時の既定([09]§3手順3) |
 | `beast` | 獣 | **t_dog** | |
 | `berserk` | 狂戦士 | **t_fightery** | |
@@ -73,9 +73,11 @@
 - マッピング実体: [`chara_type_fallback.json`](../backend/data/chara_type_fallback.json) `webFallbackGra` / `webFallbackSource`。
 
 ### セットアップ手順(想定)
-1. `legacy/graphics/chara/{t_elf,t_dog,tak_Bslime,t_ghost1,t_fightery}.bmp` を透過PNG化([06] `--mode colorkey --key teal`)。
-2. アップロード/保存([08] chara_graphics)。gra_nameは拡張子なし名(`t_elf`等)。
-3. `chara_index` に各 Web key → 対応gra_name をシード(`human→t_elf`,`beast→t_dog`,…)。
+1. `legacy/graphics/chara/{t_Man,t_elf,t_dog,tak_Bslime,t_ghost1,t_fightery}.bmp` を透過PNG化([06] `--mode colorkey --key teal --lowercase`)。**`--lowercase`**で `t_Man.bmp→t_man.png` 等に小文字化。
+2. アップロード/保存([08] chara_graphics)。`gra_key`=小文字正規化名(`t_man`等)で照合(case-insensitive)。
+3. `chara_index` に各 Web key → 対応gra_name をシード(`human→t_Man`(=t_man),`beast→t_dog`,…)。
+
+> グラ解決はcase-insensitive([08] §2)。`webFallbackGra`値(`t_Man`等)は小文字正規化して照合するため、物理PNG(`t_man.png`)と整合。
 
 ## 4. [08] との統合（chara_index の category 事前シード）
 

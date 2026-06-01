@@ -212,6 +212,9 @@ def main() -> int:
                     help="カラーキー色 'R,G,B'/'teal'/'white' (既定 teal)")
     ap.add_argument("--split", action="store_true",
                     help="chip/mask系でスプライト個別PNGも出力")
+    ap.add_argument("--lowercase", action="store_true",
+                    help="出力PNGファイル名(stem)を小文字化。大文字小文字の取り違え防止。"
+                         "解決側はcase-insensitive(lowercase正規化)前提")
     args = ap.parse_args()
 
     if args.input.is_file():
@@ -230,6 +233,8 @@ def main() -> int:
     for src in files:
         rel = src.relative_to(base) if src != base else Path(src.name)
         dst = args.output / rel.with_suffix(".png")
+        if args.lowercase:
+            dst = dst.with_name(dst.name.lower())
         try:
             kind = convert_file(src, dst, args.mode, args.key, args.split)
             print(f"[OK] {rel} ({kind})")

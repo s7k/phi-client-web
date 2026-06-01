@@ -55,6 +55,7 @@ $PY convert.py Items.bmp out/ --split
 - `--mode {auto,colorkey,chip,mask-v,mask-h}` — 変換方式（既定 auto）
 - `--key {R,G,B|teal|white}` — colorkeyの透過色（既定 teal）
 - `--split` — chip/mask系でスプライト個別PNGを `<出力>/<名>/NN.png` へ出力
+- `--lowercase` — 出力PNGファイル名(stem)を小文字化（`t_Man.bmp`→`t_man.png`）。大文字小文字の取り違え防止。**解決側はcase-insensitive(lowercase正規化)前提**（[docs/08],[docs/09]）
 
 ## 出力仕様
 - 全てRGBA PNG。レイアウト・寸法は入力を踏襲（chip/mask系は画像半分の寸法）。

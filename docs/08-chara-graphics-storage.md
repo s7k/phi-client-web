@@ -27,6 +27,13 @@
 - グラ名(原文UTF-8)はDBカラムで保持。FEは**グラ名で要求**し、APIがDB経由でファイル解決。
 - これによりFS名の制約とグラ名(任意文字)を切り離す。
 
+### 大文字小文字の扱い（case-insensitive 解決）
+- サーバ送出の `gra_name` は混在ケース(`t_Lord`/`Hachiue01`等)。Linux FSは大小区別するため取り違え事故が起きやすい(例 `t_man` vs `t_Man`)。
+- **方針**: グラ解決は **case-insensitive**。`gra_name` を**小文字正規化したキー**で照合する。
+  - `chara_graphics` に正規化キー列 `gra_key`(=lower(gra_name)) を持たせUNIQUE/INDEX。原文 `gra_name` は表示用に保持。
+  - 変換ツールは `--lowercase` で出力PNG名を小文字化([06] tools/gfx_convert)。物理名・URLも小文字で統一。
+- これによりアップロード/解決/フォールバック全経路で大小揺れを排除。
+
 ## 3. 保管レイアウト
 
 ```
@@ -45,8 +52,9 @@ DB(SQLite)が `gra_name → storedName/png_path` を管理。
 ```sql
 -- アップロードされたキャラグラフィック
 CREATE TABLE chara_graphics (
-  gra_name      TEXT PRIMARY KEY,    -- グラ名(原文UTF-8). #m57 O の gra_name と一致
-  stored_name   TEXT NOT NULL UNIQUE,-- 物理ファイル名(安全名: ハッシュ/スラッグ)
+  gra_name      TEXT NOT NULL,       -- グラ名(原文UTF-8, 表示用). #m57 O の gra_name と一致
+  gra_key       TEXT PRIMARY KEY,    -- 正規化キー = lower(gra_name). 解決はこれで照合(case-insensitive)
+  stored_name   TEXT NOT NULL UNIQUE,-- 物理ファイル名(安全名: 小文字/ハッシュ/スラッグ)
   png_path      TEXT NOT NULL,       -- assets/chara/<stored_name>.png
   width         INTEGER NOT NULL,
   height        INTEGER NOT NULL,

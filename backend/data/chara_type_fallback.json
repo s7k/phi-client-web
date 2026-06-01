@@ -2,7 +2,7 @@
   "_comment": "キャラクターグラフィック フォールバック用 タイプコード正規マッピング。出典: server phi_dm.h CT_* / phi_dm.h:39 CHRGRA, client Const.cpp SKIN_CHARA_GRA[]。code=#m57 O 末尾フィールド(cd.type or 0x40/0x80系)。key=Web用英字キー(chara_index の category キーに対応)。jaは原文カテゴリ名。webFallbackGra=本プロジェクト独自のフォールバック割当(grアップロード名, 拡張子なし)。元BMPは legacy/graphics/chara/(gitignore)に保管→透過PNG化しchara_indexへシード。legacyIndexExampleは旧クライアントIndex.txtの値(参考・不使用)。",
   "version": 2,
   "types": [
-    { "code": 0,   "hex": "0x00", "key": "human",          "ja": "人・銅像",            "serverCT": null,           "webFallbackGra": "t_elf",      "legacyIndexExample": "LANU_Swordman.bmp", "note": "プレイヤー等のハードコードfallback(CHRGRA→\"human\")。銅像含む" },
+    { "code": 0,   "hex": "0x00", "key": "human",          "ja": "人・銅像",            "serverCT": null,           "webFallbackGra": "t_Man",      "legacyIndexExample": "LANU_Swordman.bmp", "note": "プレイヤー等のハードコードfallback(CHRGRA→\"human\")。銅像含む" },
     { "code": 1,   "hex": "0x01", "key": "intelligent",    "ja": "知的生物",            "serverCT": "CT_NORMAL",    "webFallbackGra": "t_elf",      "legacyIndexExample": "LANU_Oyaji.bmp",    "note": "通常の知的生物。type未一致時の既定(GetDefaultGraIndex fallback)" },
     { "code": 2,   "hex": "0x02", "key": "beast",          "ja": "獣",                  "serverCT": "CT_BEAST",     "webFallbackGra": "t_dog",      "legacyIndexExample": "LANU_WolfK.bmp",    "note": "獣類" },
     { "code": 3,   "hex": "0x03", "key": "berserk",        "ja": "狂戦士",              "serverCT": "CT_BERSERKER", "webFallbackGra": "t_fightery", "legacyIndexExample": "w_j_rakshasa.bmp",  "note": "狂戦士" },
