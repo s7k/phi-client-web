@@ -31,6 +31,6 @@
 - チップ index→セル対応、キャラの向き/フレーム配置、アイテム item_no は [README](../tools/gfx_convert/README.md) 出力仕様参照。
 - 変換は事前バッチ（ビルド時）。実行時変換は不要。
 
-## 未対応・任意
-- スキン画像(Direction/Panel/Bar/Tab等)の一括変換は `--mode colorkey --key {teal|white}` を種別ごとに指定。必要時に実施。
-- HpMpBar 等の特殊レイアウト(`LoadHpMpBar`)は別処理だが、Web版UIは独自実装で代替可能（優先度低）。
+## 対象範囲
+- 変換対象は**ゲーム内コンテンツのスプライト**のみ: キャラグラ(chara)・マップチップ(chip)・アイテム(Items)。
+- **スキン画像(UIテーマ: Title/Direction/HpMpPanel/Status/Bar/Tab/CSS/カーソル等)は対象外**。Web版UIは近代的な形で完全新規実装するため、レガシースキンの変換・移植は行わない([02] §4.0)。HP/MPゲージ・ステータス・方角表示等はCSS/コンポーネントで作り直す。

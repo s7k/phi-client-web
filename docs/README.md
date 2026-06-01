@@ -11,6 +11,10 @@
 | [05-feature-responsibility-design.md](05-feature-responsibility-design.md) | 不足機能のBE/FE責務分担設計。WS API契約 |
 | [06-graphics-transparency.md](06-graphics-transparency.md) | グラフィック透過方式(3種)と透過PNG変換ツール |
 | [07-ws-protocol.md](07-ws-protocol.md) | BE⇔FE WebSocket通信プロトコル仕様(v1)。メッセージ catalog・レガシー対応表 |
+| [08-chara-graphics-storage.md](08-chara-graphics-storage.md) | キャラBMPアップロード→透過PNG保管・Index.txt(SQLite)保管 設計。REST API |
+| [09-chara-fallback-mapping.md](09-chara-fallback-mapping.md) | キャラグラ フォールバック(タイプコード human/beast/berserk/eraser等)。正規マッピング |
+
+マッピング: `backend/data/chara_type_fallback.json`（キャラタイプコード正規対応）。
 
 変換ツール: `tools/gfx_convert/`（レガシーBMP → 透過PNG）。
 
