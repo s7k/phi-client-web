@@ -113,7 +113,14 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **A-21 [BE] SQLite並行(Q-R4-2)**: `check_same_thread=False`+短時間commitで単一プロセス想定は可。高並行はライター直列化/プール検討。[12]§7.1スケール課題に含む。
 - **A-22 [FE] 通知の対象session(Q-R4-02)**: 当面全sessionで発火。非アクティブ抑止は仕様化保留。
 - **A-23 [共通] `img=`タグ実形(Q-R4-03)**: `/*img=URL*/`想定で実装。**受信ログの観察(passive)で実形確認可**(送信なし=迷惑なし)。低優先OPEN。
-- **A-24 [FE] view.set連動**: display.mapSize/mapStyle変更時に `view.set` 送信([07]§5.8)未配線→R5で追加。
+- **A-24 [FE] view.set連動**: display.mapSize/mapStyle変更時に `view.set` 送信([07]§5.8)未配線→R5で追加。**完了**。
+
+### R5 由来（リード裁定）
+
+- **A-25 [共通] 登録uid供給元(Q-R5-1, [12]§2.4継続)**: 登録成功時サーバ`#ex-put UID <uid>`通知を捕捉する実装。通知なし時 uid=None→要手当。**実機での確認はユーザーが登録実施時に行う**(自動登録は迷惑/クラッタのため我々は実行しない)。OPEN(ユーザー側)。
+- **A-26 [共通] 登録グラ一覧レスポンス形**: `{graphics: string[]}`(順序=image索引)。FEは配列直返しもフォールバック許容。確定。
+- **A-27 [BE] reject fields語彙**: `["name","pass","image","mail"]`。FE表示マップ整合。確定。
+- **TODO(残)**: command.raw監査ログ未実装(レート判定のみ)。本番CSRFは`PHI_ALLOWED_ORIGINS`設定必須。登録後自動ログインは任意(現状手動再ログイン案内)。
 
 ## 5. ステータスボード
 
@@ -124,7 +131,8 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 | R2 | ✅ B5 LegacySocket + B6 SessionManager + B7 WsServer + 実機録画検証(121 tests) | ✅ F4マップ描画(Canvas) + F5グラ解決(110 tests) | R2コミット済 |
 | R3 | ✅ B8 Store/SQLite + B12 認証(uid暗号/PBKDF2暫定) + priv修正(149 tests) | ✅ F8 キーハンドラ + F9 リスト/編集/タブUI(160 tests) | R3コミット済 |
 | R4 | ✅ B9 gfx + B10 REST chara + B11 fallback + B13 世界移動 + move整合(185 tests) | ✅ F10 設定UI + F11 通知/SS/画像 + EagleEye(191 tests) | R4コミット済 |
-| R5 | B14 レート制限 + B15 登録(#ex-register) + auth硬化(argon2/CSRF) + REST統合 + view.set | F12 登録フォーム + view.set連動 + 統合磨き | — |
+| R5 | ✅ B14 レート制限 + B15 登録 + auth硬化(argon2/CSRF) + REST統合 + view.set(231 tests) | ✅ F12 登録フォーム + view.set連動 + 統合(210 tests) | R5コミット済 |
+| R6 | リード: 全テスト実走確認 + E2E/glue/ルートREADME + 起動確認 | (統合検証) | — |
 
 ## 6. コミットログ（リード記入）
 

@@ -76,10 +76,12 @@ def build_chara_router(
     assets_dir: str | Path,
     *,
     require_account=None,
+    rate_limiter=None,
 ) -> APIRouter:
     """`/api/chara` ルータを構築。
 
     require_account: FastAPI 依存(認証)。None なら no-op(uploaded_by=None)。
+    rate_limiter: RateLimiter(upload 30/min/account)。None なら無制限。
     """
     storage = CharaStorage(assets_dir)
     router = APIRouter(prefix="/api/chara")
@@ -103,6 +105,10 @@ def build_chara_router(
         colorKey: str = Form("teal"),
         account_id: str | None = Depends(account_dep),
     ) -> dict:
+        # アップロードレート制限(30/min/account)。account 不明時は "anon"。
+        if rate_limiter is not None:
+            if not rate_limiter.allow("upload", account_id or "anon"):
+                raise HTTPException(429, "アップロードレート超過(30/分/account)")
         raw = await file.read()
         if not raw:
             raise HTTPException(400, "空ファイル")

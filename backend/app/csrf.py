@@ -1,0 +1,62 @@
+"""CSRF 対策([12]§1.3 / §7.3)。
+
+cookie セッション方式のため REST 変更系(POST/PUT/DELETE)に CSRF 対策を必須化。
+方式: **Origin/Referer ヘッダ検査**(SameSite=Strict cookie と併用)。
+
+- 状態変更リクエストの `Origin`(無ければ `Referer`)の origin 部が
+  許可 origin 群に一致しなければ拒否(403)。
+- 許可 origin は env `PHI_ALLOWED_ORIGINS`(カンマ区切り)。未設定時は
+  検査スキップ(開発/同一オリジン運用。本番は必ず設定)。
+- GET/HEAD/OPTIONS は安全メソッドとして検査対象外。
+
+double-submit トークン方式も選択肢だが([12]§1.3)、本実装は cookie が
+SameSite=Strict + httpOnly のため Origin 検査で十分([12]§7.3 Origin検査)。
+"""
+from __future__ import annotations
+
+import os
+from urllib.parse import urlsplit
+
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+def _origin_of(url: str) -> str | None:
+    """URL → `scheme://host[:port]`(origin)。解析不能は None。"""
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def load_allowed_origins() -> set[str] | None:
+    """env `PHI_ALLOWED_ORIGINS`(カンマ区切り)→ set。未設定は None(検査無効)。"""
+    raw = os.environ.get("PHI_ALLOWED_ORIGINS")
+    if not raw:
+        return None
+    return {o.strip() for o in raw.split(",") if o.strip()}
+
+
+def is_origin_allowed(
+    method: str,
+    origin_header: str | None,
+    referer_header: str | None,
+    allowed: set[str] | None,
+) -> bool:
+    """CSRF 判定。許可 → True / 拒否 → False。
+
+    - 安全メソッド → 常に許可。
+    - allowed=None(未設定)→ 検査スキップで許可。
+    - Origin(無ければ Referer)の origin が allowed に含まれれば許可。
+    - どちらも無い変更系 → 拒否。
+    """
+    if method.upper() in SAFE_METHODS:
+        return True
+    if allowed is None:
+        return True
+    src = origin_header or referer_header
+    origin = _origin_of(src) if src else None
+    if origin is None:
+        return False
+    return origin in allowed

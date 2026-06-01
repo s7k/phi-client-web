@@ -58,8 +58,15 @@ export function Settings() {
 
   const saveKeybind = (patch: Partial<KeybindSettings>) =>
     ws.setSettings('keybind', { ...kb, ...patch });
-  const saveDisplay = (patch: Partial<DisplaySettings>) =>
+  const saveDisplay = (patch: Partial<DisplaySettings>) => {
     ws.setSettings('display', { ...dp, ...patch });
+    // A-24: 表示モード(mapSize/mapStyle/eagleEye)はレガシーへ view.set 連動送信([07]§5.8)。
+    const view: { mapSize?: 40 | 57; mapStyle?: 'turn' | 'solid'; eagleEye?: boolean } = {};
+    if (patch.mapSize !== undefined) view.mapSize = patch.mapSize;
+    if (patch.mapStyle !== undefined) view.mapStyle = patch.mapStyle;
+    if (patch.eagleEye !== undefined) view.eagleEye = patch.eagleEye;
+    if (Object.keys(view).length > 0) ws.sendViewSet(view);
+  };
   const saveNotify = (patch: Partial<NotifySettings>) =>
     ws.setSettings('notify', { ...nt, ...patch });
   const saveIntervals = (patch: Partial<IntervalsSettings>) =>

@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { useWs } from '../ws/WsContext';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUiStore } from '../stores/uiStore';
+import { Register } from './Register';
 import './Login.css';
 
 export function Login() {
@@ -20,9 +21,10 @@ export function Login() {
 
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
-  const [phase, setPhase] = useState<'login' | 'select'>('login');
+  const [phase, setPhase] = useState<'login' | 'select' | 'register'>('login');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -51,10 +53,29 @@ export function Login() {
     }
   }
 
+  // 登録画面は専用コンポーネントへ委譲。成功でログインへ戻し、案内を表示。
+  if (phase === 'register') {
+    return (
+      <Register
+        onRegistered={(name) => {
+          setPhase('login');
+          setNotice(`「${name}」を登録しました。ログインしてください。`);
+        }}
+        onCancel={() => setPhase('login')}
+      />
+    );
+  }
+
   return (
     <div className="login">
       <div className="login__card">
         <h1 className="login__title">phi-web</h1>
+
+        {notice && (
+          <p className="login__notice" role="status">
+            {notice}
+          </p>
+        )}
 
         {phase === 'login' && (
           <form className="login__form" onSubmit={handleLogin}>
@@ -80,6 +101,17 @@ export function Login() {
             </label>
             <button className="login__submit" type="submit" disabled={busy}>
               {busy ? '認証中…' : 'ログイン'}
+            </button>
+            <button
+              className="login__link"
+              type="button"
+              onClick={() => {
+                setError(null);
+                setNotice(null);
+                setPhase('register');
+              }}
+            >
+              新規キャラクター作成
             </button>
           </form>
         )}

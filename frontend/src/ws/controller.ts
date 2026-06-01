@@ -27,6 +27,7 @@ import type {
   SettingsResponse,
   SettingsScope,
   SettingsSetRequest,
+  ViewSetRequest,
 } from '../types/protocol';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
@@ -268,5 +269,26 @@ export class WsController {
   setSettings(scope: SettingsScope, value: unknown): void {
     useSettingsStore.getState().setScope(scope, value);
     this.client.send({ type: 'settings.set', scope, value } as SettingsSetRequest);
+  }
+
+  // ---------- 表示モード([07]§5.8, A-24) ----------
+
+  /**
+   * 表示モードをレガシーへ反映(A-24, [07]§5.8)。
+   * BE が `#ex-map size=`/`#ex-map style=`/`#ex-switch eagleeye=` へ変換。
+   * display 設定(mapSize/mapStyle/eagleEye)変更時に Settings から呼ぶ。
+   * 指定された項目のみ送信(undefined は省略)。
+   */
+  sendViewSet(
+    view: { mapSize?: 40 | 57; mapStyle?: 'turn' | 'solid'; eagleEye?: boolean },
+    session?: string,
+  ): void {
+    const msg: ViewSetRequest = { type: 'view.set' };
+    if (view.mapSize !== undefined) msg.mapSize = view.mapSize;
+    if (view.mapStyle !== undefined) msg.mapStyle = view.mapStyle;
+    if (view.eagleEye !== undefined) msg.eagleEye = view.eagleEye;
+    const s = session ?? useSessionStore.getState().active ?? undefined;
+    if (s) msg.session = s;
+    this.client.send(msg);
   }
 }

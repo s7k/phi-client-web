@@ -10,6 +10,7 @@ dependencies = [
     "Pillow",
     "websockets",
     "python-multipart",
+    "argon2-cffi>=25.1.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.store" = ["schema.sql"]
+"app" = ["data/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

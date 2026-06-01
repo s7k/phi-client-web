@@ -20,6 +20,11 @@ from __future__ import annotations
 import asyncio
 import time
 
+# FastAPI ハンドラの型注釈解決のため module グローバルに置く
+# (`from __future__ import annotations` で注釈が文字列化されるため、
+#  関数ローカル import だと FastAPI の get_type_hints が解決できない)。
+from fastapi import HTTPException, Request, Response  # noqa: E402
+
 from app.session import SessionManager
 
 PROTOCOL_VERSION = 1
@@ -44,15 +49,27 @@ class WsConnection:
     (starlette WebSocket / テスト用 Fake いずれも可)。
     """
 
-    def __init__(self, ws, manager: SessionManager, auth=None) -> None:
+    def __init__(
+        self,
+        ws,
+        manager: SessionManager,
+        auth=None,
+        *,
+        rate_limiter=None,
+        conn_limiter=None,
+    ) -> None:
         self._ws = ws
         self._mgr = manager
         self._auth = auth  # AuthService | None
+        self._rl = rate_limiter   # RateLimiter | None(command.raw/chat)
+        self._cl = conn_limiter   # ConcurrencyLimiter | None(WS同時接続)
         self._outbound: asyncio.Queue[dict] = asyncio.Queue()
         # この接続が開いた session 群(切断時に detach)。
         self._sessions: list[str] = []
         # 認証済みアカウント(auth 成功後にセット)。
         self._account_id: str | None = None
+        # 同時接続カウンタ確保済みか(release 二重防止)。
+        self._conn_acquired = False
 
     # ------------------------------------------------------------------
     # エントリポイント
@@ -72,6 +89,9 @@ class WsConnection:
             sender.cancel()
             for sid in self._sessions:
                 self._mgr.detach(sid)
+            if self._conn_acquired and self._cl is not None and self._account_id:
+                self._cl.release(self._account_id)
+                self._conn_acquired = False
 
     # ------------------------------------------------------------------
     # 送信ループ(SessionManager → WS)
@@ -130,6 +150,9 @@ class WsConnection:
         if self._auth is None:
             # 後方互換 stub(テスト/開発用)。
             acc = msg.get("id", "")
+            if not self._acquire_conn(acc):
+                await self._auth_rate_limited(msg)
+                return
             self._account_id = acc
             await self._send_auth_ok(msg, acc, stub=True)
             return
@@ -149,8 +172,26 @@ class WsConnection:
             })
             return
 
+        if not self._acquire_conn(account_id):
+            await self._auth_rate_limited(msg)
+            return
         self._account_id = account_id
         await self._send_auth_ok(msg, account_id, stub=False)
+
+    def _acquire_conn(self, account_id: str) -> bool:
+        """WS同時接続数を確保(5/account, [12]§4)。確保済なら True 維持。"""
+        if self._cl is None or self._conn_acquired:
+            return True
+        if self._cl.acquire(account_id):
+            self._conn_acquired = True
+            return True
+        return False
+
+    async def _auth_rate_limited(self, msg: dict) -> None:
+        await self._ws.send_json({
+            "type": "auth", "reqId": msg.get("reqId"), "ok": False,
+            "error": {"code": "RATE_LIMITED", "message": "WS同時接続数上限(5/account)"},
+        })
 
     async def _send_auth_ok(self, msg: dict, account_id: str, *, stub: bool) -> None:
         if stub or self._auth is None:
@@ -215,6 +256,10 @@ class WsConnection:
         if sid is None:
             await self._error(msg, "SESSION_NOT_FOUND", "no active session")
             return
+        # レート制限([12]§4): command.raw 10/10s, chat 20/10s(session単位)。
+        if self._rl is not None and not self._allow_intent(msg, sid):
+            await self._error(msg, "RATE_LIMITED", "レート制限超過")
+            return
         try:
             await self._mgr.handle_intent(sid, msg)
         except ValueError as exc:
@@ -222,6 +267,15 @@ class WsConnection:
             await self._error(msg, "BAD_REQUEST", str(exc))
         except KeyError as exc:
             await self._error(msg, "SESSION_NOT_FOUND", str(exc))
+
+    def _allow_intent(self, msg: dict, sid: str) -> bool:
+        """対象 intent をレート判定。chat 全mode / command.raw のみ制限対象。"""
+        t = msg.get("type")
+        if t == "chat":
+            return self._rl.allow("chat", sid)
+        if t == "command" and msg.get("name") == "raw":
+            return self._rl.allow("command.raw", sid)
+        return True
 
     def _resolve_session(self, msg: dict) -> str | None:
         """session 明示 or 省略時アクティブ解決(A-03)。"""
@@ -249,19 +303,60 @@ class WsConnection:
 # FastAPI アプリ(本番エンドポイント)
 # ----------------------------------------------------------------------
 
-def create_app(manager: SessionManager | None = None, auth=None):
-    """FastAPI アプリを生成。
+COOKIE_NAME = "phi_session"
 
-    - `/ws`: WebSocket エンドポイント([07])。
-    - `/api/auth/login` / `/api/auth/logout`: Web 認証([12]§1.3)。
-      cookie 名 `phi_session`、httpOnly/Secure/SameSite=Strict。
+
+def make_require_account(auth, cookie_name: str = COOKIE_NAME):
+    """`require_account` 依存を生成([12]§1.3)。
+
+    cookie `phi_session` の sessionId を `AuthService.validate` で検証し
+    account_id を返す。無効/欠落は 401。REST 保護エンドポイントに注入。
+    """
+    async def _require_account(request: Request) -> str:
+        sid = request.cookies.get(cookie_name)
+        account_id = auth.validate(sid) if sid else None
+        if account_id is None:
+            raise HTTPException(401, "未認証")
+        return account_id
+
+    return _require_account
+
+
+def create_app(
+    manager: SessionManager | None = None,
+    auth=None,
+    *,
+    assets_dir: str | None = None,
+    registrar_factory=None,
+    rate_limiter=None,
+    conn_limiter=None,
+    allowed_origins=None,
+):
+    """FastAPI アプリを生成(REST 統合 + WS)。
+
+    マウント:
+    - `/ws`                          : WebSocket([07])。
+    - `/api/auth/login` `/logout`    : Web 認証([12]§1.3)。cookie `phi_session`。
+    - `/api/chara/*`                 : キャラグラ([08], B10)。upload は要認証 + レート。
+    - `/api/register/*`              : 新規登録([12]§2, B15)。register は要認証 + レート/IP。
+
+    引数:
+    - assets_dir       : キャラグラ保存先(既定 env `PHI_ASSETS_DIR` or `./assets`)。
+    - registrar_factory: () -> LegacyRegistrar(既定は env のレガシー接続情報)。
+    - rate_limiter     : RateLimiter(既定で生成)。
+    - conn_limiter     : ConcurrencyLimiter(既定で生成)。
+    - allowed_origins  : CSRF 許可 origin set(既定 env `PHI_ALLOWED_ORIGINS`)。
 
     *auth* 省略時は `PHI_DB_PATH` から Store を開き AuthService を構築。
     """
-    from fastapi import FastAPI, Request, Response, WebSocket
+    import os
+
+    from fastapi import FastAPI, WebSocket
+
+    from app.csrf import is_origin_allowed, load_allowed_origins
+    from app.ratelimit import ConcurrencyLimiter, RateLimiter
 
     app = FastAPI(title="phi-web gateway")
-    import os
     mgr = manager or SessionManager(
         host=os.environ.get("PHI_HOST", ""),
         port=int(os.environ.get("PHI_PORT", "0") or 0),
@@ -274,31 +369,91 @@ def create_app(manager: SessionManager | None = None, auth=None):
         auth = AuthService(Store.open(os.environ.get("PHI_DB_PATH")))
     app.state.auth = auth
 
-    COOKIE = "phi_session"
+    rate_limiter = rate_limiter if rate_limiter is not None else RateLimiter()
+    conn_limiter = conn_limiter if conn_limiter is not None else ConcurrencyLimiter()
+    if allowed_origins is None:
+        allowed_origins = load_allowed_origins()
+    app.state.rate_limiter = rate_limiter
+    app.state.conn_limiter = conn_limiter
 
+    require_account = make_require_account(auth)
+
+    # ------------------------------------------------------------------
+    # CSRF: 変更系の Origin/Referer 検査([12]§1.3 / §7.3)。
+    # ------------------------------------------------------------------
+    @app.middleware("http")
+    async def csrf_guard(request: Request, call_next):
+        if not is_origin_allowed(
+            request.method,
+            request.headers.get("origin"),
+            request.headers.get("referer"),
+            allowed_origins,
+        ):
+            return Response(status_code=403, content="CSRF: origin 不許可")
+        return await call_next(request)
+
+    # ------------------------------------------------------------------
+    # 認証([12]§1.3)
+    # ------------------------------------------------------------------
     @app.post("/api/auth/login")
     async def login(request: Request, response: Response):
         body = await request.json()
         sid = auth.login(body.get("id", ""), body.get("password", ""))
         if sid is None:
             return Response(status_code=401)
-        # [12]§1.3: httpOnly + Secure + SameSite=Strict cookie。
         response.set_cookie(
-            COOKIE, sid, httponly=True, secure=True, samesite="strict"
+            COOKIE_NAME, sid, httponly=True, secure=True, samesite="strict"
         )
         return {"ok": True}
 
     @app.post("/api/auth/logout")
     async def logout(request: Request, response: Response):
-        sid = request.cookies.get(COOKIE)
+        sid = request.cookies.get(COOKIE_NAME)
         if sid:
             auth.logout(sid)
-        response.delete_cookie(COOKIE)
+        response.delete_cookie(COOKIE_NAME)
         return {"ok": True}
 
+    @app.get("/healthz")
+    async def healthz():
+        sessions = len(getattr(mgr, "_sessions", {}) or {})
+        return {"ok": True, "sessions": sessions}
+
+    # ------------------------------------------------------------------
+    # REST ルータ(chara / register)
+    # ------------------------------------------------------------------
+    from app.rest.chara import build_chara_router
+    from app.rest.register import build_register_router
+
+    assets = assets_dir or os.environ.get("PHI_ASSETS_DIR") or "./assets"
+    store = auth.store
+    app.include_router(build_chara_router(
+        store, assets,
+        require_account=require_account, rate_limiter=rate_limiter,
+    ))
+
+    if registrar_factory is None:  # pragma: no cover - 統合層(本番起動)
+        from app.register import LegacyRegistrar
+        reg_host = os.environ.get("PHI_HOST", "")
+        reg_port = int(os.environ.get("PHI_PORT", "0") or 0)
+
+        def registrar_factory():  # type: ignore[misc]
+            return LegacyRegistrar(reg_host, reg_port)
+
+    app.include_router(build_register_router(
+        store, registrar_factory, auth.cipher,
+        require_account=require_account, rate_limiter=rate_limiter,
+    ))
+
+    # ------------------------------------------------------------------
+    # WS([07])
+    # ------------------------------------------------------------------
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket):  # pragma: no cover - 統合層
-        conn = WsConnection(websocket, mgr, auth=auth)
+        conn = WsConnection(
+            websocket, mgr, auth=auth,
+            rate_limiter=rate_limiter, conn_limiter=conn_limiter,
+        )
         await conn.run()
 
     return app

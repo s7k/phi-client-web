@@ -35,7 +35,7 @@ def auth(store, cipher):
 
 def test_hash_verify():
     h = hash_password("s3cret")
-    assert h.startswith("pbkdf2$")
+    assert h.startswith("$argon2id$")  # argon2id 形式
     assert verify_password("s3cret", h)
     assert not verify_password("wrong", h)
 
@@ -48,6 +48,40 @@ def test_hash_salt_unique():
 def test_verify_malformed():
     assert not verify_password("x", "garbage")
     assert not verify_password("x", "bcrypt$1$a$b")  # 未対応方式
+
+
+def test_verify_legacy_pbkdf2():
+    """旧 PBKDF2 ハッシュも verify 可(移行互換)。"""
+    import hashlib
+    salt = bytes.fromhex("00112233445566778899aabbccddeeff")
+    rounds = 600_000
+    dk = hashlib.pbkdf2_hmac("sha256", b"legacy", salt, rounds)
+    stored = f"pbkdf2${rounds}${salt.hex()}${dk.hex()}"
+    assert verify_password("legacy", stored)
+    assert not verify_password("wrong", stored)
+
+
+def test_needs_rehash():
+    from app.auth import needs_rehash
+    assert needs_rehash("pbkdf2$1$aa$bb") is True   # 旧方式
+    assert needs_rehash("garbage") is True
+    assert needs_rehash(hash_password("x")) is False  # 最新 argon2id
+
+
+def test_authenticate_rehashes_legacy(store):
+    """旧 pbkdf2 ハッシュで login 成功時 argon2id へ透過アップグレード。"""
+    import hashlib
+    salt = bytes.fromhex("0102030405060708090a0b0c0d0e0f00")
+    rounds = 600_000
+    dk = hashlib.pbkdf2_hmac("sha256", b"pw", salt, rounds)
+    legacy = f"pbkdf2${rounds}${salt.hex()}${dk.hex()}"
+    store.create_account("acc", legacy)
+    auth = AuthService(store)
+    assert auth.authenticate("acc", "pw")
+    # 再ハッシュ済(argon2id)
+    assert store.get_account("acc")["password_hash"].startswith("$argon2id$")
+    # 新ハッシュでも引き続き検証可
+    assert auth.authenticate("acc", "pw")
 
 
 # ----------------------------------------------------------------------

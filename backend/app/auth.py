@@ -7,10 +7,9 @@
 
 実装方針
 ------------------------------------------------------------------
-- パスワードハッシュ:
-    argon2id 推奨([12]§1.4)だが当環境に `argon2-cffi` 未導入。
-    TODO(B12+): argon2-cffi 導入後に argon2id へ差し替え。
-    暫定: hashlib PBKDF2-HMAC-SHA256 + ランダム salt(`pbkdf2$...`)。
+- パスワードハッシュ([12]§1.4 argon2id):
+    新規ハッシュは `argon2-cffi`(argon2id)。`$argon2id$...` 形式。
+    旧 PBKDF2-HMAC-SHA256(`pbkdf2$...`)も verify 可(scheme 分岐, 移行互換)。
 - uid 暗号: `cryptography` Fernet(AES128-CBC + HMAC, AEAD相当・タイムスタンプ内蔵)。
     鍵は env `PHI_SECRET_KEY`(urlsafe-base64 32B、Fernet.generate_key() 形式)。
     SQLite には暗号文(BLOB)のみ保存([12]§1.2)。
@@ -27,6 +26,8 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.store import Store
@@ -38,8 +39,11 @@ from app.store.db import utc_now
 IDLE_TIMEOUT_SEC = 30 * 60        # idle 30分
 ABSOLUTE_TIMEOUT_SEC = 24 * 3600  # absolute 24h
 
-_PBKDF2_ROUNDS = 600_000  # OWASP 2023 推奨(PBKDF2-HMAC-SHA256)
+_PBKDF2_ROUNDS = 600_000  # OWASP 2023 推奨(PBKDF2-HMAC-SHA256, 旧方式 verify 用)
 _SESSION_ID_BYTES = 32    # 256bit 不透明 ID
+
+# argon2id ハッシャ(既定パラメータ; argon2-cffi 推奨値)。
+_PH = PasswordHasher()
 
 
 # ======================================================================
@@ -47,28 +51,44 @@ _SESSION_ID_BYTES = 32    # 256bit 不透明 ID
 # ======================================================================
 
 def hash_password(password: str) -> str:
-    """パスワード → 保存用ハッシュ文字列 `pbkdf2$<rounds>$<salt_hex>$<dk_hex>`。
-
-    TODO(B12+): argon2id へ移行(argon2-cffi 導入後)。
-    """
-    salt = secrets.token_bytes(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ROUNDS)
-    return f"pbkdf2${_PBKDF2_ROUNDS}${salt.hex()}${dk.hex()}"
+    """パスワード → 保存用ハッシュ文字列(argon2id, `$argon2id$...`)。"""
+    return _PH.hash(password)
 
 
-def verify_password(password: str, stored: str) -> bool:
-    """平文パスワードと保存ハッシュを定数時間比較で検証。"""
+def _verify_pbkdf2(password: str, stored: str) -> bool:
+    """旧 PBKDF2 ハッシュ(`pbkdf2$<rounds>$<salt_hex>$<dk_hex>`)の検証。"""
     try:
         scheme, rounds_s, salt_hex, dk_hex = stored.split("$")
     except ValueError:
         return False
     if scheme != "pbkdf2":
-        return False  # TODO(B12+): argon2id 等の他方式
+        return False
     rounds = int(rounds_s)
     salt = bytes.fromhex(salt_hex)
     expected = bytes.fromhex(dk_hex)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
     return hmac.compare_digest(dk, expected)
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """平文パスワードと保存ハッシュを検証。argon2id / 旧 pbkdf2 両対応。"""
+    if stored.startswith("$argon2"):
+        try:
+            return _PH.verify(stored, password)
+        except (VerifyMismatchError, InvalidHashError):
+            return False
+    # 旧 PBKDF2 ハッシュ(移行互換)。
+    return _verify_pbkdf2(password, stored)
+
+
+def needs_rehash(stored: str) -> bool:
+    """保存ハッシュが旧方式/旧パラメータで再ハッシュ推奨か判定。"""
+    if not stored.startswith("$argon2"):
+        return True  # 旧 pbkdf2 → argon2id へ移行推奨
+    try:
+        return _PH.check_needs_rehash(stored)
+    except InvalidHashError:
+        return True
 
 
 # ======================================================================
@@ -154,11 +174,23 @@ class AuthService:
     # ---- login ----
 
     def authenticate(self, account_id: str, password: str) -> bool:
-        """id+password を accounts と照合。"""
+        """id+password を accounts と照合。
+
+        成功時、保存ハッシュが旧方式/旧パラメータなら argon2id へ再ハッシュ更新
+        (透過的アップグレード)。
+        """
         row = self.store.get_account(account_id)
         if row is None:
             return False
-        return verify_password(password, row["password_hash"])
+        stored = row["password_hash"]
+        if not verify_password(password, stored):
+            return False
+        if needs_rehash(stored):
+            try:
+                self.store.update_password_hash(account_id, hash_password(password))
+            except Exception:  # noqa: BLE001 - 再ハッシュ失敗で認証自体は成功扱い
+                pass
+        return True
 
     def login(
         self, account_id: str, password: str, *, now: datetime | None = None
