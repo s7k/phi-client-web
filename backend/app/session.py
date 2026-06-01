@@ -31,6 +31,8 @@ VERSION_STRING = "05107100"
 KEEPALIVE_SILENCE_SEC = 120.0
 # FE detach 後にレガシー接続を保持する上限([02]§6, [07]§4.2)。
 DETACH_TIMEOUT_SEC = 300.0
+# 世界移動(#ch-srv)ハンドシェイクのタイムアウト(B13, [07]§6.10)。
+WORLD_TRANSFER_TIMEOUT_SEC = 300.0
 
 EventCallback = Callable[[dict], None]
 
@@ -42,6 +44,9 @@ class _SessionState:
         self.id = session_id
         self.char_id = char_id
         self.socket = socket
+        # 現在の接続先(世界移動で更新)。snapshot/再ログイン用。
+        self.host = ""
+        self.port = 0
         self.parser = ProtocolParser()
         self.serializer = CommandSerializer()
         self.on_event: EventCallback | None = None
@@ -77,10 +82,13 @@ class SessionManager:
         host: str = "",
         port: int = 0,
         socket_factory: Callable[[], LegacySocket] | None = None,
+        store=None,
     ) -> None:
         self._host = host
         self._port = port
         self._socket_factory = socket_factory or LegacySocket
+        # Store(B8): 世界移動成功時に characters.last_server を更新(任意)。
+        self._store = store
         # charId → SessionState(再アタッチのキー), session_id → SessionState
         self._by_char: dict[str, _SessionState] = {}
         self._sessions: dict[str, _SessionState] = {}
@@ -115,7 +123,9 @@ class SessionManager:
         self._by_char[char_id] = st
         self._sessions[session_id] = st
 
-        await sock.connect(host or self._host, port or self._port)
+        st.host = host or self._host
+        st.port = port or self._port
+        await sock.connect(st.host, st.port)
         await self._login(st, char_id)
 
         self._emit(st, {"type": "connection", "state": "connected"})
@@ -180,6 +190,12 @@ class SessionManager:
 
     async def _handle_parser_event(self, st: _SessionState, ev: dict) -> None:
         t = ev.get("type")
+
+        # 世界移動(#ch-srv): start を FE へ通知し、ハンドシェイク実行(B13)。
+        if t == "worldTransfer" and ev.get("state") == "start":
+            self._emit(st, ev)
+            await self._handle_ch_srv(st, ev.get("server", ""))
+            return
 
         if t == "_internal":
             action = ev.get("action")
@@ -290,6 +306,153 @@ class SessionManager:
             if st.socket.connected:
                 data = st.serializer.serialize(normal)
                 await st.socket.send_bytes(data + b"\n")
+
+    # ------------------------------------------------------------------
+    # 世界移動(#ch-srv ハンドシェイク, B13)
+    # ------------------------------------------------------------------
+
+    async def _handle_ch_srv(self, st: _SessionState, server: str) -> None:
+        """`#ch-srv` ハンドシェイクを実行(network_thread._handle_ch_srv 移植)。
+
+        手順(classTransportCharacter::ChSrv 準拠):
+          1. 宛先サーバへ接続
+          2. 宛先へ `#reserve <char_id>`
+          3. 宛先から `#rsv-ok`(失敗時 元へ `#no-srv`)
+          4. 元へ `#trans <ip> <port>`
+          5. 元から `#trs-ok`(失敗時 宛先へ `#ch-srv-no`)
+          6. 宛先へ `#ch-srv-ok`
+          7. 接続を宛先へ swap + 再ログイン
+
+        全体 300 秒タイムアウト([07]§6.10)。成功時 Store.last_server 更新、
+        FE へ worldTransfer(success/fail) を通知。
+        本メソッドは recv_loop コンテキスト内で同期的に呼ばれ、元 socket の
+        行待ち(trs-ok)は recv_loop と競合しない。
+        """
+        ip, _, port_s = server.partition(":")
+        try:
+            port = int(port_s)
+        except ValueError:
+            self._emit_transfer_fail(st, server)
+            return
+
+        try:
+            await asyncio.wait_for(
+                self._ch_srv_handshake(st, ip, port),
+                timeout=WORLD_TRANSFER_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            self._emit_transfer_fail(st, server)
+            return
+        # _ch_srv_handshake が成功/失敗で emit 済み。
+
+    async def _ch_srv_handshake(self, st: _SessionState, ip: str, port: int) -> None:
+        old_sock = st.socket
+        server = f"{ip}:{port}"
+
+        dst = self._socket_factory()
+        try:
+            await dst.connect(ip, port)
+        except (OSError, ConnectionError):
+            self._emit_transfer_fail(st, server)
+            return
+
+        # 2. 宛先へ reserve
+        try:
+            await dst.send_line(f"#reserve {st.char_id}")
+        except (OSError, ConnectionError):
+            await dst.close()
+            self._emit_transfer_fail(st, server)
+            return
+
+        # 3. 宛先から rsv-ok
+        if not await self._wait_for_line(dst, b"#rsv-ok", b"#rsv-no"):
+            await self._safe_send(old_sock, "#no-srv")
+            await dst.close()
+            self._emit_transfer_fail(st, server)
+            return
+
+        # 4. 元へ trans
+        if not await self._safe_send(old_sock, f"#trans {ip} {port}"):
+            await dst.close()
+            self._emit_transfer_fail(st, server)
+            return
+
+        # 5. 元から trs-ok
+        if not await self._wait_for_line(old_sock, b"#trs-ok", b"#trs-no"):
+            await self._safe_send(dst, "#ch-srv-no")
+            await dst.close()
+            self._emit_transfer_fail(st, server)
+            return
+
+        # 6. 宛先へ ch-srv-ok
+        if not await self._safe_send(dst, "#ch-srv-ok"):
+            await dst.close()
+            self._emit_transfer_fail(st, server)
+            return
+
+        # 7. swap + 再ログイン
+        st.socket = dst
+        st.host = ip
+        st.port = port
+        await old_sock.close()
+        try:
+            await self._login(st, st.char_id)
+        except (OSError, ConnectionError):
+            self._emit_transfer_fail(st, server)
+            return
+
+        # 成功: Store.last_server 更新 + FE 通知。
+        self._update_last_server(st, server)
+        self._emit(st, {"type": "worldTransfer", "state": "success",
+                        "server": server})
+
+    async def _wait_for_line(
+        self, sock: LegacySocket, ok: bytes, fail: bytes
+    ) -> bool:
+        """*sock* から ok/fail 行(strip 後一致)を待つ。
+
+        ok → True、fail/#x/#close/切断 → False。タイムアウトは呼出側(全体 300s)。
+        """
+        while True:
+            raw = await sock.read_line()
+            if raw is None:
+                return False
+            stripped = raw.strip()
+            if stripped == ok:
+                return True
+            if stripped in (fail, b"#x", b"#close"):
+                return False
+            # 関係ない行は読み飛ばす(network_thread 同様)。
+
+    async def _safe_send(self, sock: LegacySocket, text: str) -> bool:
+        try:
+            await sock.send_line(text)
+            return True
+        except (OSError, ConnectionError):
+            return False
+
+    def _emit_transfer_fail(self, st: _SessionState, server: str) -> None:
+        self._emit(st, {"type": "worldTransfer", "state": "fail",
+                        "server": server})
+
+    def _update_last_server(self, st: _SessionState, server: str) -> None:
+        if self._store is None:
+            return
+        try:
+            row = self._store.get_character(st.char_id)
+            account_id = row["account_id"] if row is not None else None
+            display_name = row["display_name"] if row is not None else None
+            if account_id is None:
+                # 既存キャラ行が無い場合は last_server だけ更新できないため skip。
+                return
+            self._store.upsert_character(
+                st.char_id, account_id,
+                display_name=display_name, last_server=server,
+                legacy_uid_enc=row["legacy_uid_enc"] if row is not None else None,
+                legacy_host=server,
+            )
+        except Exception:  # noqa: BLE001 - 永続化失敗で移動自体は成功扱い
+            pass
 
     # ------------------------------------------------------------------
     # detach / close

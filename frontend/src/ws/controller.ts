@@ -23,6 +23,10 @@ import type {
   TurnDir,
   ServerMessage,
   SessionOpenRequest,
+  SettingsGetRequest,
+  SettingsResponse,
+  SettingsScope,
+  SettingsSetRequest,
 } from '../types/protocol';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
@@ -34,6 +38,10 @@ import { useModeStore } from '../stores/modeStore';
 import { useListStore } from '../stores/listStore';
 import { useEditStore } from '../stores/editStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import type { NotifySettings } from '../stores/settingsStore';
+import { DEFAULT_NOTIFY } from '../stores/settingsStore';
+import { useEagleEyeStore } from '../stores/eagleEyeStore';
+import { notify } from '../lib/notify';
 import { applySnapshot } from '../stores/applySnapshot';
 
 /** union を分配して各メンバから共通エンベロープキーを除いた command ペイロード型。 */
@@ -99,6 +107,11 @@ export class WsController {
     c.on('message', (msg) => {
       const s = resolveSession(msg.session);
       if (s) useChatStore.getState().addMessage(s, msg);
+      // F11 通知判定([05]§10)。設定は notify scope(無ければ既定)。
+      const ns =
+        (useSettingsStore.getState().byScope['notify'] as NotifySettings | undefined) ??
+        DEFAULT_NOTIFY;
+      notify({ channel: msg.channel, text: msg.text, from: msg.from }, ns);
     });
 
     c.on('userList', (msg) => {
@@ -123,6 +136,11 @@ export class WsController {
 
     c.on('settings', (msg) => {
       useSettingsStore.getState().setScope(msg.scope, msg.value);
+    });
+
+    c.on('eagleEye', (msg) => {
+      const s = resolveSession(msg.session);
+      if (s) useEagleEyeStore.getState().setEagleEye(s, msg);
     });
   }
 
@@ -220,5 +238,35 @@ export class WsController {
   /** 入力キャンセル(multi=`.!`, single=空送信等はBE整形)。 */
   cancelEdit(session: string): void {
     this.client.send({ type: 'edit.cancel', session });
+  }
+
+  // ---------- 設定([07]§5.7) ----------
+
+  /**
+   * 設定取得。reqIdエコー応答(settings)から value を返し settingsStore へ反映。
+   * 値が無い場合は undefined。
+   */
+  async getSettings<T = unknown>(scope: SettingsScope): Promise<T | undefined> {
+    const res = (await this.client.request<SettingsGetRequest>({
+      type: 'settings.get',
+      scope,
+    })) as ServerMessage;
+    if (res.type !== 'settings') {
+      throw new Error('予期しない応答: ' + res.type);
+    }
+    const s = res as SettingsResponse;
+    if (s.ok === false) {
+      throw new Error(s.error?.message ?? '設定取得失敗');
+    }
+    if (s.value !== undefined) {
+      useSettingsStore.getState().setScope(scope, s.value);
+    }
+    return s.value as T | undefined;
+  }
+
+  /** 設定保存(永続化はBE)。即座に settingsStore へ反映(楽観更新)。 */
+  setSettings(scope: SettingsScope, value: unknown): void {
+    useSettingsStore.getState().setScope(scope, value);
+    this.client.send({ type: 'settings.set', scope, value } as SettingsSetRequest);
   }
 }

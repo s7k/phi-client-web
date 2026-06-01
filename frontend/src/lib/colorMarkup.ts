@@ -7,9 +7,10 @@
  *          /*color=NAME*​/   名前付き色 (/*c=NAME*​/, /*cl=NAME*​/ も同義)
  *   閉じ:  /*.*​/            全タグクローズ
  *          /*attr=.*​/       当該属性の最内タグを1つクローズ
+ *   画像:  /*img=URL*​/       インライン画像(F11, [05]§13)。http/https のみ許可・サニタイズ。
  *
- * 未対応タグ(size=,font=,style=,img=)は黙って除去。
- * 戻り値: { text, color } セグメント配列。color は CSS hex か null(既定前景色)。
+ * 未対応タグ(size=,font=,style=)は黙って除去。
+ * 戻り値: セグメント配列。text セグメント({text,color}) または image セグメント({img})。
  */
 
 /** 単レター色ショートカット(Log.css .color_x_ 由来)。 */
@@ -70,9 +71,9 @@ const CSS_COLORS: Record<string, string> = {
 };
 
 // TagToHtml.cpp のパターンに対応。
-// group1=inner(全体), group2=attr(color/cl/c/size/font/ft/style), group3=value。
+// group1=inner(全体), group2=attr(color/cl/c/size/font/ft/style/img), group3=value。
 const TAG_RE =
-  /\/\*(\.|[a-zA-Z]|(color|cl|c|size|font|ft|style)=(.+?))\*\//gi;
+  /\/\*(\.|[a-zA-Z]|(color|cl|c|size|font|ft|style|img)=(.+?))\*\//gi;
 const COLOR_ATTR_RE = /^(?:color|cl|c)$/i;
 const HEX3 = /^#[0-9a-fA-F]{3}$/;
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
@@ -87,10 +88,39 @@ function resolve(name: string): string | null {
   return null;
 }
 
-/** 装飾セグメント。color は hex か null(既定前景色)。 */
-export interface MarkupSegment {
+/** テキスト装飾セグメント。color は hex か null(既定前景色)。 */
+export interface TextSegment {
+  kind: 'text';
   text: string;
   color: string | null;
+}
+
+/** 画像セグメント(img= タグ)。url はサニタイズ済(http/https のみ)。 */
+export interface ImageSegment {
+  kind: 'image';
+  url: string;
+}
+
+export type MarkupSegment = TextSegment | ImageSegment;
+
+/**
+ * img= の URL をサニタイズ([05]§13)。
+ * - http/https スキームのみ許可(javascript:/data: 等を拒否)。
+ * - 空白・引用符・山括弧を除去(属性インジェクション防止。CSP前提)。
+ * - 不正は null。
+ */
+export function sanitizeImageUrl(raw: string): string | null {
+  const s = raw.trim();
+  // 制御文字・空白・属性破壊文字を含む場合は拒否(URLとして不正)。
+  if (/[\s"'<>`\\]/.test(s)) return null;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  return u.href;
 }
 
 /**
@@ -107,19 +137,23 @@ export function parseMarkup(text: string): MarkupSegment[] {
   while ((m = TAG_RE.exec(text)) !== null) {
     const before = text.slice(pos, m.index);
     if (before) {
-      segments.push({ text: before, color: stack.length ? stack[stack.length - 1] : null });
+      segments.push({ kind: 'text', text: before, color: stack.length ? stack[stack.length - 1] : null });
     }
     pos = TAG_RE.lastIndex;
 
     const inner = m[1]; // /* と */ の間の全内容
-    const attr = m[2] as string | undefined; // color/c/size/...
+    const attr = m[2] as string | undefined; // color/c/size/img/...
     const value = m[3] as string | undefined; // '=' 以降
 
     if (inner === '.') {
       // /*.*​/ — 全タグクローズ
       stack.length = 0;
     } else if (attr !== undefined) {
-      if (value === '.') {
+      if (/^img$/i.test(attr)) {
+        // /*img=URL*​/ — インライン画像([05]§13)。サニタイズ通過時のみ。
+        const url = sanitizeImageUrl(value ?? '');
+        if (url) segments.push({ kind: 'image', url });
+      } else if (value === '.') {
         // /*attr=.*​/ — 1タグクローズ
         if (stack.length) stack.pop();
       } else if (COLOR_ATTR_RE.test(attr)) {
@@ -135,7 +169,7 @@ export function parseMarkup(text: string): MarkupSegment[] {
 
   const tail = text.slice(pos);
   if (tail) {
-    segments.push({ text: tail, color: stack.length ? stack[stack.length - 1] : null });
+    segments.push({ kind: 'text', text: tail, color: stack.length ? stack[stack.length - 1] : null });
   }
 
   return segments;

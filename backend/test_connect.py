@@ -68,6 +68,35 @@ def to_utf8(raw: bytes) -> str:
     return raw.decode("cp932", errors="replace")
 
 
+# 実サーバへ送ってはいけない行(他者に迷惑): 大声・priv・パーティ・通常チャット。
+# 許可: #プロトコル行 と 安全な観察/移動コマンド(他プレイヤーに発言として見えないもの)。
+_SAFE_SEND_PREFIXES = (
+    "#",                  # プロトコル行
+)
+_SAFE_SEND_EXACT = {
+    "go", "go b", "go l", "go r", "turn l", "turn r", "turn b",
+    "go n", "go s", "go e", "go w", "go N", "go S", "go E", "go W",
+    "look", "check", "check\nlook", "see",
+}
+
+
+def _reject_disruptive(lines: list[str]) -> str | None:
+    """送信予定行に他者迷惑(大声/priv/パーティ/チャット)が含まれれば、その行を返す。"""
+    for s in lines:
+        t = s.strip()
+        if not t:
+            continue
+        # 大声(*先頭) / priv / パーティ(% @) は明確に禁止
+        if t.startswith("*") or t.startswith("priv ") or t.startswith("#priv") \
+           or t.startswith("%") or t.startswith("@"):
+            return s
+        # #プロトコル行 か 既知の安全コマンドのみ許可。それ以外(=通常チャット)は拒否。
+        if t.startswith(_SAFE_SEND_PREFIXES) or t in _SAFE_SEND_EXACT:
+            continue
+        return s
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--record", metavar="NAME",
@@ -79,6 +108,15 @@ def main() -> int:
     ap.add_argument("--send-delay", type=float, default=2.0,
                     help="ログイン受信後この秒数待ってから --send を送る")
     args = ap.parse_args()
+
+    # 他者迷惑行為の禁止: priv送信・大声(server-wide)・パーティ発言・通常チャットを
+    # 実サーバへ送らない。これらの検証はユーザーが別途行う(DEVLOG §0)。
+    # 許可するのは #プロトコル行 と移動/観察コマンドのみ。
+    blocked = _reject_disruptive(args.send)
+    if blocked:
+        print(f"[!] 送信拒否(他者に迷惑): {blocked!r} — priv/大声/チャットは送らない。"
+              f"これらの検証はユーザーが別途実施。", flush=True)
+        return 3
 
     if HOST in ("", "<SERVER_IP>") or CHARACTER_ID in ("", "<CHARACTER_ID>"):
         print("[!] PHI_HOST / PHI_CHARACTER_ID 未設定(.env)。接続不可。", flush=True)

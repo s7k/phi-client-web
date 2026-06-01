@@ -17,18 +17,25 @@ from typing import Callable
 
 from app.protocol.code_converter import CodeConverter
 
-# turn モード(相対): intent.dir(絶対 N/E/S/W)を「前後左右」相対へ落とすのではなく、
-# FE が相対意図を送る運用とし、dir をそのまま相対トークンへ対応付ける。
-# B(後)/F(前)…ではなく key_handler の go/turn トークンへ写像。
-_TURN_GO = {"N": "go", "S": "go b", "E": "go r", "W": "go l"}
-_TURN_DIAG = {
-    "NE": "go fr", "NW": "go fl", "SE": "go br", "SW": "go bl",
-}
+# A-17 move intent 契約(DEVLOG A-17 確定)。FE は抽象 intent、BE が整形。
+#
+# - 北固定(solid): move{mode:"step", dir:"N|E|S|W"} → "go N" 等(絶対方角)。
+# - turn(相対): move{mode:"step", dir:"F|B"} → "go"/"go b"
+#               move{mode:"strafe", dir:"L|R"} → "go l"/"go r"
+# - 共通(回転): move{mode:"turn", dir:"l|r|b"} → "turn l/r/b"
+#
+# step は map スタイルで意味が変わる: 北固定では絶対方角(N/E/S/W)、
+# turn スタイルでは相対(F/B = 前進/後退)。strafe は turn スタイル専用(横移動)。
+
+# turn(相対)スタイルの前進・後退。
+_TURN_STEP = {"F": "go", "B": "go b"}
+# strafe(横移動)。turn スタイルでの左右ストレイフ。
+_TURN_STRAFE = {"L": "go l", "R": "go r"}
+# 回転(共通)。
 _TURN_ROTATE = {"l": "turn l", "r": "turn r", "b": "turn b"}
 
 # north-fix(絶対)モード: 絶対方角をそのまま大文字 go へ。
 _NF_GO = {"N": "go N", "S": "go S", "E": "go E", "W": "go W"}
-_NF_DIAG = {"NE": "go NE", "NW": "go NW", "SE": "go SE", "SW": "go SW"}
 
 
 class CommandSerializer:
@@ -124,25 +131,27 @@ class CommandSerializer:
         mode = intent.get("mode", "step")
         dir_ = intent.get("dir", "")
 
-        # 回転(turn l/r/b)は dir に "l"/"r"/"b" を入れて mode="turn"。
-        if mode == "turn" and dir_ in _TURN_ROTATE:
-            return _TURN_ROTATE[dir_]
+        # 回転(turn l/r/b): dir に "l"/"r"/"b"、mode="turn"(map スタイル非依存)。
+        if mode == "turn":
+            if dir_ in _TURN_ROTATE:
+                return _TURN_ROTATE[dir_]
+            raise ValueError(f"invalid turn dir: {dir_!r}")
 
-        north_fix = (self.map_size == 57 and not self.map_style_turn)
+        # strafe(横移動 L/R): turn スタイル相対の横移動。
+        if mode == "strafe":
+            if dir_ in _TURN_STRAFE:
+                return _TURN_STRAFE[dir_]
+            raise ValueError(f"invalid strafe dir: {dir_!r}")
 
-        if north_fix:
+        # step: 北固定(絶対 N/E/S/W) or turn 相対(F/B)。
+        if mode == "step":
             if dir_ in _NF_GO:
-                return _NF_GO[dir_]
-            if dir_ in _NF_DIAG:
-                return _NF_DIAG[dir_]
-        else:
-            # turn(相対)スタイル / 5x5
-            if dir_ in _TURN_GO:
-                return _TURN_GO[dir_]
-            if dir_ in _TURN_DIAG:
-                return _TURN_DIAG[dir_]
+                return _NF_GO[dir_]      # 北固定: go N/E/S/W
+            if dir_ in _TURN_STEP:
+                return _TURN_STEP[dir_]  # turn 相対: F=go / B=go b
+            raise ValueError(f"invalid step dir: {dir_!r}")
 
-        raise ValueError(f"invalid move: dir={dir_!r} mode={mode!r}")
+        raise ValueError(f"invalid move mode: {mode!r}")
 
     # ------------------------------------------------------------------
     # command

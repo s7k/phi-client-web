@@ -59,36 +59,45 @@ def test_chat_priv_unknown_raises(ser):
 # --- move -----------------------------------------------------------------
 
 def test_move_north_fix_absolute(ser):
-    # デフォルト: size=57, solid → north-fix(絶対)
-    assert _txt(ser, {"type": "move", "dir": "N", "mode": "step"}) == "go N"
-    assert _txt(ser, {"type": "move", "dir": "E", "mode": "step"}) == "go E"
-    assert _txt(ser, {"type": "move", "dir": "NW", "mode": "step"}) == "go NW"
+    # A-17 北固定(solid): step + 絶対方角 N/E/S/W → go N 等
+    assert _txt(ser, {"type": "move", "mode": "step", "dir": "N"}) == "go N"
+    assert _txt(ser, {"type": "move", "mode": "step", "dir": "E"}) == "go E"
+    assert _txt(ser, {"type": "move", "mode": "step", "dir": "S"}) == "go S"
+    assert _txt(ser, {"type": "move", "mode": "step", "dir": "W"}) == "go W"
 
 
-def test_move_turn_style_relative(ser):
-    # view.set で style=turn → 相対モード
-    ser.to_legacy_text({"type": "view.set", "mapStyle": "turn"})
-    assert _txt(ser, {"type": "move", "dir": "N", "mode": "step"}) == "go"
-    assert _txt(ser, {"type": "move", "dir": "S", "mode": "step"}) == "go b"
-    assert _txt(ser, {"type": "move", "dir": "E", "mode": "step"}) == "go r"
-    assert _txt(ser, {"type": "move", "dir": "NE", "mode": "step"}) == "go fr"
+def test_move_turn_step_relative(ser):
+    # A-17 turn(相対): step + F/B → go / go b
+    assert _txt(ser, {"type": "move", "mode": "step", "dir": "F"}) == "go"
+    assert _txt(ser, {"type": "move", "mode": "step", "dir": "B"}) == "go b"
+
+
+def test_move_strafe(ser):
+    # A-17 turn(相対): strafe + L/R → go l / go r
+    assert _txt(ser, {"type": "move", "mode": "strafe", "dir": "L"}) == "go l"
+    assert _txt(ser, {"type": "move", "mode": "strafe", "dir": "R"}) == "go r"
 
 
 def test_move_turn_rotate(ser):
-    assert _txt(ser, {"type": "move", "dir": "l", "mode": "turn"}) == "turn l"
-    assert _txt(ser, {"type": "move", "dir": "r", "mode": "turn"}) == "turn r"
-    assert _txt(ser, {"type": "move", "dir": "b", "mode": "turn"}) == "turn b"
+    # A-17 共通: turn + l/r/b → turn l/r/b
+    assert _txt(ser, {"type": "move", "mode": "turn", "dir": "l"}) == "turn l"
+    assert _txt(ser, {"type": "move", "mode": "turn", "dir": "r"}) == "turn r"
+    assert _txt(ser, {"type": "move", "mode": "turn", "dir": "b"}) == "turn b"
 
 
-def test_move_5x5(ser):
-    ser.to_legacy_text({"type": "view.set", "mapSize": 40})
-    # 5x5 は turn 相対扱い
-    assert _txt(ser, {"type": "move", "dir": "N", "mode": "step"}) == "go"
-
-
-def test_move_invalid_raises(ser):
+def test_move_invalid_step_raises(ser):
     with pytest.raises(ValueError):
-        _txt(ser, {"type": "move", "dir": "Z", "mode": "step"})
+        _txt(ser, {"type": "move", "mode": "step", "dir": "Z"})
+
+
+def test_move_invalid_strafe_raises(ser):
+    with pytest.raises(ValueError):
+        _txt(ser, {"type": "move", "mode": "strafe", "dir": "X"})
+
+
+def test_move_invalid_turn_raises(ser):
+    with pytest.raises(ValueError):
+        _txt(ser, {"type": "move", "mode": "turn", "dir": "x"})
 
 
 # --- command --------------------------------------------------------------

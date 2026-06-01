@@ -63,7 +63,10 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     db_path 省略時は env `PHI_DB_PATH`、それも無ければ `:memory:`。
     """
     path = db_path or os.environ.get("PHI_DB_PATH") or ":memory:"
-    conn = sqlite3.connect(path)
+    # check_same_thread=False: REST(TestClient/uvicorn は別スレッドで
+    # ハンドラ実行)から同一接続を共有するため([08]§7 REST)。
+    # 書込は短時間・commit 即時で直列化される運用前提。
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

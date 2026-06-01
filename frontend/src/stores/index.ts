@@ -10,4 +10,5 @@ export { useUserStore } from './userStore';
 export { useModeStore } from './modeStore';
 export { useUiStore } from './uiStore';
 export { useSettingsStore } from './settingsStore';
+export { useEagleEyeStore } from './eagleEyeStore';
 export { applySnapshot } from './applySnapshot';

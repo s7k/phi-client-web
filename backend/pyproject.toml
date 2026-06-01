@@ -9,6 +9,7 @@ dependencies = [
     "cryptography",
     "Pillow",
     "websockets",
+    "python-multipart",
 ]
 
 [project.optional-dependencies]
@@ -16,6 +17,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "httpx",
 ]
 
 [build-system]

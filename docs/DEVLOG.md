@@ -4,6 +4,10 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 
 ## 0. 運用ルール
 
+> ⛔ **絶対禁止(他者迷惑回避)**: 実サーバへの **priv送信・大声(server-wide発言)・パーティ発言・通常チャット** をテスト/検証で**送らない**。他プレイヤーに迷惑。これらの送信仕様検証は**ユーザーが別途実施**。実サーバ送信は `#`プロトコル行と移動/観察コマンドのみ(`test_connect.py` にガード `_reject_disruptive` 実装済)。chat/priv/loud は**合成フィクスチャによるオフライン単体テストのみ**で検証する。
+
+
+
 - **役割**: リード(統合・コミット・方針決定) / BEスレッド(`backend/` 専従) / FEスレッド(`frontend/` 専従)。
 - **ディレクトリ占有**: BEは `backend/` のみ、FEは `frontend/` のみ編集。`docs/`・ルート設定はリードが編集。衝突回避。
 - **契約(コントラクト)**: WSプロトコル [07](07-ws-protocol.md) が BE↔FE の正。逸脱はここに疑問として記し、リードが裁定。
@@ -86,7 +90,7 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 ### R2 由来（実機録画で判明・リード裁定）
 
 - **A-13 [共通] priv送信整形(契約修正)**: 実機+phi-client両方 **`priv <番号> <本文>`(1行, `#`なし)** が正(旧契約`#priv\n`は誤り)。受信=`[<送信者>] > <本文>`。[07]§5.3・[05]§1修正済。**serializerをR3で修正+テスト更新**(Q-13対応)。
-- **A-14 [共通] party送信**: `%`プレフィクスは実機で否定(normal扱い)。party単独発言の送信機構はパーティ在籍環境でないと不明。**当面 partyはnormal整形+TODO**、パーティ環境で再録画し確定。OPEN。
+- **A-14 [共通] party送信**: `%`プレフィクスは実機で否定。**party/大声の送信仕様検証はユーザーが別途実施(§0禁止事項)**。当面 partyはnormal整形+TODO。我々は実サーバで再検証しない。OPEN(ユーザー側)。
 - **A-15 [BE] `#m57 W`(2スロット)**: ログイン〜通常マップでは出現せず未検証。eagleeye/特定状況で再録画し確定。OPEN。
 - **A-16 [確認] dir/自キャラ**: 自キャラ=`#m57 O C`行(layer 0xC=12)、他=`B`(11)。`map.dir`数値化(S=4)・`chars[].dir`文字 を実機確認。A-05/06正。
 - **FE-Q13 [確認] チップシート512×96**: gfx_convert出力(画像半分512×96, 32×48セル)で正。FE実装前提と一致。確定。
@@ -102,6 +106,15 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **A-18 [共通] shortcut/magic送信**: F1-F7=`command{name:"castMagic", spell:<名>}`→`cast\n<名>`。F8-F12=`command{name:"raw", text:<語>}`→そのまま(rate-limited)。確定。
 - **TODO(軽微, R4/R5)**: argon2-cffi導入(暫定PBKDF2 Q-14)、`pyproject` package-data に schema.sql(Q-15)、CSRFトークン/Origin検査(Q-16)。
 
+### R4 由来（リード裁定）
+
+- **A-19 [共通] eagleEyeのmapset**: `eagleEye` payloadに任意 `mapset?` を追加(別チップセット時)。無ければFEは現マップのmapset流用。[07]§6.11更新。
+- **A-20 [BE] tools/gfx_convert ↔ app.gfx 重複(Q-R4-1)**: 当面 `app/gfx/transparency.py` を正とし `tools/convert.py` は別コピー継続(編集範囲外)。将来 tools を `app.gfx` 委譲へ。低優先OPEN。
+- **A-21 [BE] SQLite並行(Q-R4-2)**: `check_same_thread=False`+短時間commitで単一プロセス想定は可。高並行はライター直列化/プール検討。[12]§7.1スケール課題に含む。
+- **A-22 [FE] 通知の対象session(Q-R4-02)**: 当面全sessionで発火。非アクティブ抑止は仕様化保留。
+- **A-23 [共通] `img=`タグ実形(Q-R4-03)**: `/*img=URL*/`想定で実装。**受信ログの観察(passive)で実形確認可**(送信なし=迷惑なし)。低優先OPEN。
+- **A-24 [FE] view.set連動**: display.mapSize/mapStyle変更時に `view.set` 送信([07]§5.8)未配線→R5で追加。
+
 ## 5. ステータスボード
 
 | ラウンド | BE | FE | コミット |
@@ -110,7 +123,8 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 | R1 | ✅ B3 Parser + B4 Serializer + 合成フィクスチャ (101 tests) | ✅ 残stores+配線 + F3ログイン + F6ステータス + F7チャット(markup) (54 tests) | R1コミット済 |
 | R2 | ✅ B5 LegacySocket + B6 SessionManager + B7 WsServer + 実機録画検証(121 tests) | ✅ F4マップ描画(Canvas) + F5グラ解決(110 tests) | R2コミット済 |
 | R3 | ✅ B8 Store/SQLite + B12 認証(uid暗号/PBKDF2暫定) + priv修正(149 tests) | ✅ F8 キーハンドラ + F9 リスト/編集/タブUI(160 tests) | R3コミット済 |
-| R4 | B9 gfx共有module + B10 REST chara + B11 fallback + B13 世界移動 + **serializer move整合(A-17)** | F10 設定UI + F11 通知/SS/画像 + EagleEye表示 | — |
+| R4 | ✅ B9 gfx + B10 REST chara + B11 fallback + B13 世界移動 + move整合(185 tests) | ✅ F10 設定UI + F11 通知/SS/画像 + EagleEye(191 tests) | R4コミット済 |
+| R5 | B14 レート制限 + B15 登録(#ex-register) + auth硬化(argon2/CSRF) + REST統合 + view.set | F12 登録フォーム + view.set連動 + 統合磨き | — |
 
 ## 6. コミットログ（リード記入）
 

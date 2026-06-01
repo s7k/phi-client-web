@@ -249,6 +249,7 @@ priv宛先に使う `key` はBE採番(`#user`番号を隠蔽)。
 ```jsonc
 { "type": "eagleEye", "session": "char1",
   "width": 15, "height": 15,
+  "mapset": "mansion",       // 任意(A-19). 無ければFEは現マップのmapset流用
   "self": { "x": 7, "y": 7 },
   "cells": [ { "chip": 12, "attr": 8 }, … ]  // width*height, 行優先
 }
