@@ -1,0 +1,94 @@
+.status-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #1e293b;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 12px;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+}
+
+.status-panel--empty {
+  color: #64748b;
+}
+
+.status-panel__name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.stat-bar__head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-bottom: 0.2rem;
+}
+
+.stat-bar__track {
+  height: 10px;
+  border-radius: 6px;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.stat-bar__fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.25s ease;
+}
+
+.stat-bar--hp .stat-bar__fill {
+  background: linear-gradient(90deg, #f87171, #ef4444);
+}
+
+.stat-bar--mp .stat-bar__fill {
+  background: linear-gradient(90deg, #60a5fa, #3b82f6);
+}
+
+.status-panel__meta {
+  display: flex;
+  gap: 1rem;
+  color: #94a3b8;
+}
+
+.status-panel__meta strong {
+  color: #e2e8f0;
+}
+
+.status-panel__attrs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.status-panel__attrs span {
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-panel__conds {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.cond-chip {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.cond-chip--none {
+  background: #14532d;
+  color: #bbf7d0;
+}

@@ -73,12 +73,23 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
   → **A-05**: **BEで正規化**。`map.dir`=数値0-7(自キャラ方角)、`map.chars[].dir`=文字`"B|R|F|L"`(キャラ向き)。FEはこの前提。[07]§6.2明確化。
 - **Q-01 [FE]** snapshotのmode/userList store未配線 → R1で配線。問題なし。
 
+### R1 由来（リード裁定。BE/FEの同番号は再採番）
+
+- **A-06 [共通] map.dir 数値マッピング**: 時計回り45度刻み **N=0, NE=1, E=2, SE=3, S=4, SW=5, W=6, NW=7**。BE正規化・FEは描画(F4)で使用。確定。
+- **A-07 [共通] move整形**: step移動は `dir` 絶対(N/E/S/W) → BEが自キャラ向き(直近map.dir)で必要なら相対化。回転は `mode:"turn"` + `dir:"l|r|b"` で `turn l/r/b`。turnスタイル時の簡約(N=前/S=後/E=右/W=左)はBE暫定。**F8(キーハンドラ)実装時に最終確定+実機検証(R2録画)**。
+- **A-08 [共通] chat party/all**: party=`%`プレフィクス(暫定, 実機要検証)。all=SessionManagerが全session同報(serializerはnormal整形)。**R2録画で検証**。
+- **A-09 [BE] `#m57 W`(2スロット)区切り**: raw[7:74]/[75:142]踏襲。スロット間区切り未確認→**R2録画で検証**。OPEN。
+- **A-10 [共通] session.open応答**: BEは `{type:"session.open", reqId, ok:true, session:"<id>"}` を返し(reqIdエコー+割当session)、続いて `connection`→`snapshot`。FEはreqId応答の`session`でsessionId確定。[07]更新。
+- **A-11 [共通] message.seq**: BEが**session毎の単調増加`seq`**を`message`に付与。FEはseqで重複抑止(無ければ内容一致fallback)。[07]更新。
+- **A-12 [共通] mode は常に全フラグ送出**: BEが attack/magic/list/more 全量を毎回送る。FEは全置換。確定。
+
 ## 5. ステータスボード
 
 | ラウンド | BE | FE | コミット |
 |----------|----|----|----------|
 | R0 | ✅ scaffold + B1 LineBuffer + B2 CodeConverter (40 tests, cov100%) | ✅ scaffold + 型 + F1 WSクライアント + F2 stores骨格 (23 tests) | R0コミット済 |
-| R1 | B3 ProtocolParser + B4 CommandSerializer + 合成フィクスチャ | 残stores配線 + F3ログイン + F6ステータス + F7チャット(markup) | — |
+| R1 | ✅ B3 Parser + B4 Serializer + 合成フィクスチャ (101 tests) | ✅ 残stores+配線 + F3ログイン + F6ステータス + F7チャット(markup) (54 tests) | R1コミット済 |
+| R2 | B5 LegacySocket(モックTCP) + B6 SessionManager + B7 WsServer + **実機録画でA-08/09検証** | F4マップ描画(Canvas) + F5グラ解決(fallback/manifest) | — |
 
 ## 6. コミットログ（リード記入）
 

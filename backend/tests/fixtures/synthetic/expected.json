@@ -1,0 +1,23 @@
+{
+  "status.bin": [
+    {"type": "status", "name": "t_Lord", "hp": 4775, "maxHp": 4775, "mp": 3344, "maxMp": 3344, "exp": 24063, "gp": 2161, "f": 7269, "w": 3712, "m": 5290, "c": 2540}
+  ],
+  "cond.bin": [
+    {"type": "cond", "poison": true, "palsy": false, "panic": false, "confuse": false, "berserk": false, "silence": false, "blind": false}
+  ],
+  "cond_none.bin": [
+    {"type": "cond", "poison": false, "palsy": false, "panic": false, "confuse": false, "berserk": false, "silence": false, "blind": false}
+  ],
+  "log_plain.bin": [
+    {"type": "message", "channel": "log", "text": "ExampleChar が攻撃した", "markup": false}
+  ],
+  "log_markup.bin": [
+    {"type": "message", "channel": "log", "text": "/*color=red*/警告/*.*/ です", "markup": true}
+  ],
+  "priv.bin": [
+    {"type": "message", "channel": "priv", "text": "[ExampleChar] > こんにちは", "from": "ExampleChar", "markup": false}
+  ],
+  "user.bin": [
+    {"type": "userList", "users": [{"key": "u12", "name": "ExampleChar"}]}
+  ]
+}

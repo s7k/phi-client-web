@@ -311,6 +311,10 @@ export interface SnapshotEvent extends Envelope {
   userList?: UserListEventPayload;
   mode?: ModeEventPayload;
   notice?: NoticeEventPayload;
+  /** アクティブなリスト対話状態(DEVLOG A-04, [07]§6.1)。 */
+  list?: ListEventPayload;
+  /** アクティブな入力対話状態(DEVLOG A-04, [07]§6.1)。 */
+  edit?: EditEventPayload;
 }
 
 // --- 6.2 マップ ---
@@ -434,19 +438,25 @@ export interface UserListEvent extends Envelope, UserListEventPayload {
 
 // --- 6.7 リスト ---
 
-export interface ListEvent extends Envelope {
-  type: 'list';
+interface ListEventPayload {
   active: boolean;
   /** active=true の時の項目行。 */
   lines?: string[];
 }
 
+export interface ListEvent extends Envelope, ListEventPayload {
+  type: 'list';
+}
+
 // --- 6.8 入力要求 ---
 
-export interface EditEvent extends Envelope {
-  type: 'edit';
+interface EditEventPayload {
   /** "single"|"multi" 入力要求。"end"(#.) でクローズ([07]§6.8)。 */
   mode: 'single' | 'multi' | 'end';
+}
+
+export interface EditEvent extends Envelope, EditEventPayload {
+  type: 'edit';
 }
 
 // --- 6.9 モードフラグ ---

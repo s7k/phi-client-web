@@ -1,0 +1,35 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.game {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 1rem;
+  padding: 1rem;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+.game__side {
+  min-width: 0;
+}
+
+.game__main {
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 720px) {
+  .game {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+}

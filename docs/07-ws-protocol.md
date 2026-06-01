@@ -80,7 +80,7 @@ FE                                   BE
 | type | フィールド | 説明 / レガシー変換 |
 |------|-----------|---------------------|
 | `auth` | `id`, `password` | アカウント認証(reqId必須) |
-| `session.open` | `charId` | キャラ接続。BE: `#open <charId>`+LoginCommand([03]) or 再アタッチ |
+| `session.open` | `charId` | キャラ接続。BE: `#open <charId>`+LoginCommand([03]) or 再アタッチ。**応答**: `{type:"session.open", reqId, ok:true, session:"<id>"}`(割当session返却, A-10)→続けて `connection`+`snapshot` |
 | `session.close` | — | 当該セッション切断。BE: `#x`送信・接続終了 |
 
 ### 5.2 移動
@@ -195,6 +195,7 @@ BEがバイナリを構造化。グリッドは小さい(最大7×7=49セル)た
 ```jsonc
 { "type": "message", "session": "char1",
   "channel": "log",          // "log" | "priv" | "loud" | "system"
+  "seq": 42,                 // session毎の単調増加連番(重複抑止用, A-11)
   "from": "ExampleChar",            // 発言者(なければ省略)
   "text": "こんにちは",       // UTF-8(SJISから変換済). マークアップ含む生テキスト
   "markup": true             // /*color=*/ 等のマークアップを含むか

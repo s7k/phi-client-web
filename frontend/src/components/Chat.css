@@ -1,0 +1,124 @@
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #1e293b;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.chat__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
+.chat__line {
+  word-break: break-word;
+}
+
+.chat__line--system {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.chat__line--priv {
+  color: #f0abfc;
+}
+
+.chat__line--loud {
+  font-weight: 700;
+}
+
+.chat__from {
+  font-weight: 600;
+  color: #38bdf8;
+  margin-right: 0.4rem;
+}
+
+.chat__compose {
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: #0f172a;
+}
+
+.chat__modes {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.chat__mode {
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.chat__mode--active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.chat__priv-to {
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+}
+
+.chat__input-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.chat__input {
+  flex: 1;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.chat__input:focus {
+  border-color: #38bdf8;
+}
+
+.chat__send {
+  padding: 0 1.1rem;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #38bdf8, #2563eb);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
