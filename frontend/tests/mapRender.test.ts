@@ -20,7 +20,16 @@ import {
   itemSrcRect,
   gridDim,
   cellIndex,
+  magnifiedDst,
+  Q_TABLE,
+  WATER_CHIP_BASE,
+  WATER_BYTE,
+  waterQuarterPatterns,
+  waterQuarterChip,
+  chipQuarterSrcRect,
+  buildWaterGrid,
 } from '../src/lib/mapRender';
+import type { MapCell } from '../src/types/protocol';
 
 describe('チップindex変換(CHIP_BYTE_TO_INDEX)', () => {
   it('基本byte→index', () => {
@@ -153,5 +162,148 @@ describe('グリッドヘルパ', () => {
     expect(cellIndex(3, 0, 7)).toBe(3);
     expect(cellIndex(0, 1, 7)).toBe(7);
     expect(cellIndex(2, 1, 5)).toBe(7);
+  });
+});
+
+describe('巨大キャラ magnify 描画矩形(magnifiedDst)', () => {
+  it('w=h=32(等倍相当)はオフセット0', () => {
+    // (w-32)/2=0, (h-32)*5/6=0, z=0 → base位置のまま、サイズ32×32。
+    expect(magnifiedDst(10, 20, { w: 32, h: 32, z: 0 })).toEqual({
+      dx: 10, dy: 20, dw: 32, dh: 32,
+    });
+  });
+
+  it('水平センタリング: dx -= (w-32)/2(床除算)', () => {
+    // w=64 → (64-32)/2=16 → dx=100-16=84
+    const d = magnifiedDst(100, 0, { w: 64, h: 32, z: 0 });
+    expect(d.dx).toBe(84);
+    expect(d.dw).toBe(64);
+  });
+
+  it('垂直補正: dy -= (h-32)*5/6 + z(床除算)', () => {
+    // h=64 → (64-32)*5/6=160/6=26.67→floor 26, z=0 → dy=100-26=74
+    expect(magnifiedDst(0, 100, { w: 32, h: 64, z: 0 }).dy).toBe(74);
+    // z=8 加算 → dy=100-(26+8)=66
+    expect(magnifiedDst(0, 100, { w: 32, h: 64, z: 8 }).dy).toBe(66);
+  });
+
+  it('w/h がそのまま draw幅高に', () => {
+    const d = magnifiedDst(0, 0, { w: 80, h: 96, z: 0 });
+    expect(d.dw).toBe(80);
+    expect(d.dh).toBe(96);
+  });
+
+  it('総合: w=64,h=64,z=4', () => {
+    // dx=10-16=-6, dy=10-(26+4)=-20
+    expect(magnifiedDst(10, 10, { w: 64, h: 64, z: 4 })).toEqual({
+      dx: -6, dy: -20, dw: 64, dh: 64,
+    });
+  });
+});
+
+describe('水縁エフェクト: パターン計算(waterQuarterPatterns)', () => {
+  // 5x5の中央(2,2)を水とする最小ケース用 water配列(7×7, 枠込)を直接構築。
+  function gridWith(setOnes: Array<[number, number]>): number[][] {
+    const w: number[][] = [];
+    for (let r = 0; r < 7; r++) w.push(new Array(7).fill(0));
+    for (const [r, c] of setOnes) w[r][c] = 1;
+    return w;
+  }
+
+  it('孤立水セル(周囲全て陸): 全quarter pattern=0', () => {
+    // water配列で対象セルだけ1。wy=wx=対象のgrid座標。
+    // grid(row,col)=(2,2) → 配列上 [2][2]..[4][4] を参照。中心=[3][3]。
+    const w = gridWith([[3, 3]]);
+    const p = waterQuarterPatterns(w, 2, 2);
+    expect(p).toEqual([0, 0, 0, 0]);
+  });
+
+  it('全周水(対象+8近傍すべて水): 全quarter pattern=0x07', () => {
+    const ones: Array<[number, number]> = [];
+    for (let r = 2; r <= 4; r++) for (let c = 2; c <= 4; c++) ones.push([r, c]);
+    const w = gridWith(ones);
+    expect(waterQuarterPatterns(w, 2, 2)).toEqual([7, 7, 7, 7]);
+  });
+
+  it('上辺のみ水(top隣接): Q0/Q1 で top bit(bit1=0x02)が立つ', () => {
+    // 中心[3][3] + 上[2][3]。
+    const w = gridWith([[3, 3], [2, 3]]);
+    const p = waterQuarterPatterns(w, 2, 2);
+    // Q0 TL: water[2][2]|water[2][3]<<1|water[3][2]<<2 = 0|1<<1|0 = 0x02
+    expect(p[0]).toBe(0x02);
+    // Q1 TR: water[2][4]|water[2][3]<<1|water[3][4]<<2 = 0|1<<1|0 = 0x02
+    expect(p[1]).toBe(0x02);
+    // 下側Q2/Q3 は top非隣接 → 0
+    expect(p[2]).toBe(0);
+    expect(p[3]).toBe(0);
+  });
+});
+
+describe('水縁エフェクト: quarterチップ解決(waterQuarterChip)', () => {
+  it('Q_TABLE は4 quarter定義', () => {
+    expect(Q_TABLE).toHaveLength(4);
+  });
+
+  it('pattern 0x07 は overlay無し(null)', () => {
+    for (let q = 0; q < 4; q++) {
+      expect(waterQuarterChip(q, 0x07)).toBeNull();
+    }
+  });
+
+  it('pattern 0x00(孤立角): chip_base+1 を src_quarter=自分の角で描画', () => {
+    // _Q_TABLE Q0 0x00 → (1, 0)
+    expect(waterQuarterChip(0, 0x00)).toEqual({
+      chipIndex: WATER_CHIP_BASE + 1, srcQuarter: 0,
+    });
+    // Q3 0x00 → (1, 3)
+    expect(waterQuarterChip(3, 0x00)).toEqual({
+      chipIndex: WATER_CHIP_BASE + 1, srcQuarter: 3,
+    });
+  });
+
+  it('pattern 0x06(直交2辺=凹角): chip_base+2', () => {
+    // Q0 0x06 → (2, 3)
+    expect(waterQuarterChip(0, 0x06)).toEqual({
+      chipIndex: WATER_CHIP_BASE + 2, srcQuarter: 3,
+    });
+  });
+
+  it('pattern 0x02(辺隣接=直線縁): chip_base+0', () => {
+    // Q0 0x02 → (0, 0)
+    expect(waterQuarterChip(0, 0x02)).toEqual({
+      chipIndex: WATER_CHIP_BASE + 0, srcQuarter: 0,
+    });
+  });
+});
+
+describe('水縁: quarter矩形(chipQuarterSrcRect)', () => {
+  it('TL(quarter0): 内容領域先頭(y=base.sy+16)から16×16', () => {
+    // chipIndex=23 → col=23%16=7, row=1 → base sx=7*32=224, sy=48
+    // TL: sx=224, sy=48+16=64, 16×16
+    expect(chipQuarterSrcRect(23, 0)).toEqual({ sx: 224, sy: 64, sw: 16, sh: 16 });
+  });
+  it('BR(quarter3): +16,+16', () => {
+    // sx=224+16=240, sy=48+16+16=80
+    expect(chipQuarterSrcRect(23, 3)).toEqual({ sx: 240, sy: 80, sw: 16, sh: 16 });
+  });
+});
+
+describe('水有無グリッド構築(buildWaterGrid)', () => {
+  function cells(dim: number, water: Array<[number, number]>): MapCell[] {
+    const arr: MapCell[] = [];
+    for (let i = 0; i < dim * dim; i++) arr.push({ chip: 0x20, attr: 0 });
+    for (const [x, y] of water) arr[cellIndex(x, y, dim)] = { chip: WATER_BYTE, attr: 0 };
+    return arr;
+  }
+
+  it('枠+1オフセットで水セルを1にする', () => {
+    const w = buildWaterGrid(cells(5, [[2, 2]]), 5);
+    expect(w).toHaveLength(7); // dim+2
+    expect(w[0]).toHaveLength(7);
+    // grid(2,2) → 配列[3][3]=1
+    expect(w[3][3]).toBe(1);
+    // 枠は0
+    expect(w[0][0]).toBe(0);
+    expect(w[6][6]).toBe(0);
   });
 });

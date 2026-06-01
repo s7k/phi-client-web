@@ -64,6 +64,11 @@ class ProtocolParser:
         self._reset_map_frame()
         self._chara_clear_pending = False
 
+        # #ex-obj S 巨大グラ拡大テーブル: キャラ名 → {"w","h","z"}
+        # (classMakeMap::GraMagnifyRatioAdd 相当)。map.chars[].magnify に転写。
+        # キーは #m57 O の name 欄(実データ/phi-client準拠。DEVLOG A-29)。
+        self._name_magnify: dict[str, dict[str, int]] = {}
+
         # #user 表(name → 番号)。priv 宛先解決用に保持・公開。
         self.ulist: dict[str, int] = {}
 
@@ -221,6 +226,11 @@ class ProtocolParser:
             # 増分ペイロード(start/row/pos)。R1 では透過のみ(B 拡張で構造化)。
             return [{"type": "_internal", "action": "eagleeye", "raw": raw}]
 
+        # --- #ex-obj S: 巨大グラ拡大登録(イベント非露出) -------------
+        if starts("#ex-obj S "):
+            self._parse_ex_obj(text)
+            return []
+
         # --- 入力(edit) -----------------------------------------------
         if text == "#m-edit":
             return [{"type": "edit", "mode": "multi"}]
@@ -331,6 +341,33 @@ class ProtocolParser:
         return {"type": "userList", "users": users}
 
     # ------------------------------------------------------------------
+    # #ex-obj S: 巨大グラ拡大
+    # ------------------------------------------------------------------
+
+    def _parse_ex_obj(self, text: str) -> None:
+        """#ex-obj S <w> <h> <z> <name> → キャラ名→{w,h,z} を登録。
+
+        (classPersonalThread::SharpExObj → classMakeMap::GraMagnifyRatioAdd)。
+        末尾は #m57 O の name 欄に一致する表示名(実データ確認: 例
+        "Remains guardian dragon"/"野ネズミ"。gra名ではない。DEVLOG A-29)。
+        名前はスペースを含み得るため maxsplit で末尾を一括取得。
+        不正(引数不足/非数値)は無視。
+        """
+        parts = text.split(None, 5)
+        if len(parts) != 6:
+            return
+        try:
+            w = int(parts[2])
+            h = int(parts[3])
+            z = int(parts[4])
+        except ValueError:
+            return
+        name = parts[5].strip()
+        if not name:
+            return
+        self._name_magnify[name] = {"w": w, "h": h, "z": z}
+
+    # ------------------------------------------------------------------
     # マップ: 地形(M)
     # ------------------------------------------------------------------
 
@@ -407,11 +444,16 @@ class ProtocolParser:
             self._map_chars = []
             self._chara_clear_pending = False
 
-        self._map_chars.append({
+        chara: dict = {
             "id": char_id, "x": x, "y": y, "dir": direction,
             "name": name, "gra": gra, "status": status,
             "gigant": gigant, "layer": layer, "default": default,
-        })
+        }
+        # #ex-obj S 登録済みキャラ名なら巨大拡大 magnify を付与(FE 描画用)。
+        magnify = self._name_magnify.get(name)
+        if magnify is not None:
+            chara["magnify"] = dict(magnify)
+        self._map_chars.append(chara)
 
     def _finish_map(self) -> list[dict]:
         """#m57 . / #map . でフレーム確定 → map イベント emit。

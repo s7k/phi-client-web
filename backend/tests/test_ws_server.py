@@ -258,6 +258,54 @@ async def test_command_raw_rate_limited(server, fake_sock):
     await task
 
 
+async def test_command_raw_audit_logged(server, fake_sock, caplog):
+    # command.raw 送信時に session/text を構造化監査ログ出力([07]§10)。
+    import logging
+    ws = FakeWebSocket()
+    _, task, sid = await _open_session(ws, server)
+    fake_sock.sent.clear()
+    with caplog.at_level(logging.INFO, logger="phi.audit"):
+        ws.feed({"type": "command", "session": sid, "name": "raw", "text": "look"})
+        await _wait(lambda: b"look\n" in b"".join(fake_sock.sent))
+    recs = [r for r in caplog.records if r.name == "phi.audit"]
+    assert recs, "監査ログが出力されていない"
+    rec = recs[-1]
+    assert getattr(rec, "event", None) == "command.raw"
+    assert rec.session == sid
+    assert rec.text == "look"
+    ws.disconnect()
+    await task
+
+
+async def test_command_raw_audit_no_secret_leak(server, fake_sock, caplog):
+    # 監査ログにアカウント情報(uid/password 系キー)を含めない。
+    import logging
+    ws = FakeWebSocket()
+    _, task, sid = await _open_session(ws, server)
+    with caplog.at_level(logging.INFO, logger="phi.audit"):
+        ws.feed({"type": "command", "session": sid, "name": "raw", "text": "hi"})
+        await _wait(lambda: any(
+            r.name == "phi.audit" for r in caplog.records))
+    rec = next(r for r in caplog.records if r.name == "phi.audit")
+    for forbidden in ("uid", "password", "passwd", "pass"):
+        assert not hasattr(rec, forbidden)
+    ws.disconnect()
+    await task
+
+
+async def test_non_raw_command_not_audited(server, fake_sock, caplog):
+    # raw 以外の command は監査ログ対象外。
+    import logging
+    ws = FakeWebSocket()
+    _, task, sid = await _open_session(ws, server)
+    with caplog.at_level(logging.INFO, logger="phi.audit"):
+        ws.feed({"type": "command", "session": sid, "name": "hit"})
+        await _wait(lambda: b"hit\n" in b"".join(fake_sock.sent))
+    assert not [r for r in caplog.records if r.name == "phi.audit"]
+    ws.disconnect()
+    await task
+
+
 async def test_non_raw_command_not_limited(server, fake_sock):
     rl = RateLimiter()
     ws = FakeWebSocket()

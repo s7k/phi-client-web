@@ -345,6 +345,12 @@ export interface MapChar {
   layer: number;
   /** typeコード(#m57 O末尾)。グラ フォールバックに使用([09])。 */
   default: number;
+  /**
+   * 巨大キャラ拡大描画パラメータ(#ex-obj)。BEがR7で付与(任意)。
+   * w/h=拡大後の描画サイズ(px)、z=垂直オフセット(px)。
+   * map_widget.py の magnify=(mx,my,mz) に対応(FE-Q15)。
+   */
+  magnify?: { w: number; h: number; z: number };
 }
 
 /** 看板(#…B)([07]§6.2)。 */

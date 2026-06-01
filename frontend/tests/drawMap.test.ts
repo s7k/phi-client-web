@@ -119,4 +119,55 @@ describe('drawMap キャラ描画', () => {
     const texts = fillText.mock.calls.map((c) => c[0]);
     expect(texts).not.toContain('Me');
   });
+
+  it('magnify指定時は拡大サイズ+補正位置でdrawImage', () => {
+    const { ctx, drawImage } = makeCtx();
+    // 巨大キャラ(*) + magnify。x=1,y=1, gigant='*' → src幅32。
+    const giant: MapChar = {
+      ...baseChar, gigant: '*', magnify: { w: 64, h: 64, z: 4 },
+    };
+    const imgs: ImageRefs = {
+      chip: null, items: null,
+      chara: () => dummyImg,
+    };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: cells(5), chars: [giant] }, imgs, 0);
+    expect(drawImage).toHaveBeenCalledTimes(1);
+    const call = drawImage.mock.calls[0];
+    // 末尾4引数 = dst(dx,dy,dw,dh)。
+    const [, , , , , dx, dy, dw, dh] = call;
+    // baseX = 1*32 + floor((32-32)/2)=32, baseY同=32。
+    // magnify: dx=32-floor((64-32)/2)=32-16=16, dy=32-(floor(160/6)+4)=32-30=2
+    expect(dx).toBe(16);
+    expect(dy).toBe(2);
+    expect(dw).toBe(64);
+    expect(dh).toBe(64);
+  });
+});
+
+describe('drawMap 水縁エフェクト', () => {
+  it('孤立水セル: ベース + 4 quarter overlay(全角=chip_base+1)', () => {
+    const { ctx, drawImage } = makeCtx();
+    const c = cells(5); // 全てground
+    c[2 * 5 + 2] = { chip: '_'.charCodeAt(0), attr: 0 }; // grid(2,2)
+    const imgs: ImageRefs = { chip: dummyImg, items: null, chara: () => null };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: c, chars: [] }, imgs, 0);
+    // ベース25 + 孤立水の4 quarter overlay = 29。
+    expect(drawImage).toHaveBeenCalledTimes(29);
+  });
+
+  it('水セル無し: overlay無し(ベースのみ)', () => {
+    const { ctx, drawImage } = makeCtx();
+    const imgs: ImageRefs = { chip: dummyImg, items: null, chara: () => null };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: cells(5), chars: [] }, imgs, 0);
+    expect(drawImage).toHaveBeenCalledTimes(25);
+  });
+
+  it('chip未ロード時は水縁overlayもスキップ', () => {
+    const { ctx, drawImage } = makeCtx();
+    const c = cells(5);
+    c[2 * 5 + 2] = { chip: '_'.charCodeAt(0), attr: 0 }; // grid(2,2)
+    const imgs: ImageRefs = { chip: null, items: null, chara: () => null };
+    drawMap(ctx, { size: 5, mapset: 'def', cells: c, chars: [] }, imgs, 0);
+    expect(drawImage).not.toHaveBeenCalled();
+  });
 });

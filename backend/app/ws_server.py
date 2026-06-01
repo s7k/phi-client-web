@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 # FastAPI ハンドラの型注釈解決のため module グローバルに置く
@@ -28,6 +29,10 @@ from fastapi import HTTPException, Request, Response  # noqa: E402
 from app.session import SessionManager
 
 PROTOCOL_VERSION = 1
+
+# command.raw 監査ログ([07]§10)。session/text のみ記録。
+# 実 uid/パスワード等のアカウント情報は本ログに含めない。
+_audit_logger = logging.getLogger("phi.audit")
 
 
 class WsDisconnect(Exception):
@@ -260,6 +265,17 @@ class WsConnection:
         if self._rl is not None and not self._allow_intent(msg, sid):
             await self._error(msg, "RATE_LIMITED", "レート制限超過")
             return
+        # command.raw 監査([07]§10): session/text のみ構造化ログ。
+        # uid/パスワード等のアカウント情報は記録しない。
+        if msg.get("type") == "command" and msg.get("name") == "raw":
+            _audit_logger.info(
+                "command.raw",
+                extra={
+                    "event": "command.raw",
+                    "session": sid,
+                    "text": str(msg.get("text", "")),
+                },
+            )
         try:
             await self._mgr.handle_intent(sid, msg)
         except ValueError as exc:

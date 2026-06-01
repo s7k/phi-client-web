@@ -19,6 +19,12 @@ import {
   hasItem,
   itemNo,
   itemSrcRect,
+  buildWaterGrid,
+  waterQuarterPatterns,
+  waterQuarterChip,
+  chipQuarterSrcRect,
+  magnifiedDst,
+  WATER_BYTE,
 } from './mapRender';
 import { resolveCharaGra } from './charaGra';
 
@@ -71,8 +77,11 @@ export function drawMap(
   ctx.fillRect(0, 0, dim * cs, dim * cs);
 
   const chipImg = imgs.chip;
+  const half = cs / 2; // 16
+  // 水有無グリッド(水縁エフェクト用)。チップ画像があれば1回構築。
+  const water = chipImg ? buildWaterGrid(input.cells, dim) : null;
 
-  // 行ごとに チップ → 看板 → アイテム → キャラ の順で重ね描画。
+  // 行ごとに チップ → 水縁 → 看板 → アイテム → キャラ の順で重ね描画。
   for (let row = 0; row < dim; row++) {
     // 1. ベースチップ
     if (chipImg) {
@@ -84,6 +93,26 @@ export function drawMap(
         for (const idx of chipIndices(cell.chip)) {
           const r = chipSrcRect(idx);
           ctx.drawImage(chipImg, r.sx, r.sy, r.sw, r.sh, dstX, dstY, cs, CHIP_HEIGHT);
+        }
+      }
+    }
+
+    // 1.5 水縁overlay(隣接チップに応じた四分割境界描画)
+    if (chipImg && water) {
+      for (let col = 0; col < dim; col++) {
+        const cell = input.cells[cellIndex(col, row, dim)];
+        if (!cell || cell.chip !== WATER_BYTE) continue;
+        // water配列はgrid座標(row,col)を左上に [row..row+2][col..col+2] 参照。
+        const patterns = waterQuarterPatterns(water, row, col);
+        const cellX = col * cs;
+        const cellY = row * cs;
+        for (let q = 0; q < 4; q++) {
+          const hit = waterQuarterChip(q, patterns[q]);
+          if (!hit) continue;
+          const sr = chipQuarterSrcRect(hit.chipIndex, hit.srcQuarter);
+          const dstX = cellX + (q & 1) * half;
+          const dstY = cellY + ((q >> 1) & 1) * half;
+          ctx.drawImage(chipImg, sr.sx, sr.sy, sr.sw, sr.sh, dstX, dstY, half, half);
         }
       }
     }
@@ -171,6 +200,14 @@ function drawChara(
   const r = charaSrcRect(ch.dir, ch.gigant, animFrame);
   const baseX = ch.x * cs + Math.floor((cs - r.sw) / 2);
   const baseY = ch.y * cs + Math.floor((cs - CHARA_H) / 2);
+
+  // 巨大キャラ magnify(#ex-obj): 描画原点補正 + 拡大サイズ。
+  if (ch.magnify) {
+    const d = magnifiedDst(baseX, baseY, ch.magnify);
+    ctx.drawImage(img, r.sx, r.sy, r.sw, r.sh, d.dx, d.dy, d.dw, d.dh);
+    return;
+  }
+
   ctx.drawImage(img, r.sx, r.sy, r.sw, r.sh, baseX, baseY, r.sw, r.sh);
 }
 

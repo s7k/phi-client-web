@@ -11,6 +11,8 @@
  *   既に透過PNG化済(512×96, 32×48セル/16列×2行)を配信前提([06])。
  */
 
+import type { MapCell } from '../types/protocol';
+
 // ── チップ ────────────────────────────────────────────────
 
 /** チップ画面セルサイズ(px)。 */
@@ -197,6 +199,138 @@ export function charaSrcRect(
   // 通常フレーム: x=0(frame0) / 16(frame1)
   const sx = frame * CHARA_W_NORMAL;
   return { sx, sy, sw: CHARA_W_NORMAL, sh: CHARA_H };
+}
+
+// ── 巨大キャラ magnify(#ex-obj) ────────────────────────────
+
+/** magnify パラメータ。w/h=拡大描画サイズ(px)、z=垂直オフセット(px)。 */
+export interface Magnify {
+  w: number;
+  h: number;
+  z: number;
+}
+
+/** magnify 適用後の描画矩形(dst)。 */
+export interface MagnifiedDst {
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+}
+
+/**
+ * 巨大キャラ拡大描画の描画先矩形を計算。
+ * map_widget.py `_CharaRenderer.draw` の magnify 補正を移植。
+ *
+ *   base_x -= (w - CHARA_H) / 2          ; 水平センタリング
+ *   base_y -= (h - CHARA_H) * 5 / 6 + z  ; 足元基準の垂直補正
+ *   draw_w = w ; draw_h = h
+ *
+ * @param baseX magnify非適用時の描画原点X(セル中央寄せ済)。
+ * @param baseY magnify非適用時の描画原点Y(セル中央寄せ済)。
+ * @param m     magnify パラメータ。
+ * @returns 拡大後の dst 矩形。
+ *
+ * 床除算(Python `//`)に合わせ Math.floor を使用。
+ */
+export function magnifiedDst(baseX: number, baseY: number, m: Magnify): MagnifiedDst {
+  const dx = baseX - Math.floor((m.w - CHARA_H) / 2);
+  const dy = baseY - (Math.floor(((m.h - CHARA_H) * 5) / 6) + m.z);
+  return { dx, dy, dw: m.w, dh: m.h };
+}
+
+// ── 水縁エフェクト(DrawWaterEffect / _Q_TABLE) ───────────────
+
+/** 水縁チップのベースindex(frame0固定、水アニメ無し)。 */
+export const WATER_CHIP_BASE = 23;
+/** 水チップのbyte('_')。 */
+export const WATER_BYTE = '_'.charCodeAt(0);
+
+/**
+ * 水縁 quarter 描画テーブル。
+ * map_widget.py `_Q_TABLE` 移植(classMakeMap::DrawWaterEffect)。
+ *
+ * 添字 = quarter(0=TL,1=TR,2=BL,3=BR)。
+ * 各 quarter で 3bit パターン → [chip_offset, src_quarter]。
+ * パターン 0x07(全隣接=水) → entry無し(overlay不要)。
+ */
+export const Q_TABLE: ReadonlyArray<Readonly<Record<number, readonly [number, number]>>> = [
+  // Quarter 0 (TL): bit0=TL対角, bit1=上, bit2=左
+  { 0x00: [1, 0], 0x01: [1, 0], 0x02: [0, 0], 0x03: [0, 0], 0x04: [0, 2], 0x05: [0, 2], 0x06: [2, 3] },
+  // Quarter 1 (TR): bit0=TR対角, bit1=上, bit2=右
+  { 0x00: [1, 1], 0x01: [1, 1], 0x02: [0, 1], 0x03: [0, 1], 0x04: [0, 2], 0x05: [0, 2], 0x06: [2, 2] },
+  // Quarter 2 (BL): bit0=BL対角, bit1=下, bit2=左
+  { 0x00: [1, 2], 0x01: [1, 2], 0x02: [0, 0], 0x03: [0, 0], 0x04: [0, 3], 0x05: [0, 3], 0x06: [2, 1] },
+  // Quarter 3 (BR): bit0=BR対角, bit1=下, bit2=右
+  { 0x00: [1, 3], 0x01: [1, 3], 0x02: [0, 1], 0x03: [0, 1], 0x04: [0, 3], 0x05: [0, 3], 0x06: [2, 0] },
+];
+
+/**
+ * 水セルの上下左右+斜めの水有無から各quarterの3bitパターンを計算。
+ * map_widget.py `_render_visible` の patterns 計算移植。
+ *
+ * water[r][c]=1(水) の (rows+2)×(cols+2) 配列を前提(枠=0)。
+ * 引数 wy,wx は water配列上の対象セル左上(=grid座標 row,col)。
+ *
+ * @returns [Q0,Q1,Q2,Q3] の3bitパターン。
+ */
+export function waterQuarterPatterns(
+  water: ReadonlyArray<ReadonlyArray<number>>,
+  wy: number,
+  wx: number,
+): [number, number, number, number] {
+  return [
+    water[wy][wx] | (water[wy][wx + 1] << 1) | (water[wy + 1][wx] << 2), // Q0 TL
+    water[wy][wx + 2] | (water[wy][wx + 1] << 1) | (water[wy + 1][wx + 2] << 2), // Q1 TR
+    water[wy + 2][wx] | (water[wy + 2][wx + 1] << 1) | (water[wy + 1][wx] << 2), // Q2 BL
+    water[wy + 2][wx + 2] | (water[wy + 2][wx + 1] << 1) | (water[wy + 1][wx + 2] << 2), // Q3 BR
+  ];
+}
+
+/**
+ * quarter のパターンから描画する水縁チップ overlay を解決。
+ * @returns null=overlay不要(0x07等)、else={chipIndex, srcQuarter}。
+ */
+export function waterQuarterChip(
+  qIdx: number,
+  pattern: number,
+): { chipIndex: number; srcQuarter: number } | null {
+  const entry = Q_TABLE[qIdx]?.[pattern];
+  if (!entry) return null;
+  return { chipIndex: WATER_CHIP_BASE + entry[0], srcQuarter: entry[1] };
+}
+
+/**
+ * チップindex + quarter(0=TL,1=TR,2=BL,3=BR) → チップシート上の16×16矩形。
+ * チップ内容領域は y=16 から始まる(上16px透過)。
+ * map_widget.py `_ChipRenderer.draw_quarter` 移植。
+ */
+export function chipQuarterSrcRect(
+  chipIndex: number,
+  quarter: number,
+): { sx: number; sy: number; sw: number; sh: number } {
+  const base = chipSrcRect(chipIndex);
+  const half = CHIP_SIZE / 2; // 16
+  const sx = base.sx + (quarter & 1) * half;
+  // 内容はチップ先頭から16px下。上16px透過 + quarter下段でさらに+16。
+  const sy = base.sy + (CHIP_HEIGHT - CHIP_SIZE) + ((quarter >> 1) & 1) * half;
+  return { sx, sy, sw: half, sh: half };
+}
+
+/**
+ * cells配列から水有無の (dim+2)×(dim+2) 配列を構築(枠=0)。
+ * water[r+1][c+1] = (cells[idx].chip == '_') ? 1 : 0。
+ */
+export function buildWaterGrid(cells: ReadonlyArray<MapCell>, dim: number): number[][] {
+  const w: number[][] = [];
+  for (let r = 0; r < dim + 2; r++) w.push(new Array(dim + 2).fill(0));
+  for (let r = 0; r < dim; r++) {
+    for (let c = 0; c < dim; c++) {
+      const cell = cells[cellIndex(c, r, dim)];
+      if (cell && cell.chip === WATER_BYTE) w[r + 1][c + 1] = 1;
+    }
+  }
+  return w;
 }
 
 // ── グリッド ────────────────────────────────────────────────

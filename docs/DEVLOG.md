@@ -122,6 +122,11 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **A-27 [BE] reject fields語彙**: `["name","pass","image","mail"]`。FE表示マップ整合。確定。
 - **TODO(残)**: command.raw監査ログ未実装(レート判定のみ)。本番CSRFは`PHI_ALLOWED_ORIGINS`設定必須。登録後自動ログインは任意(現状手動再ログイン案内)。
 
+### R7 由来（リード裁定）
+
+- **A-28 [共通] assets衝突回避**: Viteビルド資産は `dist/app/` に分離(`assetsDir:'app'`)。`/assets` はBE透過PNG専用([02]§7)。確定。
+- **A-29 [BE] #ex-obj magnify キー = キャラ名(確定・修正済)**: 録画実データ `#ex-obj S 48 48 0 Remains guardian dragon`(末尾=表示名, gra名でない)+phi-client(`gra_magnify.get(chara.name)`)より、**magnifyは`#m57 O`の name 欄キー**が正。R7初版のgra名キーをリードが name キーへ修正(parser+test)。FEは `chars[].magnify` をそのまま使うため影響なし。command.raw監査ログ(A-30)実装済。
+
 ## 5. ステータスボード
 
 | ラウンド | BE | FE | コミット |
@@ -133,6 +138,7 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 | R4 | ✅ B9 gfx + B10 REST chara + B11 fallback + B13 世界移動 + move整合(185 tests) | ✅ F10 設定UI + F11 通知/SS/画像 + EagleEye(191 tests) | R4コミット済 |
 | R5 | ✅ B14 レート制限 + B15 登録 + auth硬化(argon2/CSRF) + REST統合 + view.set(231 tests) | ✅ F12 登録フォーム + view.set連動 + 統合(210 tests) | R5コミット済 |
 | R6 | ✅ app.main起動エントリ+config+REST統合(238 tests) | ✅ devプロキシ+wsUrl+Playwright E2E(217 tests+e2e 2) | R6コミット済 |
+| R7 | ✅ #ex-obj magnify(name キー A-29)+command.raw監査ログ(246 tests) | ✅ 巨大magnify描画+水縁エフェクト(237 tests) | R7コミット済 |
 
 ## 6. コミットログ（リード記入）
 

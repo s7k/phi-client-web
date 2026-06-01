@@ -132,6 +132,44 @@ def test_map_chars_cleared_on_new_frame(parser):
     assert m2["chars"][0]["name"] == "勇者タロウ"
 
 
+# --- #ex-obj 巨大グラ拡大 (magnify, R7) -----------------------------------
+
+def test_ex_obj_magnify_returns_no_event(parser):
+    # #ex-obj S 行は登録のみ。直接のイベントは emit しない。
+    assert parser.feed(b"#ex-obj S 32 48 4 ExampleChar") == []
+
+
+def test_map_char_magnify_applied_when_registered(parser):
+    # キャラ名 ExampleChar を ex-obj 登録 → 後続 map の該当 chara に magnify 付与。
+    # (キーは name 欄。実データ/phi-client準拠。DEVLOG A-29)
+    parser.feed(b"#ex-obj S 32 48 4 ExampleChar")
+    m = _feed_map_seq(parser, ["m57_M.bin", "m57_O_char.bin", "m57_dot.bin"])[0]
+    c = m["chars"][0]
+    assert c["name"] == "ExampleChar"
+    assert c["magnify"] == {"w": 32, "h": 48, "z": 4}
+
+
+def test_map_char_no_magnify_when_unregistered(parser):
+    # 未登録の名前には magnify キーを付与しない。
+    m = _feed_map_seq(parser, ["m57_M.bin", "m57_O_char.bin", "m57_dot.bin"])[0]
+    assert "magnify" not in m["chars"][0]
+
+
+def test_ex_obj_magnify_not_applied_by_gra(parser):
+    # gra名(t_Lord)で登録しても name 不一致なら付与されない(キーは name)。
+    parser.feed(b"#ex-obj S 32 48 4 t_Lord")
+    m = _feed_map_seq(parser, ["m57_M.bin", "m57_O_char.bin", "m57_dot.bin"])[0]
+    assert "magnify" not in m["chars"][0]
+
+
+def test_ex_obj_malformed_ignored(parser):
+    # 引数不足/非数値は無視(例外なし)。後続 map に magnify は付かない。
+    assert parser.feed(b"#ex-obj S 32 48 ExampleChar") == []   # z 欠落
+    assert parser.feed(b"#ex-obj S a b c ExampleChar") == []   # 非数値
+    m = _feed_map_seq(parser, ["m57_M.bin", "m57_O_char.bin", "m57_dot.bin"])[0]
+    assert "magnify" not in m["chars"][0]
+
+
 def test_m57_M_short_line_safe(parser):
     # 不正長(98 バイト未満)でも例外なし。cells 空。
     parser.feed(b"#m57 M N 00000000:")  # ヘッダのみ
