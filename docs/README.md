@@ -15,6 +15,8 @@
 | [09-chara-fallback-mapping.md](09-chara-fallback-mapping.md) | キャラグラ フォールバック(タイプコード human/beast/berserk/eraser等)。正規マッピング |
 | [10-component-completeness.md](10-component-completeness.md) | BE/FEコンポーネント網羅性チェック。不足・未確定の洗い出し |
 | [11-test-design.md](11-test-design.md) | TDDテスト設計。テストピラミッド・ケース・実装順序 |
+| [12-detailed-design.md](12-detailed-design.md) | 詳細設計。認証/トークン・新規登録(#ex-register)・設定スキーマ・レート制限・FE状態・再接続・デプロイ |
+| [13-implementation-readiness.md](13-implementation-readiness.md) | 実装着手可能性チェックリスト。コンポーネント別判定 |
 
 マッピング: `backend/data/chara_type_fallback.json`（キャラタイプコード正規対応）。
 

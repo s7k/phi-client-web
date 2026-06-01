@@ -301,10 +301,10 @@ moreは主にBE内部処理。FEは状態表示のみで、特別な送信形式
 - 作成フォーム(キャラ名・世界選択・必要項目)。
 
 ### BE責務
-- レガシーサーバへの新規登録プロトコル実行（要追加調査: 登録時のコマンド列）。
-- SQLite `accounts`/`characters` へ登録。パスワードは`password_hash`保存。
+- レガシーサーバへの新規登録プロトコル実行(`#ex-register` start→`name=/pass=/image=/mail=`→end)。詳細は [12 詳細設計](12-detailed-design.md) §2(調査完了)。
+- SQLite `accounts`/`characters` へ登録。`legacy_uid_enc`(uid暗号化)・`password_hash`保存([12]§1)。
 
-> 注: 新規登録のレガシープロトコルは未調査。フェーズ別途調査要。
+> 登録プロトコルは [12]§2 で調査・確定済。残: uid の addw/s_id 供給元の実機確認([12]§2.4)。
 
 ---
 
