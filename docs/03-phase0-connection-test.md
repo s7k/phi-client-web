@@ -3,8 +3,8 @@
 実レガシーサーバへの接続検証結果。設計（[02-architecture-design.md](02-architecture-design.md)）の主要仮説を実データで検証。
 
 ## 1. 検証条件
-- サーバ: `<SERVER_IP>:<PORT>`（Ranzaia / Fantasy Island Country, JET-5-2-6p）
-- キャラID: `<CHARACTER_ID>`（キャラ名 `ExampleChar`, 職業 `t_Lord`, エリア「港町の酒場」）
+- サーバ: `<SERVER_IP>:<PORT>`（実値は非公開。Ranzaia / Fantasy Island Country, JET-5-2-6p）
+- キャラID: `<CHARACTER_ID>`（実値は非公開。職業 `t_Lord`, エリア「港町の酒場」）
 - スクリプト: `backend/test_connect.py`（PySide6非依存。`~/workspace/phi-client` の接続層を移植）
 - 参考実装: `~/workspace/phi-client/phi/protocol/connection.py`, `phi/network/network_thread.py`
 
@@ -26,13 +26,13 @@
 
 サーバ応答例:
 ```
-#name ExampleChar
+#name <CHAR>
 #ex-notice land=Fantasy Island Country
 #ex-notice area=港町の酒場
 #mapset mansion / #bgm Seiju
 #version-srv 05110000 / #version-dm JET:011:0002:24
 #m57 M S <hex>:<98バイト地形>  (7x7マップ)
-#m57 O C0001:3 3 B ExampleChar ... t_Lord
+#m57 O C0001:3 3 B <CHAR> ... t_Lord
 #status t_Lord : 4775: 4775: 3344: 3344: 24063: 2161: 7269: 3712: 5290: 2540
 #cond -------
 ```

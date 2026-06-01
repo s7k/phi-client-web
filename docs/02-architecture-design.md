@@ -28,12 +28,14 @@
 
 ## 3. バックエンド設計
 
-### 3.1 技術選定（推奨）
-- **言語/ランタイム**: Node.js + TypeScript（WebSocket・バイナリ/文字コード扱い・エコシステムが容易）。代替: Python (asyncio)。
-- **SJIS変換**: Node `iconv-lite`（`Shift_JIS`）。Python は `codecs`（`cp932`推奨, Windows由来SJIS互換）。
-- **WebSocket**: `ws`（Node）。
-- **SQLite**: `better-sqlite3`（同期・高速）。
+### 3.1 技術選定（確定）
+- **言語/ランタイム**: **Python (FastAPI + asyncio)**。確定理由: phi-client(Python/PySide6, 動作実績あり)のプロトコル/エンジン層を最大流用([03] §5-6)。画像変換(Pillow)も同言語。WebSocket・REST・SQLiteを単一スタックで完結。
+- **SJIS変換**: `codecs`（`cp932`, Windows由来SJIS互換）。
+- **WebSocket / REST**: FastAPI（`websockets`/Starlette）。
+- **SQLite**: 標準 `sqlite3`（必要に応じ `aiosqlite`）。
+- **画像変換**: Pillow（[06] tools/gfx_convert と共有モジュール化 [08] §5）。
 
+> 旧版はNode.js推奨だったが、phi-client資産流用を最大化するためPythonに確定([03] §6 の提言を採用)。
 > CLAUDE.md方針: AIアプリではないため Claude API は不要。純粋なゲートウェイ実装。
 
 ### 3.2 内部モジュール
@@ -143,20 +145,26 @@ CREATE TABLE settings (             -- map-iv/status-iv 等のクライアント
 ```
 phi-web/
 ├── docs/                  # 本資料群
-├── legacy/                # 既存（変更しない）
-├── backend/               # Node.js ゲートウェイ
+├── legacy/                # 既存（変更しない・gitignore）
+├── backend/               # Python (FastAPI) ゲートウェイ
+│   ├── app/
+│   │   ├── legacy_socket.py    # TCP・行分割・再接続(phi-client connection.py/line_buffer.py 移植)
+│   │   ├── code_converter.py   # SJIS⇔UTF-8 行種別分岐
+│   │   ├── protocol/           # parser, serializer, command_table (phi-client parser.py 移植)
+│   │   ├── session.py          # SessionManager 多重化・detach/reattach・snapshot
+│   │   ├── ws_server.py        # WebSocket(UTF-8 JSON, [07]エンベロープ)
+│   │   ├── rest/               # chara graphics/index/manifest ([08])
+│   │   ├── gfx/                # 透過変換共有モジュール ([06][08])
+│   │   ├── auth.py             # 認証・セッショントークン
+│   │   └── store/              # SQLite (accounts/characters/sessions/settings/chara_*)
+│   ├── data/                   # chara_type_fallback.json 等の参照データ
+│   ├── tests/                  # pytest (TDD [11])
+│   └── pyproject.toml
+├── frontend/              # React + TypeScript + Vite
 │   ├── src/
-│   │   ├── legacySocket.ts
-│   │   ├── codeConverter.ts
-│   │   ├── protocol/      # parser, serializer, command table
-│   │   ├── session.ts
-│   │   ├── wsServer.ts
-│   │   └── store/         # SQLite
+│   ├── tests/                  # Vitest + RTL / Playwright ([11])
 │   └── package.json
-├── frontend/              # React + Vite
-│   ├── src/
-│   └── package.json
-└── assets/                # legacy画像をWeb用に変換した資源
+└── assets/                # legacy画像をWeb用に変換した資源(透過PNG)
 ```
 
 ## 8. 実装フェーズ計画

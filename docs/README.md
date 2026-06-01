@@ -13,6 +13,8 @@
 | [07-ws-protocol.md](07-ws-protocol.md) | BE⇔FE WebSocket通信プロトコル仕様(v1)。メッセージ catalog・レガシー対応表 |
 | [08-chara-graphics-storage.md](08-chara-graphics-storage.md) | キャラBMPアップロード→透過PNG保管・Index.txt(SQLite)保管 設計。REST API |
 | [09-chara-fallback-mapping.md](09-chara-fallback-mapping.md) | キャラグラ フォールバック(タイプコード human/beast/berserk/eraser等)。正規マッピング |
+| [10-component-completeness.md](10-component-completeness.md) | BE/FEコンポーネント網羅性チェック。不足・未確定の洗い出し |
+| [11-test-design.md](11-test-design.md) | TDDテスト設計。テストピラミッド・ケース・実装順序 |
 
 マッピング: `backend/data/chara_type_fallback.json`（キャラタイプコード正規対応）。
 

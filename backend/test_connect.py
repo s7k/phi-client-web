@@ -8,14 +8,17 @@ UTF-8変換して標準出力へダンプする。
 """
 from __future__ import annotations
 
+import os
 import select
 import socket
 import sys
 import time
 
-HOST = "<SERVER_IP>"
-PORT = <PORT>
-CHARACTER_ID = "<CHARACTER_ID>"
+# 接続先・キャラIDは秘匿のため環境変数から取得（実値はコミットしない）。
+#   PHI_HOST=<server-ip> PHI_PORT=<port> PHI_CHARACTER_ID=<id> python test_connect.py
+HOST = os.environ.get("PHI_HOST", "127.0.0.1")
+PORT = int(os.environ.get("PHI_PORT", "20000"))
+CHARACTER_ID = os.environ.get("PHI_CHARACTER_ID", "<CHARACTER_ID>")
 VERSION_STRING = "05107100"
 
 RECV_BUFFER_SIZE = 32768

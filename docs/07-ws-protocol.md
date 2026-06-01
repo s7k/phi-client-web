@@ -162,7 +162,8 @@ BEがバイナリを構造化。グリッドは小さい(最大7×7=49セル)た
   ],
   "chars": [                 // #m57 O / #map C のキャラ・オブジェクト
     { "id": 1, "x": 3, "y": 3, "dir": "B", "name": "ExampleChar",
-      "gra": "t_Lord", "status": 64, "gigant": "#", "layer": 0, "default": 0 }
+      "gra": "t_Lord", "status": 64, "gigant": "#", "layer": 0,
+      "default": 64 }        // typeコード(#m57 O末尾). グラ フォールバックに使用([09])
   ],
   "signs": [ { "x": 1, "y": 0, "title": "居ぬ子" } ]  // 看板(#…B)
 }
