@@ -10,10 +10,12 @@
 - gra_name 解決は case-insensitive(Store.gra_key_of)。stored_name は
   orig_sha256 由来の安全名(小文字16進)で衝突回避・グラ名非直結([08]§3)。
 - 冪等: 同一 orig_sha256 は Store 側で既存を返す([08]§4)。
-- 認証は依存性注入(`require_account`)で差し替え可能。既定は no-op(テスト容易性)。
-  本番は WsServer 側で AuthService 連携の依存に差し替える。
+- 変更系(upload/delete/index 編集/import)は管理者限定。認可は依存性注入
+  (`require_admin`)で差し替え可能。既定は no-op(テスト容易性)。本番は WsServer
+  側で AuthService 連携の依存(未認証 401・非管理者 403)に差し替える。
+- GET 系(list/meta/png/manifest/index.txt)は認可不要(誰でも閲覧可, レート制限のみ)。
 
-ファクトリ `build_chara_router(store, assets_dir, fallback=None, require_account=None)`
+ファクトリ `build_chara_router(store, assets_dir, require_admin=None, rate_limiter=None)`
 を提供し、アプリ組み込み時に注入する。
 """
 from __future__ import annotations
@@ -90,24 +92,27 @@ def build_chara_router(
     store: Store,
     assets_dir: str | Path,
     *,
-    require_account=None,
+    require_admin=None,
     rate_limiter=None,
 ) -> APIRouter:
     """`/api/chara` ルータを構築。
 
-    require_account: FastAPI 依存(認証)。None なら no-op(uploaded_by=None)。
+    require_admin: FastAPI 依存(管理者限定)。変更系(upload/delete/index 編集/
+        import)へ適用。未認証 401・非管理者 403。None なら no-op(誰でも通す,
+        テスト/開発)。GET 系(list/meta/png/manifest/index.txt)は対象外で、
+        誰でも閲覧可(レート制限のまま [08]§10)。
     rate_limiter: RateLimiter(upload 30/min/account)。None なら無制限。
     """
     storage = CharaStorage(assets_dir)
     router = APIRouter(prefix="/api/chara")
 
-    # 認証依存。未指定時は誰でも None アカウントで通す(テスト/開発)。
-    if require_account is None:
-        async def _acct() -> str | None:  # noqa: D401
+    # 管理者依存(変更系)。未指定時は no-op(uploaded_by=None で誰でも通す)。
+    if require_admin is None:
+        async def _admin() -> str | None:  # noqa: D401
             return None
-        account_dep = _acct
+        admin_dep = _admin
     else:
-        account_dep = require_account
+        admin_dep = require_admin
 
     def _enforce_get_rate(request: Request) -> None:
         """CR-12: chara GET(無認証配信)を IP 単位でレート制限。"""
@@ -127,7 +132,7 @@ def build_chara_router(
         file: UploadFile = File(...),
         graName: str | None = Form(None),
         colorKey: str = Form("teal"),
-        account_id: str | None = Depends(account_dep),
+        account_id: str | None = Depends(admin_dep),
     ) -> dict:
         # アップロードレート制限(30/min/account)。account 不明時は "anon"。
         if rate_limiter is not None:
@@ -258,7 +263,7 @@ def build_chara_router(
     @router.delete("/graphics/{gra_name}")
     async def delete_graphic(
         gra_name: str,
-        account_id: str | None = Depends(account_dep),
+        account_id: str | None = Depends(admin_dep),
     ) -> dict:
         g = store.get_graphic(urllib.parse.unquote(gra_name))
         if g is None:
@@ -284,7 +289,7 @@ def build_chara_router(
     async def put_index(
         key: str,
         body: dict,
-        account_id: str | None = Depends(account_dep),
+        account_id: str | None = Depends(admin_dep),
     ) -> dict:
         gra_name = body.get("graName")
         if not gra_name:
@@ -296,7 +301,7 @@ def build_chara_router(
     @router.delete("/index/{key}")
     async def delete_index(
         key: str,
-        account_id: str | None = Depends(account_dep),
+        account_id: str | None = Depends(admin_dep),
     ) -> dict:
         key = urllib.parse.unquote(key)
         if store.get_index(key) is None:
@@ -308,7 +313,7 @@ def build_chara_router(
     @router.post("/index/import")
     async def import_index(
         file: UploadFile = File(...),
-        account_id: str | None = Depends(account_dep),
+        account_id: str | None = Depends(admin_dep),
     ) -> dict:
         raw = await file.read()
         # cp932 優先、失敗時 UTF-8([08]§8)。

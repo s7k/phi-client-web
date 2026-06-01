@@ -11,7 +11,8 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS accounts (
   id            TEXT PRIMARY KEY,      -- ログインID
   password_hash TEXT NOT NULL,
-  created_at    TEXT NOT NULL
+  created_at    TEXT NOT NULL,
+  is_admin      INTEGER NOT NULL DEFAULT 0  -- 管理者フラグ(キャラグラ変更系の権限)
 );
 
 -- characters: [02]§6 + [12]§1.4(legacy_uid_enc / legacy_host 追加)

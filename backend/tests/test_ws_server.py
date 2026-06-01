@@ -121,8 +121,44 @@ async def test_auth_stub_returns_characters(server):
     auth = next(m for m in ws.sent if m["type"] == "auth" and m.get("reqId") == "r1")
     assert auth["ok"] is True
     assert isinstance(auth["characters"], list)
+    assert auth["isAdmin"] is False  # stub は常に非管理者
     ws.disconnect()
     await task
+
+
+async def test_auth_with_service_returns_is_admin(server):
+    """AuthService 連携時、auth 応答に DB の is_admin を反映。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+    auth.register_account("adm", "pw")
+    store.set_admin("adm", True)
+    auth.register_account("usr", "pw")
+
+    # 管理者 adm。
+    ws = FakeWebSocket()
+    conn = WsConnection(ws, server, auth=auth)
+    task = asyncio.create_task(conn.run())
+    ws.feed({"type": "auth", "reqId": "a", "id": "adm", "password": "pw"})
+    await _wait(lambda: any(m.get("reqId") == "a" for m in ws.sent))
+    resp = next(m for m in ws.sent if m.get("reqId") == "a")
+    assert resp["ok"] is True and resp["isAdmin"] is True
+    ws.disconnect()
+    await task
+
+    # 非管理者 usr。
+    ws2 = FakeWebSocket()
+    conn2 = WsConnection(ws2, server, auth=auth)
+    task2 = asyncio.create_task(conn2.run())
+    ws2.feed({"type": "auth", "reqId": "b", "id": "usr", "password": "pw"})
+    await _wait(lambda: any(m.get("reqId") == "b" for m in ws2.sent))
+    resp2 = next(m for m in ws2.sent if m.get("reqId") == "b")
+    assert resp2["ok"] is True and resp2["isAdmin"] is False
+    ws2.disconnect()
+    await task2
+    store.close()
 
 
 async def test_session_open_response_a10(server, fake_sock):

@@ -79,6 +79,69 @@ def test_account_crud(store):
     assert store.get_account("missing") is None
 
 
+# ----------------------------------------------------------------------
+# is_admin(管理者フラグ)
+# ----------------------------------------------------------------------
+
+def test_account_default_not_admin(store):
+    store.create_account("alice", "h")
+    assert store.get_account("alice")["is_admin"] == 0
+    assert store.is_account_admin("alice") is False
+    assert store.list_admins() == []
+
+
+def test_set_admin_grant_and_revoke(store):
+    store.create_account("alice", "h")
+    store.set_admin("alice", True)
+    assert store.is_account_admin("alice") is True
+    assert store.get_account("alice")["is_admin"] == 1
+    assert store.list_admins() == ["alice"]
+    store.set_admin("alice", False)
+    assert store.is_account_admin("alice") is False
+    assert store.list_admins() == []
+
+
+def test_is_account_admin_missing_is_false(store):
+    assert store.is_account_admin("nobody") is False
+
+
+def test_list_admins_sorted(store):
+    for a in ("carol", "alice", "bob"):
+        store.create_account(a, "h")
+        store.set_admin(a, True)
+    store.create_account("dave", "h")  # 非管理者は除外
+    assert store.list_admins() == ["alice", "bob", "carol"]
+
+
+def test_migrate_adds_is_admin_to_legacy_db(tmp_path):
+    """既存DB(is_admin 列なし)に migrate() で冪等に列追加。"""
+    import sqlite3
+
+    db = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(db)
+    # 旧スキーマ(is_admin 列なし)で accounts を作成。
+    conn.execute(
+        "CREATE TABLE accounts (id TEXT PRIMARY KEY, "
+        "password_hash TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO accounts (id, password_hash, created_at) "
+        "VALUES ('old', 'h', '2020-01-01T00:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+
+    # Store.open は migrate() を走らせ ALTER TABLE で列追加。
+    s = Store.open(db)
+    cols = {r["name"] for r in s.conn.execute("PRAGMA table_info(accounts)")}
+    assert "is_admin" in cols
+    assert s.is_account_admin("old") is False  # 既定 0
+    # 冪等: 再 migrate しても落ちない。
+    s.migrate()
+    assert s.is_account_admin("old") is False
+    s.close()
+
+
 def test_character_upsert_and_list(store):
     store.create_account("alice", "h")
     store.upsert_character("c1", "alice", display_name="Hero",

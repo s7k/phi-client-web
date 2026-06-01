@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -225,6 +225,130 @@ def test_index_import_export_roundtrip(client):
     # export(cp932)
     r3 = client.get("/api/chara/index.txt?charset=cp932")
     assert "知的生物".encode("cp932") in r3.content
+
+
+# --- 管理者ゲート(変更系: 管理者限定 [08]§10) --------------------------
+
+@pytest.fixture
+def gated_app(tmp_path):
+    """require_admin を注入したアプリ。account が admins 集合内なら管理者。
+
+    依存は X-Test-Account ヘッダの account id を見る簡易スタブ。
+    - ヘッダ無し → 401(未認証)。
+    - admins に無い → 403(非管理者)。
+    - admins にある → account_id を返す(管理者)。
+    """
+    store = Store.open(":memory:")
+    # uploaded_by の FK 用に admin1 アカウントを実在させる。
+    store.create_account("admin1", "h")
+    store.set_admin("admin1", True)
+    admins = {"admin1"}
+
+    async def require_admin(request: Request) -> str:
+        acc = request.headers.get("X-Test-Account")
+        if not acc:
+            raise HTTPException(401, "未認証")
+        if acc not in admins:
+            raise HTTPException(403, "管理者権限が必要")
+        return acc
+
+    app = FastAPI()
+    app.include_router(
+        build_chara_router(store, tmp_path / "assets", require_admin=require_admin)
+    )
+    c = TestClient(app)
+    c._store = store  # type: ignore[attr-defined]
+    yield c
+    store.close()
+
+
+def _upload(c, headers=None):
+    return c.post(
+        "/api/chara/graphics",
+        files={"file": ("g.bmp", _bmp_bytes(), "image/bmp")},
+        data={"graName": "g", "colorKey": "teal"},
+        headers=headers or {},
+    )
+
+
+def test_upload_admin_200(gated_app):
+    r = _upload(gated_app, {"X-Test-Account": "admin1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["graName"] == "g"
+
+
+def test_upload_non_admin_403(gated_app):
+    r = _upload(gated_app, {"X-Test-Account": "user1"})
+    assert r.status_code == 403
+
+
+def test_upload_unauthenticated_401(gated_app):
+    r = _upload(gated_app)
+    assert r.status_code == 401
+
+
+def test_index_put_admin_only(gated_app):
+    # 未認証 401 / 非管理者 403 / 管理者 200。
+    assert gated_app.put(
+        "/api/chara/index/k", json={"graName": "g"}
+    ).status_code == 401
+    assert gated_app.put(
+        "/api/chara/index/k", json={"graName": "g"},
+        headers={"X-Test-Account": "user1"},
+    ).status_code == 403
+    assert gated_app.put(
+        "/api/chara/index/k", json={"graName": "g"},
+        headers={"X-Test-Account": "admin1"},
+    ).status_code == 200
+
+
+def test_index_delete_and_import_admin_only(gated_app):
+    # import: 非管理者 403。
+    raw = "beast = t_dog.bmp\n".encode("cp932")
+    assert gated_app.post(
+        "/api/chara/index/import",
+        files={"file": ("Index.txt", raw, "text/plain")},
+        headers={"X-Test-Account": "user1"},
+    ).status_code == 403
+    # import: 管理者 200。
+    assert gated_app.post(
+        "/api/chara/index/import",
+        files={"file": ("Index.txt", raw, "text/plain")},
+        headers={"X-Test-Account": "admin1"},
+    ).status_code == 200
+    # delete: 未認証 401。
+    assert gated_app.delete("/api/chara/index/beast").status_code == 401
+    # delete: 管理者 200。
+    assert gated_app.delete(
+        "/api/chara/index/beast", headers={"X-Test-Account": "admin1"}
+    ).status_code == 200
+
+
+def test_delete_graphic_admin_only(gated_app):
+    # 管理者でアップロード後、非管理者 delete は 403。
+    _upload(gated_app, {"X-Test-Account": "admin1"})
+    assert gated_app.delete(
+        "/api/chara/graphics/g", headers={"X-Test-Account": "user1"}
+    ).status_code == 403
+    assert gated_app.delete(
+        "/api/chara/graphics/g", headers={"X-Test-Account": "admin1"}
+    ).status_code == 200
+
+
+def test_get_endpoints_open_to_anyone(gated_app):
+    # GET 系は認可不要(管理者ゲート対象外)。未認証でも 200。
+    gated_app.post(
+        "/api/chara/graphics",
+        files={"file": ("g.bmp", _bmp_bytes(), "image/bmp")},
+        data={"graName": "g"},
+        headers={"X-Test-Account": "admin1"},
+    )
+    assert gated_app.get("/api/chara/graphics").status_code == 200
+    assert gated_app.get("/api/chara/graphics/g").status_code == 200
+    assert gated_app.get("/api/chara/graphics/g/png").status_code == 200
+    assert gated_app.get("/api/chara/index").status_code == 200
+    assert gated_app.get("/api/chara/index.txt").status_code == 200
+    assert gated_app.get("/api/chara/manifest").status_code == 200
 
 
 # --- マニフェスト ---------------------------------------------------------

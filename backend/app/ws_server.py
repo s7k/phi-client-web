@@ -261,6 +261,7 @@ class WsConnection:
     async def _send_auth_ok(self, msg: dict, account_id: str, *, stub: bool) -> None:
         if stub or self._auth is None:
             characters = [{"charId": account_id, "name": account_id, "lastServer": None}]
+            is_admin = False
         else:
             characters = [
                 {
@@ -270,9 +271,10 @@ class WsConnection:
                 }
                 for r in self._auth.store.list_characters(account_id)
             ]
+            is_admin = self._auth.is_admin(account_id)
         await self._ws.send_json({
             "type": "auth", "reqId": msg.get("reqId"),
-            "ok": True, "characters": characters,
+            "ok": True, "characters": characters, "isAdmin": is_admin,
         })
 
     # ------------------------------------------------------------------
@@ -445,6 +447,25 @@ def make_require_account(auth, cookie_name: str = COOKIE_NAME):
     return _require_account
 
 
+def make_require_admin(auth, cookie_name: str = COOKIE_NAME):
+    """`require_admin` 依存を生成([08]§10, 管理者限定の変更系)。
+
+    `require_account` と同経路でセッション検証し account を解決後、
+    `accounts.is_admin` を確認。未認証は 401、非管理者は 403。
+    キャラグラの変更系(upload/delete/index 編集/import)に注入。
+    """
+    async def _require_admin(request: Request) -> str:
+        sid = request.cookies.get(cookie_name)
+        account_id = auth.validate(sid) if sid else None
+        if account_id is None:
+            raise HTTPException(401, "未認証")
+        if not auth.is_admin(account_id):
+            raise HTTPException(403, "管理者権限が必要")
+        return account_id
+
+    return _require_admin
+
+
 def create_app(
     manager: SessionManager | None = None,
     auth=None,
@@ -462,7 +483,7 @@ def create_app(
     マウント:
     - `/ws`                          : WebSocket([07])。
     - `/api/auth/login` `/logout`    : Web 認証([12]§1.3)。cookie `phi_session`。
-    - `/api/chara/*`                 : キャラグラ([08], B10)。upload は要認証 + レート。
+    - `/api/chara/*`                 : キャラグラ([08], B10)。変更系は管理者限定 + レート。
     - `/api/register/*`              : 新規登録([12]§2, B15)。register は要認証 + レート/IP。
 
     引数:
@@ -514,6 +535,7 @@ def create_app(
     app.state.login_throttle = login_throttle
 
     require_account = make_require_account(auth)
+    require_admin = make_require_admin(auth)
 
     # ------------------------------------------------------------------
     # CSRF: 変更系の Origin/Referer 検査([12]§1.3 / §7.3)。
@@ -552,7 +574,8 @@ def create_app(
         response.set_cookie(
             COOKIE_NAME, sid, httponly=True, secure=True, samesite="strict"
         )
-        return {"ok": True}
+        # FE が管理UIを出し分けできるよう is_admin を露出([08]§10)。
+        return {"ok": True, "isAdmin": auth.is_admin(account)}
 
     @app.post("/api/auth/logout")
     async def logout(request: Request, response: Response):
@@ -577,7 +600,7 @@ def create_app(
     store = auth.store
     app.include_router(build_chara_router(
         store, assets,
-        require_account=require_account, rate_limiter=rate_limiter,
+        require_admin=require_admin, rate_limiter=rate_limiter,
     ))
 
     if registrar_factory is None:  # pragma: no cover - 統合層(本番起動)

@@ -209,6 +209,10 @@ class AuthService:
         """セッション失効(削除)。"""
         self.store.delete_web_session(session_id)
 
+    def is_admin(self, account_id: str) -> bool:
+        """account が管理者か(DBフラグ accounts.is_admin)。"""
+        return self.store.is_account_admin(account_id)
+
     def validate(
         self, session_id: str, *, now: datetime | None = None
     ) -> str | None:

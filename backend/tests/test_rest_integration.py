@@ -63,6 +63,8 @@ def env(tmp_path, monkeypatch):
     cipher = UidCipher(UidCipher.generate_key())
     auth = AuthService(store, cipher)
     auth.register_account("alice", "password1")
+    # alice を管理者化(キャラグラ変更系は管理者限定 [08]§10)。
+    store.set_admin("alice", True)
 
     def on_send(text):
         if text == "#ex-get REGINFO IMG":
@@ -112,6 +114,32 @@ def test_upload_requires_auth(env):
         headers=HDR,
     )
     assert r.status_code == 401
+
+
+def test_login_returns_is_admin(env):
+    # 管理者 alice → isAdmin True。
+    r = env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
+                 headers=HDR)
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "isAdmin": True}
+
+
+def test_login_non_admin_is_admin_false_and_upload_403(env):
+    # 非管理者 bob を追加。login で isAdmin False、upload は 403。
+    env._store.create_account("bob", "$argon2id$dummy")  # noqa: SLF001
+    from app.auth import hash_password
+    env._store.update_password_hash("bob", hash_password("pw"))
+    r = env.post("/api/auth/login", json={"id": "bob", "password": "pw"},
+                 headers=HDR)
+    assert r.status_code == 200
+    assert r.json()["isAdmin"] is False
+    r2 = env.post(
+        "/api/chara/graphics",
+        files={"file": ("g.bmp", _bmp(), "image/bmp")},
+        data={"graName": "g"},
+        headers=HDR,
+    )
+    assert r2.status_code == 403
 
 
 def test_login_then_upload(env):

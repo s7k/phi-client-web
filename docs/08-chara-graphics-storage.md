@@ -163,7 +163,13 @@ POST レスポンス例:
 
 ## 10. 運用・セキュリティ
 
-- アップロードは認証ユーザのみ。将来 admin/uploader ロールで制限。
+- **アップロード等の変更系は管理者のみ**(キャラグラは全プレイヤー共通=グローバルに反映されるため)。
+  - 管理者判定 = **DBフラグ `accounts.is_admin`**(`require_admin` 依存。未認証401/非管理者403)。
+  - 管理者限定: `POST/DELETE /api/chara/graphics`, `PUT/DELETE /api/chara/index`, index `import`。
+  - GET系(list/meta/png/manifest/index.txt)は閲覧可(レート制限のみ)。`/api/register`(新規キャラ作成)は対象外。
+  - 初期管理者付与CLI: `PHI_DB_PATH=... python -m app.admin_cli grant <account_id>`(revoke/list も)。
+  - ログイン応答に `isAdmin` を含め、FEは管理UIを出し分け(サーバ側は多層防御で403)。
+  - 反映範囲: **このWebバックエンドのクライアント全員**。レガシーサーバ/他クライアントには影響しない(gra_nameのみ送受信、PNGはクライアント描画アセット)。
 - ファイル名はサーバ側生成(`stored_name`)でパストラバーサル不可。`graName`はDB値としてのみ扱いFSパスに直結しない。
 - 上限サイズ・拡張子・MIME・画像妥当性を検査。変換失敗は 4xx。
 - 同一 `orig_sha256` は冪等化(再アップロードで重複生成しない)。

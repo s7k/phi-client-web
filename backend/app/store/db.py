@@ -93,10 +93,26 @@ class Store:
         return store
 
     def migrate(self) -> None:
-        """schema.sql を適用(冪等)。"""
+        """schema.sql を適用(冪等)。既存DBへの追加列も冪等補完。"""
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         self.conn.executescript(sql)
+        self._migrate_accounts_is_admin()
         self.conn.commit()
+
+    def _migrate_accounts_is_admin(self) -> None:
+        """既存DB: accounts に is_admin 列が無ければ追加(冪等)。
+
+        新規DB は schema.sql の CREATE TABLE で既に列を持つ。旧DB(列なし)へ
+        ALTER TABLE で後付け。table_info を見て存在判定し二重追加を防ぐ。
+        """
+        cols = {
+            r["name"]
+            for r in self.conn.execute("PRAGMA table_info(accounts)").fetchall()
+        }
+        if "is_admin" not in cols:
+            self.conn.execute(
+                "ALTER TABLE accounts ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -114,7 +130,8 @@ class Store:
 
     def get_account(self, account_id: str) -> sqlite3.Row | None:
         cur = self.conn.execute(
-            "SELECT id, password_hash, created_at FROM accounts WHERE id = ?",
+            "SELECT id, password_hash, created_at, is_admin "
+            "FROM accounts WHERE id = ?",
             (account_id,),
         )
         return cur.fetchone()
@@ -125,6 +142,31 @@ class Store:
             (password_hash, account_id),
         )
         self.conn.commit()
+
+    # ---- 管理者フラグ(is_admin) ----
+
+    def is_account_admin(self, account_id: str) -> bool:
+        """account が管理者か。未登録は False。"""
+        cur = self.conn.execute(
+            "SELECT is_admin FROM accounts WHERE id = ?", (account_id,)
+        )
+        row = cur.fetchone()
+        return bool(row["is_admin"]) if row is not None else False
+
+    def set_admin(self, account_id: str, value: bool) -> None:
+        """account の is_admin を設定(grant/revoke 共用)。"""
+        self.conn.execute(
+            "UPDATE accounts SET is_admin = ? WHERE id = ?",
+            (1 if value else 0, account_id),
+        )
+        self.conn.commit()
+
+    def list_admins(self) -> list[str]:
+        """管理者の account id 一覧(昇順)。"""
+        cur = self.conn.execute(
+            "SELECT id FROM accounts WHERE is_admin = 1 ORDER BY id"
+        )
+        return [r["id"] for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # characters

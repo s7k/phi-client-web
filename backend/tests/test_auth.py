@@ -137,6 +137,13 @@ def test_validate_unknown(auth):
     assert auth.validate("no-such-session") is None
 
 
+def test_is_admin_reflects_db_flag(auth):
+    auth.register_account("alice", "pw")
+    assert auth.is_admin("alice") is False
+    auth.store.set_admin("alice", True)
+    assert auth.is_admin("alice") is True
+
+
 def test_idle_expiry(auth):
     auth.register_account("alice", "pw")
     t0 = datetime(2026, 6, 1, tzinfo=timezone.utc)
