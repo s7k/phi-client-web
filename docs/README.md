@@ -17,6 +17,7 @@
 | [11-test-design.md](11-test-design.md) | TDDテスト設計。テストピラミッド・ケース・実装順序 |
 | [12-detailed-design.md](12-detailed-design.md) | 詳細設計。認証/トークン・新規登録(#ex-register)・設定スキーマ・レート制限・FE状態・再接続・デプロイ |
 | [13-implementation-readiness.md](13-implementation-readiness.md) | 実装着手可能性チェックリスト。コンポーネント別判定 |
+| [14-code-review.md](14-code-review.md) | 全体コードレビュー結果(CR-1〜21)。片側未配線・fail-open等の指摘 |
 
 マッピング: `backend/data/chara_type_fallback.json`（キャラタイプコード正規対応）。
 
