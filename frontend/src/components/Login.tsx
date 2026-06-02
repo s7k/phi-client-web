@@ -14,6 +14,7 @@
  * 注: PHI ID は資格情報。input は type=password で画面マスク(任意配慮)。ログ出力しない。
  */
 import { useEffect, useState } from 'react';
+import type { SavedListItem } from '../types/protocol';
 import { useWs } from '../ws/WsContext';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUiStore } from '../stores/uiStore';
@@ -26,11 +27,30 @@ export function Login() {
   const setActiveTab = useUiStore((s) => s.setActiveTab);
 
   const [id, setId] = useState('');
+  const [host, setHost] = useState('');
+  const [port, setPort] = useState('');
   const [remember, setRemember] = useState(false);
   const [phase, setPhase] = useState<'login' | 'register'>('login');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // 接続先既定値(プレースホルダ表示用)。
+  const HOST_PLACEHOLDER = '127.0.0.1';
+  const PORT_PLACEHOLDER = '20000';
+
+  /**
+   * port 文字列を検証し数値化。
+   * 空文字 → undefined(BE既定使用)。1-65535 の整数のみ許可、範囲外/非数値は null。
+   */
+  function parsePort(raw: string): number | undefined | null {
+    const t = raw.trim();
+    if (t === '') return undefined;
+    if (!/^\d+$/.test(t)) return null;
+    const n = Number(t);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) return null;
+    return n;
+  }
 
   // 保存済みID一覧を取得(ラベル選択用 picker)。失敗は致命でないため握りつぶす。
   useEffect(() => {
@@ -40,14 +60,29 @@ export function Login() {
     });
   }, [ws, phase]);
 
-  /** 新規入力 ID でログイン(REST 確立 → session.open(id))。 */
+  /** 新規入力 ID でログイン(REST 確立 → session.open(id, host, port))。 */
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    const h = host.trim();
+    if (h === '') {
+      setError('サーバIP(host)は必須');
+      return;
+    }
+    const p = parsePort(port);
+    if (p === null) {
+      setError('ポートは1-65535の数値');
+      return;
+    }
     setBusy(true);
     try {
       await ws.establishSession(id, { remember });
-      const session = await ws.openSession({ id });
+      const session = await ws.openSession({
+        id,
+        host: h,
+        port: p,
+        remember,
+      });
       setActiveTab(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : '認証失敗');
@@ -56,18 +91,38 @@ export function Login() {
     }
   }
 
-  /** 保存済みラベル選択でログイン(ref で session.open)。生IDは扱わない。 */
-  async function handleSelectSaved(ref: string, label: string) {
+  /**
+   * 保存済みラベル選択でログイン(ref で session.open)。生IDは扱わない。
+   * 接続先(host/port)は入力欄の現在値を優先し、空ならピッカー項目の保存値を使う。
+   */
+  async function handleSelectSaved(item: SavedListItem) {
     setError(null);
+    const h = host.trim() !== '' ? host.trim() : item.host;
+    const p =
+      port.trim() !== '' ? parsePort(port) : item.port;
+    if (p === null) {
+      setError('ポートは1-65535の数値');
+      return;
+    }
     setBusy(true);
     try {
-      const session = await ws.openSession({ ref }, label);
+      const session = await ws.openSession(
+        { ref: item.ref, host: h, port: p },
+        item.label,
+      );
       setActiveTab(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ログイン失敗');
     } finally {
       setBusy(false);
     }
+  }
+
+  /** ピッカー項目クリック: host/port を入力欄へ初期化し、そのまま接続。 */
+  function selectSaved(item: SavedListItem) {
+    if (item.host !== undefined) setHost(item.host);
+    if (item.port !== undefined) setPort(String(item.port));
+    void handleSelectSaved(item);
   }
 
   // 登録画面は専用コンポーネントへ委譲。成功でログインへ戻し、案内を表示。
@@ -104,9 +159,15 @@ export function Login() {
                     className="login__char"
                     type="button"
                     disabled={busy}
-                    onClick={() => handleSelectSaved(item.ref, item.label)}
+                    onClick={() => selectSaved(item)}
                   >
                     <span className="login__char-name">{item.label}</span>
+                    {(item.host !== undefined || item.port !== undefined) && (
+                      <span className="login__char-server">
+                        {item.host ?? HOST_PLACEHOLDER}
+                        {item.port !== undefined ? `:${item.port}` : ''}
+                      </span>
+                    )}
                     {item.isAdmin && (
                       <span className="login__char-server">管理者</span>
                     )}
@@ -126,6 +187,27 @@ export function Login() {
               autoComplete="off"
               onChange={(e) => setId(e.target.value)}
               required
+            />
+          </label>
+          <label className="login__field">
+            <span>サーバIP</span>
+            <input
+              type="text"
+              value={host}
+              placeholder={HOST_PLACEHOLDER}
+              autoComplete="off"
+              onChange={(e) => setHost(e.target.value)}
+            />
+          </label>
+          <label className="login__field">
+            <span>ポート</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={port}
+              placeholder={PORT_PLACEHOLDER}
+              autoComplete="off"
+              onChange={(e) => setPort(e.target.value)}
             />
           </label>
           <label className="login__remember">

@@ -31,6 +31,19 @@ def test_add_stores_encrypted(tmp_path):
     s.close()
 
 
+def test_add_with_host_port(tmp_path):
+    """A-32: add --host/--port で接続先も保存。"""
+    db = str(tmp_path / "x.db")
+    rc = main(["--db", db, "add", "PHI_ID_1", "メイン",
+               "--host", "h.example", "--port", "9100"])
+    assert rc == 0
+    s = Store.open(db)
+    row = s.get_saved_id(id_key_of("PHI_ID_1"))
+    assert row["host"] == "h.example"
+    assert row["port"] == 9100
+    s.close()
+
+
 def test_add_with_admin_flag(tmp_path):
     db = str(tmp_path / "x.db")
     assert main(["--db", db, "add", "PHI_ID_1", "--admin"]) == 0

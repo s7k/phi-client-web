@@ -103,6 +103,27 @@ class Store:
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         self.conn.executescript(sql)
         self.conn.commit()
+        self._migrate_columns()
+
+    def _migrate_columns(self) -> None:
+        """既存DBへの列追加(冪等)。CREATE IF NOT EXISTS では追えない後付け列。
+
+        ALTER TABLE ADD COLUMN は IF NOT EXISTS 非対応のため、PRAGMA で
+        既存列を確認してから不足分のみ追加する(A-32: saved_ids.host/port)。
+        """
+        added = False
+        cols = {
+            r["name"]
+            for r in self.conn.execute("PRAGMA table_info(saved_ids)").fetchall()
+        }
+        if "host" not in cols:
+            self.conn.execute("ALTER TABLE saved_ids ADD COLUMN host TEXT")
+            added = True
+        if "port" not in cols:
+            self.conn.execute("ALTER TABLE saved_ids ADD COLUMN port INTEGER")
+            added = True
+        if added:
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -121,41 +142,50 @@ class Store:
         *,
         label: str | None = None,
         is_admin: bool | None = None,
+        host: str | None = None,
+        port: int | None = None,
     ) -> None:
-        """保存IDを upsert。is_admin/label は None なら既存値を維持。"""
+        """保存IDを upsert。is_admin/label/host/port は None なら既存値を維持。
+
+        A-32: 接続先 host/port も保存(FE 接続先ピッカーの初期値用)。
+        """
         existing = self.get_saved_id(id_key)
         if existing is None:
             self.conn.execute(
                 "INSERT INTO saved_ids "
-                "(id_key, id_enc, label, is_admin, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(id_key, id_enc, label, is_admin, host, port, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (id_key, id_enc, label,
-                 1 if is_admin else 0, utc_now()),
+                 1 if is_admin else 0, host, port, utc_now()),
             )
         else:
             new_label = existing["label"] if label is None else label
             new_admin = (
                 existing["is_admin"] if is_admin is None else (1 if is_admin else 0)
             )
+            new_host = existing["host"] if host is None else host
+            new_port = existing["port"] if port is None else port
             self.conn.execute(
-                "UPDATE saved_ids SET id_enc = ?, label = ?, is_admin = ? "
-                "WHERE id_key = ?",
-                (id_enc, new_label, new_admin, id_key),
+                "UPDATE saved_ids SET id_enc = ?, label = ?, is_admin = ?, "
+                "host = ?, port = ? WHERE id_key = ?",
+                (id_enc, new_label, new_admin, new_host, new_port, id_key),
             )
         self.conn.commit()
 
     def get_saved_id(self, id_key: str) -> sqlite3.Row | None:
         cur = self.conn.execute(
-            "SELECT id_key, id_enc, label, is_admin, created_at, last_used_at "
+            "SELECT id_key, id_enc, label, is_admin, host, port, "
+            "created_at, last_used_at "
             "FROM saved_ids WHERE id_key = ?",
             (id_key,),
         )
         return cur.fetchone()
 
     def list_saved_ids(self) -> list[sqlite3.Row]:
-        """保存ID一覧(id_key 昇順)。生IDは含まない(id_key/label/is_admin)。"""
+        """保存ID一覧(id_key 昇順)。生IDは含まない(id_key/label/is_admin/host/port)。"""
         cur = self.conn.execute(
-            "SELECT id_key, id_enc, label, is_admin, created_at, last_used_at "
+            "SELECT id_key, id_enc, label, is_admin, host, port, "
+            "created_at, last_used_at "
             "FROM saved_ids ORDER BY id_key"
         )
         return cur.fetchall()

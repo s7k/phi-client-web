@@ -85,6 +85,34 @@ def test_saved_id_crud(store):
     assert store.get_saved_id(id_key_of("missing")) is None
 
 
+def test_saved_id_host_port_roundtrip(store):
+    """A-32: host/port を保存・取得できる。None 指定は既存値維持。"""
+    key = id_key_of("alice")
+    store.upsert_saved_id(key, b"e", label="L", host="h.example", port=9000)
+    row = store.get_saved_id(key)
+    assert row["host"] == "h.example"
+    assert row["port"] == 9000
+    # host/port 省略の upsert は既存値を維持。
+    store.upsert_saved_id(key, b"e2")
+    row = store.get_saved_id(key)
+    assert row["host"] == "h.example" and row["port"] == 9000
+    # 明示更新は上書き。
+    store.upsert_saved_id(key, b"e3", host="other", port=1)
+    row = store.get_saved_id(key)
+    assert row["host"] == "other" and row["port"] == 1
+    # list_saved_ids にも host/port が含まれる。
+    listed = next(r for r in store.list_saved_ids() if r["id_key"] == key)
+    assert listed["host"] == "other" and listed["port"] == 1
+
+
+def test_saved_id_host_port_default_none(store):
+    """A-32: host/port 未指定で保存すると NULL(None)。"""
+    key = id_key_of("bob")
+    store.upsert_saved_id(key, b"e")
+    row = store.get_saved_id(key)
+    assert row["host"] is None and row["port"] is None
+
+
 def test_saved_id_touch_and_delete(store):
     key = id_key_of("alice")
     store.upsert_saved_id(key, b"e")

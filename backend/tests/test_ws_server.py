@@ -55,9 +55,12 @@ class FakeSocket:
         self.sent: list[bytes] = []
         self._q: asyncio.Queue = asyncio.Queue()
         self.connected = False
+        # A-32: 接続先検証用に connect 引数を記録。
+        self.connect_args: tuple | None = None
 
     async def connect(self, host, port, timeout=10.0):
         self.connected = True
+        self.connect_args = (host, port)
 
     async def close(self):
         self.connected = False
@@ -195,6 +198,120 @@ async def test_session_open_response_a10(server, fake_sock):
                for m in ws.sent)
     ws.disconnect()
     await task
+
+
+async def test_session_open_with_explicit_host_port(fake_sock):
+    """A-32: session.open に host/port 明示 → その接続先で connect される。"""
+    mgr = SessionManager(host="default.example", port=1111,
+                         socket_factory=lambda: fake_sock)
+    ws = FakeWebSocket()
+    conn = WsConnection(ws, mgr)
+    task = asyncio.create_task(conn.run())
+    ws.feed({"type": "session.open", "reqId": "r", "id": "char1",
+             "host": "1.2.3.4", "port": 5000})
+    await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
+    assert fake_sock.connect_args == ("1.2.3.4", 5000)
+    ws.disconnect()
+    await task
+    await mgr.close_all()
+
+
+async def test_session_open_defaults_to_server_host_port(fake_sock):
+    """A-32: host/port 省略 → サーバ既定(config PHI_HOST/PHI_PORT)へ接続。"""
+    mgr = SessionManager(host="default.example", port=1111,
+                         socket_factory=lambda: fake_sock)
+    ws = FakeWebSocket()
+    conn = WsConnection(ws, mgr)
+    task = asyncio.create_task(conn.run())
+    ws.feed({"type": "session.open", "reqId": "r", "id": "char1"})
+    await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
+    assert fake_sock.connect_args == ("default.example", 1111)
+    ws.disconnect()
+    await task
+    await mgr.close_all()
+
+
+async def test_session_open_invalid_port_bad_request(server):
+    """A-32: port 不正(非数値)→ BAD_REQUEST。接続要求は起きない。"""
+    ws = FakeWebSocket()
+    _, task = await _run_conn(ws, server)
+    ws.feed({"type": "session.open", "reqId": "r", "id": "char1",
+             "host": "h", "port": "abc"})
+    await _wait(lambda: any(m["type"] == "error" for m in ws.sent))
+    err = next(m for m in ws.sent if m["type"] == "error")
+    assert err["error"]["code"] == "BAD_REQUEST"
+    # session.open 成功応答は来ない。
+    assert not any(m["type"] == "session.open" and m.get("ok") for m in ws.sent)
+    ws.disconnect()
+    await task
+
+
+async def test_session_open_port_out_of_range_bad_request(server):
+    """A-32: port 範囲外(0/65536)→ BAD_REQUEST。"""
+    ws = FakeWebSocket()
+    _, task = await _run_conn(ws, server)
+    ws.feed({"type": "session.open", "reqId": "r", "id": "char1", "port": 99999})
+    await _wait(lambda: any(m["type"] == "error" for m in ws.sent))
+    err = next(m for m in ws.sent if m["type"] == "error")
+    assert err["error"]["code"] == "BAD_REQUEST"
+    ws.disconnect()
+    await task
+
+
+async def test_session_open_ref_uses_saved_host_port(fake_sock):
+    """A-32: ref open は保存 host/port を採用し接続(明示無し時)。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+    from app.store.db import id_key_of
+
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+    auth.remember_id("ID_R", label="R", host="saved.example", port=7777)
+    ref = id_key_of("ID_R")
+
+    mgr = SessionManager(host="default.example", port=1111,
+                         socket_factory=lambda: fake_sock)
+    ws = FakeWebSocket()
+    conn = WsConnection(ws, mgr, auth=auth)
+    task = asyncio.create_task(conn.run())
+    ws.feed({"type": "session.open", "reqId": "r", "ref": ref})
+    await _wait(lambda: any(m["type"] == "session.open" and m.get("ok")
+                            for m in ws.sent))
+    assert fake_sock.connect_args == ("saved.example", 7777)
+    ws.disconnect()
+    await task
+    store.close()
+    await mgr.close_all()
+
+
+async def test_session_open_remember_saves_host_port(server):
+    """A-32: id+remember 時に host/port を saved_ids へ保存。saved.list で往復。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+    from app.store.db import id_key_of
+
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+
+    ws = FakeWebSocket()
+    conn = WsConnection(ws, server, auth=auth)
+    task = asyncio.create_task(conn.run())
+    ws.feed({"type": "session.open", "reqId": "r", "id": "ID_M",
+             "remember": True, "label": "M", "host": "rem.example", "port": 8800})
+    await _wait(lambda: any(m["type"] == "session.open" and m.get("ok")
+                            for m in ws.sent))
+    # saved_ids へ host/port 保存されている。
+    row = store.get_saved_id(id_key_of("ID_M"))
+    assert row["host"] == "rem.example" and row["port"] == 8800
+    # saved.list 応答にも host/port が含まれる。
+    ws.feed({"type": "saved.list", "reqId": "s"})
+    await _wait(lambda: any(m["type"] == "saved" for m in ws.sent))
+    resp = next(m for m in ws.sent if m["type"] == "saved")
+    item = next(it for it in resp["items"] if it["ref"] == id_key_of("ID_M"))
+    assert item["host"] == "rem.example" and item["port"] == 8800
+    ws.disconnect()
+    await task
+    store.close()
 
 
 async def test_intent_dispatched_to_legacy(server, fake_sock):

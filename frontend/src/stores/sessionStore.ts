@@ -12,6 +12,10 @@ import type { SavedListItem } from '../types/protocol';
 export interface SessionOpener {
   id?: string;
   ref?: string;
+  /** 接続先ホスト/IP(A-32, 再アタッチ用)。 */
+  host?: string;
+  /** 接続先ポート(A-32, 再アタッチ用)。 */
+  port?: number;
 }
 
 /** 開いている session(キャラタブ)の情報。 */
@@ -19,10 +23,14 @@ export interface SessionInfo {
   session: string;
   /** タブ表示用ラベル。 */
   label: string;
-  /** 再接続時の再 open に使う識別子。 */
+  /** 再接続時の再 open に使う識別子(host/port含む)。 */
   opener: SessionOpener;
   /** 管理者セッションか(管理UI出し分け)。 */
   isAdmin?: boolean;
+  /** 接続先ホスト/IP(A-32, タブ表示等任意)。 */
+  host?: string;
+  /** 接続先ポート(A-32, タブ表示等任意)。 */
+  port?: number;
 }
 
 interface SessionStoreState {

@@ -50,7 +50,7 @@ beforeEach(() => {
 });
 
 describe('Login (F3, ID-only)', () => {
-  it('PHI ID 入力→establishSession→openSession(id)→activeTab', async () => {
+  it('PHI ID + host + port 入力→establishSession→openSession(id,host,port)→activeTab', async () => {
     const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false }));
     const openSession = vi.fn(async () => 's1');
     const ctrl = makeController({ establishSession, openSession });
@@ -60,11 +60,44 @@ describe('Login (F3, ID-only)', () => {
     expect(screen.queryByText('パスワード')).toBeNull();
 
     fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
+    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
+    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '30000' } });
     fireEvent.click(screen.getByText('ログイン'));
 
     await waitFor(() => expect(establishSession).toHaveBeenCalledWith('phi-1', { remember: false }));
-    await waitFor(() => expect(openSession).toHaveBeenCalledWith({ id: 'phi-1' }));
+    await waitFor(() =>
+      expect(openSession).toHaveBeenCalledWith({
+        id: 'phi-1',
+        host: '10.0.0.5',
+        port: 30000,
+        remember: false,
+      }),
+    );
     expect(useUiStore.getState().activeTab).toBe('s1');
+  });
+
+  it('host 未入力ではログイン不可(エラー表示, openSession未呼)', async () => {
+    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false }));
+    const openSession = vi.fn(async () => 's1');
+    const ctrl = makeController({ establishSession, openSession });
+    renderWith(ctrl, <Login />);
+    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
+    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '30000' } });
+    fireEvent.click(screen.getByText('ログイン'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('host');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('port 範囲外(65536)では送信不可(エラー表示, openSession未呼)', async () => {
+    const openSession = vi.fn(async () => 's1');
+    const ctrl = makeController({ openSession });
+    renderWith(ctrl, <Login />);
+    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
+    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
+    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '65536' } });
+    fireEvent.click(screen.getByText('ログイン'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('ポート');
+    expect(openSession).not.toHaveBeenCalled();
   });
 
   it('保存する にチェック→establishSession に remember:true', async () => {
@@ -72,6 +105,7 @@ describe('Login (F3, ID-only)', () => {
     const ctrl = makeController({ establishSession });
     renderWith(ctrl, <Login />);
     fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
+    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
     fireEvent.click(screen.getByLabelText('このIDを保存する'));
     fireEvent.click(screen.getByText('ログイン'));
     await waitFor(() =>
@@ -79,17 +113,26 @@ describe('Login (F3, ID-only)', () => {
     );
   });
 
-  it('保存済みラベルから選択→openSession(ref)', async () => {
+  it('保存済みラベルから選択→host/port初期化→openSession(ref,host,port)', async () => {
     const openSession = vi.fn(async () => 's9');
     const fetchSavedList = vi.fn(async () => {
-      useSessionStore.getState().setSaved([{ ref: 'r1', label: 'Hero' }]);
-      return [{ ref: 'r1', label: 'Hero' }];
+      const items = [{ ref: 'r1', label: 'Hero', host: '192.168.0.1', port: 21000 }];
+      useSessionStore.getState().setSaved(items);
+      return items;
     });
     const ctrl = makeController({ openSession, fetchSavedList });
     renderWith(ctrl, <Login />);
     const savedBtn = await screen.findByText('Hero');
     fireEvent.click(savedBtn);
-    await waitFor(() => expect(openSession).toHaveBeenCalledWith({ ref: 'r1' }, 'Hero'));
+    await waitFor(() =>
+      expect(openSession).toHaveBeenCalledWith(
+        { ref: 'r1', host: '192.168.0.1', port: 21000 },
+        'Hero',
+      ),
+    );
+    // 入力欄が保存値で初期化される
+    expect((screen.getByLabelText('サーバIP') as HTMLInputElement).value).toBe('192.168.0.1');
+    expect((screen.getByLabelText('ポート') as HTMLInputElement).value).toBe('21000');
     expect(useUiStore.getState().activeTab).toBe('s9');
   });
 
@@ -99,6 +142,7 @@ describe('Login (F3, ID-only)', () => {
     });
     renderWith(makeController({ establishSession }), <Login />);
     fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-x' } });
+    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
     fireEvent.click(screen.getByText('ログイン'));
     expect(await screen.findByRole('alert')).toHaveTextContent('認証失敗');
   });

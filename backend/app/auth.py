@@ -135,14 +135,17 @@ class AuthService:
     def remember_id(
         self, plain_id: str, *, label: str | None = None,
         is_admin: bool | None = None,
+        host: str | None = None, port: int | None = None,
     ) -> str:
         """平文IDを saved_ids へ暗号 upsert し id_key を返す。
 
-        既存の is_admin/label は引数 None なら維持。
+        既存の is_admin/label/host/port は引数 None なら維持(A-32)。
         """
         key = id_key_of(plain_id)
         enc = self.cipher.encrypt(plain_id)
-        self.store.upsert_saved_id(key, enc, label=label, is_admin=is_admin)
+        self.store.upsert_saved_id(
+            key, enc, label=label, is_admin=is_admin, host=host, port=port
+        )
         return key
 
     # ---- セッション確立(ID のみ) ----

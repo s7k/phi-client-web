@@ -58,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
     p_add.add_argument(
         "--admin", action="store_true", help="同時に管理者化する"
     )
+    p_add.add_argument(
+        "--host", default=None, help="接続先ホスト(A-32, 省略時サーバ既定)"
+    )
+    p_add.add_argument(
+        "--port", type=int, default=None, help="接続先ポート(A-32, 省略時サーバ既定)"
+    )
 
     p_grant = sub.add_parser("grant", help="保存IDを管理者化(無ければ要 add)")
     p_grant.add_argument("phi_id")
@@ -97,6 +103,7 @@ def _run(store: Store, args: argparse.Namespace) -> int:
         store.upsert_saved_id(
             key, enc, label=args.label,
             is_admin=True if args.admin else None,
+            host=args.host, port=args.port,
         )
         suffix = " (admin)" if args.admin else ""
         print(f"add: 保存ID登録 id_key={key[:16]}…{suffix}")

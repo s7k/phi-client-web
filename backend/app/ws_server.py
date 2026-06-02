@@ -219,7 +219,10 @@ class WsConnection:
     # ------------------------------------------------------------------
 
     async def _handle_saved_list(self, msg: dict) -> None:
-        """保存ID一覧を返す。items は ref(id_key)/label/isAdmin のみ(生ID非公開)。"""
+        """保存ID一覧を返す。items は ref(id_key)/label/isAdmin/host/port(生ID非公開)。
+
+        host/port は利用者自身の保存した接続先(A-32, FE ピッカー初期値)。
+        """
         items: list[dict] = []
         if self._auth is not None:
             for r in self._auth.store.list_saved_ids():
@@ -227,6 +230,9 @@ class WsConnection:
                     "ref": r["id_key"],
                     "label": r["label"],
                     "isAdmin": bool(r["is_admin"]),
+                    # A-32: FE 接続先ピッカー初期値用(利用者自身の保存設定)。
+                    "host": r["host"],
+                    "port": r["port"],
                 })
         await self._ws.send_json({
             "type": "saved", "reqId": msg.get("reqId"), "items": items,
@@ -254,14 +260,17 @@ class WsConnection:
         IDはログ/エラーに出さない(資格情報)。
         """
         try:
-            open_id, reattach_key, is_admin = self._resolve_open_target(msg)
+            open_id, reattach_key, is_admin, host, port = (
+                self._resolve_open_target(msg)
+            )
         except ValueError as exc:
             await self._error(msg, "BAD_REQUEST", str(exc))
             return
 
         try:
             sid = await self._mgr.open_session(
-                open_id, on_event=self._enqueue, key=reattach_key
+                open_id, on_event=self._enqueue, key=reattach_key,
+                host=host, port=port,
             )
         except OSError as exc:
             await self._ws.send_json({
@@ -279,24 +288,37 @@ class WsConnection:
             "ok": True, "session": sid, "isAdmin": is_admin,
         })
 
-    def _resolve_open_target(self, msg: dict) -> tuple[str, str, bool]:
-        """msg から (#open 用平文ID, 再アタッチキー=id_key, isAdmin) を解決。
+    def _resolve_open_target(
+        self, msg: dict
+    ) -> tuple[str, str, bool, str | None, int | None]:
+        """msg から (#open 用平文ID, 再アタッチキー=id_key, isAdmin, host, port) を解決。
 
         id 優先。無ければ ref(保存ID復号)。auth 未設定時は id をそのまま使う。
         不正/不在は ValueError(エラー文言に生ID/平文は載せない)。
+
+        接続先(A-32)の解決順:
+          (a) msg の host/port を明示指定 →
+          (b) ref の場合は saved_ids 保存値 →
+          (c) host/port が None なら open_session 側でサーバ既定へフォールバック。
+        port は int 検証(不正→ValueError=BAD_REQUEST)。
         """
         from app.store.db import id_key_of
 
         raw_id = msg.get("id")
         ref = msg.get("ref")
+        host = self._coerce_host(msg.get("host"))
+        port = self._coerce_port(msg.get("port"))
 
         if raw_id:
             plain = str(raw_id)
             key = id_key_of(plain)
             if self._auth is not None and msg.get("remember"):
-                self._auth.remember_id(plain, label=msg.get("label"))
+                # remember 時は接続先も保存(明示指定があれば)。
+                self._auth.remember_id(
+                    plain, label=msg.get("label"), host=host, port=port
+                )
             is_admin = self._auth.is_admin(key) if self._auth is not None else False
-            return plain, key, is_admin
+            return plain, key, is_admin, host, port
 
         if ref:
             if self._auth is None:
@@ -305,9 +327,42 @@ class WsConnection:
             if row is None:
                 raise ValueError("保存IDが見つからない")
             plain = self._auth.cipher.decrypt(row["id_enc"])
-            return plain, str(ref), bool(row["is_admin"])
+            # host/port 明示が無ければ保存値を採用(A-32 (b))。
+            if host is None:
+                host = row["host"]
+            if port is None:
+                port = row["port"]
+            # ref open 時に明示 host/port があれば保存値を更新。
+            if msg.get("host") is not None or msg.get("port") is not None:
+                self._auth.store.upsert_saved_id(
+                    str(ref), row["id_enc"],
+                    host=self._coerce_host(msg.get("host")),
+                    port=self._coerce_port(msg.get("port")),
+                )
+            return plain, str(ref), bool(row["is_admin"]), host, port
 
         raise ValueError("id または ref が必要")
+
+    @staticmethod
+    def _coerce_host(value) -> str | None:
+        """host 入力を正規化。None/空文字 → None(既定/保存値へフォールバック)。"""
+        if value is None:
+            return None
+        s = str(value).strip()
+        return s or None
+
+    @staticmethod
+    def _coerce_port(value) -> int | None:
+        """port 入力を int 検証。None → None。不正(非数値/範囲外)は ValueError。"""
+        if value is None or value == "":
+            return None
+        try:
+            port = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("port が不正(整数で指定)") from exc
+        if not (1 <= port <= 65535):
+            raise ValueError("port が範囲外(1-65535)")
+        return port
 
     async def _handle_session_close(self, msg: dict) -> None:
         sid = self._resolve_session(msg)

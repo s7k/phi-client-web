@@ -326,7 +326,14 @@ export class WsController {
    * @param label タブ表示用ラベル(省略時は応答 label or 既定)。
    */
   async openSession(
-    opener: { id?: string; ref?: string },
+    opener: {
+      id?: string;
+      ref?: string;
+      host?: string;
+      port?: number;
+      remember?: boolean;
+      label?: string;
+    },
     label?: string,
   ): Promise<string> {
     if (!opener.id && !opener.ref) {
@@ -337,6 +344,10 @@ export class WsController {
     };
     if (opener.id !== undefined) req.id = opener.id;
     if (opener.ref !== undefined) req.ref = opener.ref;
+    if (opener.host !== undefined) req.host = opener.host;
+    if (opener.port !== undefined) req.port = opener.port;
+    if (opener.remember !== undefined) req.remember = opener.remember;
+    if (opener.label !== undefined) req.label = opener.label;
     const res = (await this.client.request<SessionOpenRequest>(
       req,
     )) as ServerMessage;
@@ -351,9 +362,11 @@ export class WsController {
         : undefined;
     useSessionStore.getState().addSession({
       session,
-      label: label ?? opener.ref ?? opener.id ?? session,
+      label: label ?? opener.label ?? opener.ref ?? opener.id ?? session,
       opener,
       isAdmin,
+      host: opener.host,
+      port: opener.port,
     });
     useSessionStore.getState().setActive(session);
     return session;

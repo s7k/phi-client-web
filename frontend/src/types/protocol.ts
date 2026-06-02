@@ -90,6 +90,14 @@ export interface SessionOpenRequest extends Envelope {
   id?: string;
   /** 保存済みID参照(SavedListItem.ref)。生IDを露出しない。 */
   ref?: string;
+  /** 接続先サーバIP/ホスト(A-32)。省略時はBE既定。 */
+  host?: string;
+  /** 接続先ポート(A-32, 1-65535)。省略時はBE既定。 */
+  port?: number;
+  /** このIDを保存する(remember)。新規入力時のみ意味あり。 */
+  remember?: boolean;
+  /** 保存時のラベル(任意)。 */
+  label?: string;
 }
 
 export interface SessionCloseRequest extends Envelope {
@@ -318,6 +326,10 @@ export interface SavedListItem {
   label: string;
   /** 管理者IDか。 */
   isAdmin?: boolean;
+  /** 保存済み接続先ホスト/IP(A-32)。ピッカー選択時の初期値。 */
+  host?: string;
+  /** 保存済み接続先ポート(A-32)。ピッカー選択時の初期値。 */
+  port?: number;
 }
 
 /** 保存済みID一覧応答([07]§6.1, ID-only)。reqId相関。 */

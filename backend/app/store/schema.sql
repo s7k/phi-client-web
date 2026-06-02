@@ -19,9 +19,13 @@ CREATE TABLE IF NOT EXISTS saved_ids (
   id_enc       BLOB NOT NULL,        -- 暗号化済み平文ID(AEAD)
   label        TEXT,                 -- 表示用ラベル(任意, 生ID非公開のUI用)
   is_admin     INTEGER NOT NULL DEFAULT 0,
+  host         TEXT,                 -- 接続先ホスト(A-32, 省略時サーバ既定)
+  port         INTEGER,              -- 接続先ポート(A-32, 省略時サーバ既定)
   created_at   TEXT NOT NULL,
   last_used_at TEXT
 );
+-- 既存DB向け列追加(冪等)。既存環境の saved_ids へ host/port を後付け。
+-- ALTER は IF NOT EXISTS 非対応のため、存在時はエラーになる→ migrate 側で吸収。
 
 -- characters: レガシー登録(B15 register)/世界移動(B13)用の内部キャラ表。
 -- ID-only 再設計で Web 認証からは切り離したが、登録代行で生成した内部 charId と

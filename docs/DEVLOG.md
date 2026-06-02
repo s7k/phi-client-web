@@ -175,6 +175,14 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - 実装: BE(332 tests)/FE(290 tests)。docker実機で `POST /api/auth/session` 200+cookie確認。
 - 残: `characters`(register/world-transfer)は別サブシステムとして存続(将来 saved_ids統合検討)。login_throttleはパス廃止で不要化(IPレート将来用に残置)。
 
+## 6.8 接続先IP/ポート指定(A-32)
+
+- ログインがIDのみで host/port を入れられなかった件を修正。
+- **A-32 [確定] session.open に host/port**: `session.open {id?|ref?, host?, port?, remember?, label?}`。解決順: 明示→ref保存値→config既定(PHI_HOST/PORT)。port int検証(1-65535)。
+- `saved_ids` に host/port 列追加(冪等ALTER)。`saved.list` items に host/port(ピッカー初期値)。`admin_cli add --host --port`。
+- FE Login に **サーバIP/ポート入力欄**追加。新規=id+host+port、保存選択=ref+保存host/port初期化。
+- BE 341 / FE 292 tests緑。実接続検証はユーザー(§0)。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

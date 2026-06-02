@@ -148,16 +148,26 @@ describe('WsController.openSession (id|ref)', () => {
     const { controller } = setup();
     await Promise.resolve();
     const ws = MockWebSocket.last!;
-    const p = controller.openSession({ id: 'phi-1' }, 'Hero');
+    const p = controller.openSession(
+      { id: 'phi-1', host: '10.0.0.5', port: 30000, remember: true },
+      'Hero',
+    );
     const req = ws.lastSent();
     expect(req.type).toBe('session.open');
     expect(req.id).toBe('phi-1');
+    expect(req.host).toBe('10.0.0.5');
+    expect(req.port).toBe(30000);
+    expect(req.remember).toBe(true);
     ws.emit({ type: 'session.open', session: 's1', reqId: req.reqId as string, ok: true, isAdmin: true } as ServerMessage);
     const session = await p;
     expect(session).toBe('s1');
     expect(useSessionStore.getState().active).toBe('s1');
     expect(useSessionStore.getState().sessions['s1'].label).toBe('Hero');
     expect(useSessionStore.getState().sessions['s1'].opener.id).toBe('phi-1');
+    expect(useSessionStore.getState().sessions['s1'].opener.host).toBe('10.0.0.5');
+    expect(useSessionStore.getState().sessions['s1'].opener.port).toBe(30000);
+    expect(useSessionStore.getState().sessions['s1'].host).toBe('10.0.0.5');
+    expect(useSessionStore.getState().sessions['s1'].port).toBe(30000);
     expect(useSessionStore.getState().sessions['s1'].isAdmin).toBe(true);
   });
 
