@@ -48,6 +48,8 @@ function Game({
   // F8 キーハンドラ配線(アクティブ session 対象)
   useKeyHandler(controller, session);
   const mainRef = useRef<HTMLElement>(null);
+  // モバイルでは普段使わない操作(設定/SS/ログアウト)をハンバーガーに集約。
+  const [menuOpen, setMenuOpen] = useState(false);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const eagleEye =
     useSettingsStore((s) => (s.byScope['display'] as DisplaySettings | undefined)?.eagleEye) ??
@@ -64,12 +66,22 @@ function Game({
       {/* 上部バー: 世界/エリア + 操作ボタン */}
       <header className="game__topbar">
         <WorldArea session={session} />
-        <div className="game__actions">
-          <button type="button" onClick={() => setSettingsOpen(true)}>設定</button>
-          <button type="button" onClick={takeScreenshot}>SS</button>
+        {/* モバイル用ハンバーガー(デスクトップはCSSで非表示) */}
+        <button
+          type="button"
+          className="game__hamburger"
+          aria-label="メニュー"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          ☰
+        </button>
+        <div className={`game__actions${menuOpen ? ' game__actions--open' : ''}`}>
+          <button type="button" onClick={() => { setSettingsOpen(true); setMenuOpen(false); }}>設定</button>
+          <button type="button" onClick={() => { takeScreenshot(); setMenuOpen(false); }}>SS</button>
           <button
             type="button"
-            onClick={() => void controller.logout().then(onLogout)}
+            onClick={() => { setMenuOpen(false); void controller.logout().then(onLogout); }}
           >
             ログアウト
           </button>

@@ -92,6 +92,42 @@ body {
 }
 .game__actions button:hover { background: var(--surface-2); }
 
+/* ハンバーガーはデスクトップでは非表示(アクションをインライン表示) */
+.game__hamburger {
+  display: none;
+  margin-left: auto;
+  padding: 0.3rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* モバイル: 設定/SS/ログアウトをハンバーガー内のドロップダウンに集約 */
+@media (max-width: 820px) {
+  .game__hamburger { display: inline-block; }
+  .game__actions {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0.5rem;
+    z-index: 20;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.4rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  }
+  .game__actions--open { display: flex; }
+  .game__actions button { width: 100%; text-align: left; }
+  .game__topbar { position: relative; }
+}
+
 /* 本体: デスクトップ grid(左 map+status / 右 chat) */
 .game__body {
   flex: 1 1 auto;
