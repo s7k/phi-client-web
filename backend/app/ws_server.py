@@ -4,16 +4,20 @@
 ------------------------------------------------------------------
 - WS 接続ごとに 1 つの `WsConnection` を生成し、エンベロープ([07]§2)を解析。
 - `hello`(§4) を接続直後に送出。
-- C→S: `auth`(stub)/`session.open`(A-10 応答)/その他 intent を SessionManager へ。
+- C→S: `saved.list`/`session.open`(A-10 応答)/その他 intent を SessionManager へ。
 - S→C: SessionManager から来たイベントを outbound キュー経由で WS へ送出
   (受信ループと送信ループを分離し、イベント順序を保つ)。
 - session 省略時はアクティブ(直近 open)セッションへ解決(A-03)。
 
-認証([07]§4.1, [12]§1, B12):
-  - WS `auth` は **Web セッション(cookie の sessionId)検証**(`AuthService.validate`)、
-    または id+password 直接検証([12]§1.3 のフォールバック)。認証成功で
-    当該アカウントのキャラ一覧(store)を返す。
-  - REST `/api/auth/login` / `/api/auth/logout` も最小実装(httpOnly cookie)。
+認証(ID-only 再設計, [07]§4.1, [12]§1, B12):
+  - Web パスワード廃止。WS `auth{id,password}` は撤去。
+  - **WS 接続時に cookie `phi_session` token を検証**(`AuthService.validate`)。
+    無効/欠落は未認証(saved.list/settings 等は使えない)。
+  - `saved.list` → 保存ID一覧(生ID非公開, ref=id_key/label/isAdmin)。
+  - `session.open {id?|ref?}`: id=入力 PHI ID / ref=保存 id_key。BE が平文 ID を
+    得て(入力はそのまま/ref は復号)接続+`#open <平文ID>`。
+  - REST `POST /api/auth/session {id}` でセッション確立(httpOnly cookie)。
+    `/api/auth/logout` 据置。
 """
 from __future__ import annotations
 
@@ -75,12 +79,15 @@ class WsConnection:
         self._store = store if store is not None else getattr(auth, "store", None)
         self._rl = rate_limiter   # RateLimiter | None(command.raw/chat)
         self._cl = conn_limiter   # ConcurrencyLimiter | None(WS同時接続)
-        self._lt = login_throttle  # LoginThrottle | None(CR-11 総当たり抑止)
+        self._lt = login_throttle  # LoginThrottle | None(将来用, 未配線)
         self._outbound: asyncio.Queue[dict] = asyncio.Queue()
         # この接続が開いた session 群(切断時に detach)。
         self._sessions: list[str] = []
-        # 認証済みアカウント(auth 成功後にセット)。
-        self._account_id: str | None = None
+        # 認証済み所有者キー(cookie token 検証で設定。生IDは持たない)。
+        self._id_key: str | None = None
+        # 検証済みセッション identity(id_enc 保持。session.open の入力IDが
+        # 無い場合に保存ID復号で #open する用)。
+        self._identity = None  # SessionIdentity | None
         # 同時接続カウンタ確保済みか(release 二重防止)。
         self._conn_acquired = False
 
@@ -90,10 +97,18 @@ class WsConnection:
 
     async def run(self) -> None:
         await self._ws.accept()
+        # 接続時 cookie token を検証([12]§1.3, ID-only)。無ければ未認証のまま。
+        self._authenticate_from_cookie()
         await self._ws.send_json({
             "type": "hello",
             "protocolVersion": PROTOCOL_VERSION,
             "serverTime": int(time.time() * 1000),
+            "authenticated": self._id_key is not None,
+            "isAdmin": (
+                self._auth.is_admin(self._id_key)
+                if (self._auth is not None and self._id_key is not None)
+                else False
+            ),
         })
         sender = asyncio.create_task(self._sender_loop())
         try:
@@ -102,9 +117,28 @@ class WsConnection:
             sender.cancel()
             for sid in self._sessions:
                 self._mgr.detach(sid)
-            if self._conn_acquired and self._cl is not None and self._account_id:
-                self._cl.release(self._account_id)
+            if self._conn_acquired and self._cl is not None and self._id_key:
+                self._cl.release(self._id_key)
                 self._conn_acquired = False
+
+    def _authenticate_from_cookie(self) -> None:
+        """WS 接続の cookie `phi_session` token を検証し id_key/identity を設定。
+
+        auth 未設定(テスト/開発)時は未認証のまま通す。同時接続上限も確保。
+        """
+        if self._auth is None:
+            return
+        cookies = getattr(self._ws, "cookies", None) or {}
+        token = cookies.get(COOKIE_NAME)
+        if not token:
+            return
+        ident = self._auth.validate(token)
+        if ident is None:
+            return
+        if not self._acquire_conn(ident.id_key):
+            return
+        self._id_key = ident.id_key
+        self._identity = ident
 
     # ------------------------------------------------------------------
     # 送信ループ(SessionManager → WS)
@@ -155,8 +189,8 @@ class WsConnection:
 
     async def _dispatch_inner(self, msg: dict) -> None:
         t = msg.get("type")
-        if t == "auth":
-            await self._handle_auth(msg)
+        if t == "saved.list":
+            await self._handle_saved_list(msg)
             return
         if t == "session.open":
             await self._handle_session_open(msg)
@@ -181,113 +215,54 @@ class WsConnection:
         await self._handle_intent(msg)
 
     # ------------------------------------------------------------------
-    # auth(B12 本実装)
+    # saved.list(保存ID一覧, 生ID非公開 [12]§1)
     # ------------------------------------------------------------------
 
-    async def _handle_auth(self, msg: dict) -> None:
-        """WS auth: Web セッション(sessionId)検証 or id+password 検証。
-
-        - auth サービス未設定時は従来 stub 互換(任意 id を通す)。
-        - sessionId 提示時: `AuthService.validate` で account 解決。
-        - id+password 提示時: `AuthService.authenticate` で検証。
-        成功時、store からキャラ一覧を返す([12]§1.2)。
-        """
-        if self._auth is None:
-            # 後方互換 stub(テスト/開発用)。
-            acc = msg.get("id", "")
-            if not self._acquire_conn(acc):
-                await self._auth_rate_limited(msg)
-                return
-            self._account_id = acc
-            await self._send_auth_ok(msg, acc, stub=True)
-            return
-
-        account_id = None
-        sid = msg.get("sessionId")
-        if sid:
-            account_id = self._auth.validate(sid)
-        elif msg.get("id") is not None and msg.get("password") is not None:
-            # CR-11: WS auth(id+password)も account+IP で失敗バックオフ。
-            cand = str(msg["id"])
-            ip = self._client_ip()
-            if self._lt is not None and not self._lt.check(cand, ip):
-                await self._ws.send_json({
-                    "type": "auth", "reqId": msg.get("reqId"), "ok": False,
-                    "error": {"code": "RATE_LIMITED", "message": "ログイン試行が多すぎます"},
+    async def _handle_saved_list(self, msg: dict) -> None:
+        """保存ID一覧を返す。items は ref(id_key)/label/isAdmin のみ(生ID非公開)。"""
+        items: list[dict] = []
+        if self._auth is not None:
+            for r in self._auth.store.list_saved_ids():
+                items.append({
+                    "ref": r["id_key"],
+                    "label": r["label"],
+                    "isAdmin": bool(r["is_admin"]),
                 })
-                return
-            if self._auth.authenticate(cand, msg["password"]):
-                account_id = cand
-                if self._lt is not None:
-                    self._lt.reset_key(cand, ip)
-            else:
-                if self._lt is not None:
-                    self._lt.record_failure(cand, ip)
+        await self._ws.send_json({
+            "type": "saved", "reqId": msg.get("reqId"), "items": items,
+        })
 
-        if account_id is None:
-            await self._ws.send_json({
-                "type": "auth", "reqId": msg.get("reqId"), "ok": False,
-                "error": {"code": "AUTH_FAILED", "message": "認証失敗"},
-            })
-            return
-
-        if not self._acquire_conn(account_id):
-            await self._auth_rate_limited(msg)
-            return
-        self._account_id = account_id
-        await self._send_auth_ok(msg, account_id, stub=False)
-
-    def _client_ip(self) -> str:
-        """WS 接続元 IP(throttle キー用)。取得不能は "unknown"。"""
-        client = getattr(self._ws, "client", None)
-        host = getattr(client, "host", None)
-        return host or "unknown"
-
-    def _acquire_conn(self, account_id: str) -> bool:
-        """WS同時接続数を確保(5/account, [12]§4)。確保済なら True 維持。"""
+    def _acquire_conn(self, key: str) -> bool:
+        """WS同時接続数を確保(5/identity, [12]§4)。確保済なら True 維持。"""
         if self._cl is None or self._conn_acquired:
             return True
-        if self._cl.acquire(account_id):
+        if self._cl.acquire(key):
             self._conn_acquired = True
             return True
         return False
 
-    async def _auth_rate_limited(self, msg: dict) -> None:
-        await self._ws.send_json({
-            "type": "auth", "reqId": msg.get("reqId"), "ok": False,
-            "error": {"code": "RATE_LIMITED", "message": "WS同時接続数上限(5/account)"},
-        })
-
-    async def _send_auth_ok(self, msg: dict, account_id: str, *, stub: bool) -> None:
-        if stub or self._auth is None:
-            characters = [{"charId": account_id, "name": account_id, "lastServer": None}]
-            is_admin = False
-        else:
-            characters = [
-                {
-                    "charId": r["char_id"],
-                    "name": r["display_name"] or r["char_id"],
-                    "lastServer": r["last_server"],
-                }
-                for r in self._auth.store.list_characters(account_id)
-            ]
-            is_admin = self._auth.is_admin(account_id)
-        await self._ws.send_json({
-            "type": "auth", "reqId": msg.get("reqId"),
-            "ok": True, "characters": characters, "isAdmin": is_admin,
-        })
-
     # ------------------------------------------------------------------
-    # session.open(A-10)
+    # session.open(A-10, ID-only)
     # ------------------------------------------------------------------
 
     async def _handle_session_open(self, msg: dict) -> None:
-        char_id = msg.get("charId")
-        if not char_id:
-            await self._error(msg, "BAD_REQUEST", "charId required")
-            return
+        """`session.open {id?|ref?}`。
+
+        - id  : 入力 PHI ID(平文)。任意で saved_ids へ remember(upsert)。
+        - ref : 保存 id_key。auth で復号し平文 ID を得る。
+        BE は平文 ID で接続+`#open <平文ID>`。応答に isAdmin を含める。
+        IDはログ/エラーに出さない(資格情報)。
+        """
         try:
-            sid = await self._mgr.open_session(char_id, on_event=self._enqueue)
+            open_id, reattach_key, is_admin = self._resolve_open_target(msg)
+        except ValueError as exc:
+            await self._error(msg, "BAD_REQUEST", str(exc))
+            return
+
+        try:
+            sid = await self._mgr.open_session(
+                open_id, on_event=self._enqueue, key=reattach_key
+            )
         except OSError as exc:
             await self._ws.send_json({
                 "type": "session.open", "reqId": msg.get("reqId"),
@@ -301,8 +276,38 @@ class WsConnection:
         # open_session 内で on_event(=_enqueue)経由で続く。
         await self._ws.send_json({
             "type": "session.open", "reqId": msg.get("reqId"),
-            "ok": True, "session": sid,
+            "ok": True, "session": sid, "isAdmin": is_admin,
         })
+
+    def _resolve_open_target(self, msg: dict) -> tuple[str, str, bool]:
+        """msg から (#open 用平文ID, 再アタッチキー=id_key, isAdmin) を解決。
+
+        id 優先。無ければ ref(保存ID復号)。auth 未設定時は id をそのまま使う。
+        不正/不在は ValueError(エラー文言に生ID/平文は載せない)。
+        """
+        from app.store.db import id_key_of
+
+        raw_id = msg.get("id")
+        ref = msg.get("ref")
+
+        if raw_id:
+            plain = str(raw_id)
+            key = id_key_of(plain)
+            if self._auth is not None and msg.get("remember"):
+                self._auth.remember_id(plain, label=msg.get("label"))
+            is_admin = self._auth.is_admin(key) if self._auth is not None else False
+            return plain, key, is_admin
+
+        if ref:
+            if self._auth is None:
+                raise ValueError("ref 未対応(auth 未設定)")
+            row = self._auth.store.get_saved_id(str(ref))
+            if row is None:
+                raise ValueError("保存IDが見つからない")
+            plain = self._auth.cipher.decrypt(row["id_enc"])
+            return plain, str(ref), bool(row["is_admin"])
+
+        raise ValueError("id または ref が必要")
 
     async def _handle_session_close(self, msg: dict) -> None:
         sid = self._resolve_session(msg)
@@ -326,13 +331,13 @@ class WsConnection:
         if scope not in _SETTINGS_SCOPES:
             await self._error(msg, "BAD_REQUEST", f"invalid scope: {scope!r}")
             return
-        if self._store is None or self._account_id is None:
+        if self._store is None or self._id_key is None:
             # 未認証 or ストア未設定。get は空を返し、set は失敗扱い。
-            await self._error(msg, "SESSION_NOT_FOUND", "no authenticated account")
+            await self._error(msg, "SESSION_NOT_FOUND", "未認証(設定には要セッション)")
             return
 
         if t == "settings.get":
-            raw = self._store.get_account_setting(self._account_id, scope)
+            raw = self._store.get_account_setting(self._id_key, scope)
             value = json.loads(raw) if raw is not None else None
             await self._ws.send_json({
                 "type": "settings", "reqId": msg.get("reqId"),
@@ -343,7 +348,7 @@ class WsConnection:
         # settings.set: value を JSON 文字列で永続化し ok 応答。
         value = msg.get("value")
         self._store.set_account_setting(
-            self._account_id, scope, json.dumps(value)
+            self._id_key, scope, json.dumps(value)
         )
         await self._ws.send_json({
             "type": "settings", "reqId": msg.get("reqId"),
@@ -432,17 +437,17 @@ COOKIE_NAME = "phi_session"
 
 
 def make_require_account(auth, cookie_name: str = COOKIE_NAME):
-    """`require_account` 依存を生成([12]§1.3)。
+    """`require_account` 依存を生成([12]§1.3, ID-only)。
 
-    cookie `phi_session` の sessionId を `AuthService.validate` で検証し
-    account_id を返す。無効/欠落は 401。REST 保護エンドポイントに注入。
+    cookie `phi_session` の token を `AuthService.validate` で検証し id_key を
+    返す。無効/欠落は 401。REST 保護エンドポイントに注入。
     """
     async def _require_account(request: Request) -> str:
-        sid = request.cookies.get(cookie_name)
-        account_id = auth.validate(sid) if sid else None
-        if account_id is None:
+        token = request.cookies.get(cookie_name)
+        id_key = auth.validate_id_key(token) if token else None
+        if id_key is None:
             raise HTTPException(401, "未認証")
-        return account_id
+        return id_key
 
     return _require_account
 
@@ -450,18 +455,18 @@ def make_require_account(auth, cookie_name: str = COOKIE_NAME):
 def make_require_admin(auth, cookie_name: str = COOKIE_NAME):
     """`require_admin` 依存を生成([08]§10, 管理者限定の変更系)。
 
-    `require_account` と同経路でセッション検証し account を解決後、
-    `accounts.is_admin` を確認。未認証は 401、非管理者は 403。
+    `require_account` と同経路で token 検証し id_key を解決後、
+    `saved_ids.is_admin` を確認。未認証は 401、非管理者は 403。
     キャラグラの変更系(upload/delete/index 編集/import)に注入。
     """
     async def _require_admin(request: Request) -> str:
-        sid = request.cookies.get(cookie_name)
-        account_id = auth.validate(sid) if sid else None
-        if account_id is None:
+        token = request.cookies.get(cookie_name)
+        id_key = auth.validate_id_key(token) if token else None
+        if id_key is None:
             raise HTTPException(401, "未認証")
-        if not auth.is_admin(account_id):
+        if not auth.is_admin(id_key):
             raise HTTPException(403, "管理者権限が必要")
-        return account_id
+        return id_key
 
     return _require_admin
 
@@ -482,7 +487,7 @@ def create_app(
 
     マウント:
     - `/ws`                          : WebSocket([07])。
-    - `/api/auth/login` `/logout`    : Web 認証([12]§1.3)。cookie `phi_session`。
+    - `/api/auth/session` `/logout`  : ID-only 認証([12]§1.3)。cookie `phi_session`。
     - `/api/chara/*`                 : キャラグラ([08], B10)。変更系は管理者限定 + レート。
     - `/api/register/*`              : 新規登録([12]§2, B15)。register は要認証 + レート/IP。
 
@@ -553,35 +558,41 @@ def create_app(
         return await call_next(request)
 
     # ------------------------------------------------------------------
-    # 認証([12]§1.3)
+    # 認証(ID-only セッション確立 [12]§1.3)
     # ------------------------------------------------------------------
-    @app.post("/api/auth/login")
-    async def login(request: Request, response: Response):
-        from app.rest.register import client_ip
+    @app.post("/api/auth/session")
+    async def establish_session(request: Request, response: Response):
+        """入力 PHI ID でセッション確立し cookie `phi_session` を発行。
+
+        body `{id, remember?, label?}`。ID=資格情報のためログ/エラーへ出さない。
+        レスポンス `{ok:true, isAdmin:bool, label?}`。
+        """
+        from app.store.db import id_key_of
 
         body = await request.json()
-        account = str(body.get("id", ""))
-        ip = client_ip(request)
-        # CR-11: account+IP の失敗バックオフ。残トークン無しは 429。
-        if not login_throttle.check(account, ip):
-            return Response(status_code=429, content="ログイン試行が多すぎます")
-        sid = auth.login(account, body.get("password", ""))
-        if sid is None:
-            login_throttle.record_failure(account, ip)
-            return Response(status_code=401)
-        # 成功で失敗カウントをリセット。
-        login_throttle.reset_key(account, ip)
-        response.set_cookie(
-            COOKIE_NAME, sid, httponly=True, secure=True, samesite="strict"
+        plain_id = str(body.get("id", "") or "")
+        if not plain_id:
+            return Response(status_code=400, content="id 必須")
+        token = auth.establish_session(
+            plain_id,
+            remember=bool(body.get("remember")),
+            label=body.get("label"),
         )
-        # FE が管理UIを出し分けできるよう is_admin を露出([08]§10)。
-        return {"ok": True, "isAdmin": auth.is_admin(account)}
+        response.set_cookie(
+            COOKIE_NAME, token, httponly=True, secure=True, samesite="strict"
+        )
+        key = id_key_of(plain_id)
+        saved = auth.store.get_saved_id(key)
+        out = {"ok": True, "isAdmin": auth.is_admin(key)}
+        if saved is not None and saved["label"]:
+            out["label"] = saved["label"]
+        return out
 
     @app.post("/api/auth/logout")
     async def logout(request: Request, response: Response):
-        sid = request.cookies.get(COOKIE_NAME)
-        if sid:
-            auth.logout(sid)
+        token = request.cookies.get(COOKIE_NAME)
+        if token:
+            auth.logout(token)
         response.delete_cookie(COOKIE_NAME)
         return {"ok": True}
 

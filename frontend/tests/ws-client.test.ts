@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WsClient } from '../src/ws/client';
-import type { AuthRequest, ServerMessage } from '../src/types/protocol';
+import type { SavedListRequest, ServerMessage } from '../src/types/protocol';
 
 /**
  * mock WebSocket。
@@ -118,20 +118,20 @@ describe('WsClient', () => {
     client.connect();
     MockWebSocket.last()._open();
 
-    const p = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const p = client.request<SavedListRequest>({ type: 'saved.list' });
     const sent = JSON.parse(MockWebSocket.last().sent[0]);
-    expect(sent.type).toBe('auth');
+    expect(sent.type).toBe('saved.list');
     expect(typeof sent.reqId).toBe('string');
 
     MockWebSocket.last()._emit({
-      type: 'auth',
+      type: 'saved.list',
       reqId: sent.reqId,
       ok: true,
-      characters: [{ charId: 'c1', name: 'X' }],
+      items: [{ ref: 'r1', label: 'X' }],
     } as ServerMessage);
 
     const res = await p;
-    expect(res.type).toBe('auth');
+    expect(res.type).toBe('saved.list');
     expect((res as { ok: boolean }).ok).toBe(true);
   });
 
@@ -276,7 +276,7 @@ describe('WsClient', () => {
     const client = makeClient({ requestTimeoutMs: 10_000 });
     client.connect();
     MockWebSocket.last()._open();
-    const p = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const p = client.request<SavedListRequest>({ type: 'saved.list' });
     // reject を捕捉(unhandled rejection 防止)
     const caught = p.catch((e) => e);
     vi.advanceTimersByTime(10_000);
@@ -289,7 +289,7 @@ describe('WsClient', () => {
     const client = makeClient();
     client.connect();
     MockWebSocket.last()._open();
-    const p1 = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const p1 = client.request<SavedListRequest>({ type: 'saved.list' });
     const c1 = p1.catch((e) => e);
     MockWebSocket.last().close();
     const err = await c1;
@@ -300,7 +300,7 @@ describe('WsClient', () => {
     const client = makeClient();
     client.connect();
     MockWebSocket.last()._open();
-    const p = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const p = client.request<SavedListRequest>({ type: 'saved.list' });
     const c = p.catch((e) => e);
     client.disconnect();
     const err = await c;
@@ -311,9 +311,9 @@ describe('WsClient', () => {
     const client = makeClient({ requestTimeoutMs: 10_000 });
     client.connect();
     MockWebSocket.last()._open();
-    const p = client.request<AuthRequest>({ type: 'auth', id: 'u', password: 'p' });
+    const p = client.request<SavedListRequest>({ type: 'saved.list' });
     const reqId = JSON.parse(MockWebSocket.last().sent[0]).reqId;
-    MockWebSocket.last()._emit({ type: 'auth', reqId, ok: true } as ServerMessage);
+    MockWebSocket.last()._emit({ type: 'saved.list', reqId, ok: true, items: [] } as ServerMessage);
     const res = await p;
     expect((res as { ok: boolean }).ok).toBe(true);
     // タイマが残っていれば reject されてしまうが、解決済みなので無害

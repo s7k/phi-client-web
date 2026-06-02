@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { WsClient } from '../src/ws/client';
 import { WsController, isSelfEcho, selfNameOf } from '../src/ws/controller';
 import { useSessionStore } from '../src/stores/sessionStore';
@@ -55,6 +55,16 @@ function setup() {
   return { client, controller };
 }
 
+/** establishSession の REST 呼び出しを成功スタブ化(cookie 発行を模す)。 */
+function stubAuthFetch(isAdmin = false, label?: string) {
+  globalThis.fetch = vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true, isAdmin, label }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  ) as unknown as typeof fetch;
+}
+
 beforeEach(() => {
   useSessionStore.getState().reset();
   useStatusStore.getState().reset();
@@ -63,60 +73,111 @@ beforeEach(() => {
   useNoticeStore.getState().reset();
   useUiStore.getState().reset();
   MockWebSocket.last = null;
+  stubAuthFetch();
 });
 
-describe('WsController.auth', () => {
-  it('reqIdエコー応答でキャラ一覧を格納', async () => {
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('WsController.establishSession (ID-only, REST)', () => {
+  it('POST /api/auth/session で cookie 確立し isAdmin を返す', async () => {
+    stubAuthFetch(true, 'Admin');
     const { controller } = setup();
-    await Promise.resolve(); // open フラッシュ
+    await Promise.resolve();
+    const res = await controller.establishSession('phi-1');
+    expect(res.ok).toBe(true);
+    expect(res.isAdmin).toBe(true);
+    expect(res.label).toBe('Admin');
+    // REST に id が送られる(password なし)
+    const call = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(call[0]).toBe('/api/auth/session');
+    const body = JSON.parse((call[1] as { body: string }).body);
+    expect(body.id).toBe('phi-1');
+    expect('password' in body).toBe(false);
+  });
+
+  it('remember 指定で body.remember=true を送る', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    await controller.establishSession('phi-1', { remember: true });
+    const call = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    const body = JSON.parse((call[1] as { body: string }).body);
+    expect(body.remember).toBe(true);
+  });
+
+  it('REST 失敗で reject', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { code: 'AUTH_FAILED', message: '不正なID' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch;
+    const { controller } = setup();
+    await Promise.resolve();
+    await expect(controller.establishSession('bad')).rejects.toThrow('不正なID');
+  });
+});
+
+describe('WsController.fetchSavedList', () => {
+  it('saved.list 応答の items を sessionStore へ格納', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
     const ws = MockWebSocket.last!;
-
-    const p = controller.auth('user', 'pw');
+    const p = controller.fetchSavedList();
     const req = ws.lastSent();
-    expect(req.type).toBe('auth');
-    expect(req.id).toBe('user');
+    expect(req.type).toBe('saved.list');
     expect(typeof req.reqId).toBe('string');
-
-    // BE が同 reqId をエコー
     ws.emit({
-      type: 'auth',
+      type: 'saved.list',
       reqId: req.reqId as string,
       ok: true,
-      characters: [{ charId: 'c1', name: 'A' }],
-    });
-    const chars = await p;
-    expect(chars).toHaveLength(1);
-    expect(useSessionStore.getState().characters[0].name).toBe('A');
-  });
-
-  it('ok=false で reject', async () => {
-    const { controller } = setup();
-    await Promise.resolve();
-    const ws = MockWebSocket.last!;
-    const p = controller.auth('user', 'bad');
-    const reqId = ws.lastSent().reqId as string;
-    ws.emit({
-      type: 'auth',
-      reqId,
-      ok: false,
-      error: { code: 'AUTH_FAILED', message: '認証失敗' },
-    });
-    await expect(p).rejects.toThrow('認証失敗');
+      items: [{ ref: 'r1', label: 'A', isAdmin: false }],
+    } as ServerMessage);
+    const items = await p;
+    expect(items).toHaveLength(1);
+    expect(useSessionStore.getState().saved[0].label).toBe('A');
+    expect(useSessionStore.getState().saved[0].ref).toBe('r1');
   });
 });
 
-describe('WsController.openSession', () => {
-  it('応答のsessionを登録・アクティブ化', async () => {
+describe('WsController.openSession (id|ref)', () => {
+  it('id 指定: 応答の session を登録・アクティブ化', async () => {
     const { controller } = setup();
     await Promise.resolve();
     const ws = MockWebSocket.last!;
-    const p = controller.openSession('c1');
-    const reqId = ws.lastSent().reqId as string;
-    ws.emit({ type: 'snapshot', session: 's1', reqId } as ServerMessage);
+    const p = controller.openSession({ id: 'phi-1' }, 'Hero');
+    const req = ws.lastSent();
+    expect(req.type).toBe('session.open');
+    expect(req.id).toBe('phi-1');
+    ws.emit({ type: 'session.open', session: 's1', reqId: req.reqId as string, ok: true, isAdmin: true } as ServerMessage);
     const session = await p;
     expect(session).toBe('s1');
     expect(useSessionStore.getState().active).toBe('s1');
-    expect(useSessionStore.getState().sessions['s1'].charId).toBe('c1');
+    expect(useSessionStore.getState().sessions['s1'].label).toBe('Hero');
+    expect(useSessionStore.getState().sessions['s1'].opener.id).toBe('phi-1');
+    expect(useSessionStore.getState().sessions['s1'].isAdmin).toBe(true);
+  });
+
+  it('ref 指定: ref を送り opener.ref を保持', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    const p = controller.openSession({ ref: 'r1' }, 'Saved');
+    const req = ws.lastSent();
+    expect(req.ref).toBe('r1');
+    expect('id' in req).toBe(false);
+    ws.emit({ type: 'snapshot', session: 's2', reqId: req.reqId as string } as ServerMessage);
+    await p;
+    expect(useSessionStore.getState().sessions['s2'].opener.ref).toBe('r1');
+  });
+
+  it('id も ref も無いと throw', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    await expect(controller.openSession({})).rejects.toThrow();
   });
 });
 
@@ -150,7 +211,7 @@ describe('WsController イベント配線', () => {
     setup();
     await Promise.resolve();
     const ws = MockWebSocket.last!;
-    useSessionStore.getState().addSession('s1', 'c1');
+    useSessionStore.getState().addSession({ session: 's1', label: 'A', opener: { id: 'phi-1' } });
     useSessionStore.getState().setActive('s1');
     ws.emit({ type: 'message', channel: 'log', text: 'noSession' } as ServerMessage);
     expect(useChatStore.getState().bySession['s1'][0].text).toBe('noSession');
@@ -172,8 +233,8 @@ describe('WsController.sendChat', () => {
     const { controller } = setup();
     await Promise.resolve();
     const ws = MockWebSocket.last!;
-    useSessionStore.getState().addSession('s1', 'c1');
-    useSessionStore.getState().addSession('s2', 'c2');
+    useSessionStore.getState().addSession({ session: 's1', label: 'A', opener: { id: 'phi-1' } });
+    useSessionStore.getState().addSession({ session: 's2', label: 'B', opener: { id: 'phi-2' } });
     ws.sent = [];
     controller.sendChat('s1', 'all', 'hi');
     const sent = ws.sent.map((d) => JSON.parse(d));
@@ -339,24 +400,17 @@ describe('L4 自己通知抑止(isSelfEcho / selfNameOf)', () => {
   });
 });
 
-describe('CR-5 再接続時の自動再認証+reattach', () => {
-  it('再接続(open)で auth → 各セッション reattach', async () => {
+describe('CR-5 再接続時の自動再確立+reattach (ID-only)', () => {
+  it('再接続(open)で REST 再確立 → 各セッション reattach(同 opener)', async () => {
     const { controller } = setup();
     await Promise.resolve(); // 初回 open
     let ws = MockWebSocket.last!;
 
-    // 初回ログイン(資格保持)
-    const authP = controller.auth('user', 'pw');
-    ws.emit({
-      type: 'auth',
-      reqId: ws.lastSent().reqId as string,
-      ok: true,
-      characters: [{ charId: 'c1', name: 'A' }],
-    });
-    await authP;
+    // 初回ログイン(REST 確立 → ID 保持)
+    await controller.establishSession('phi-1');
 
-    // セッションを開く
-    const openP = controller.openSession('c1');
+    // セッションを開く(id 指定)
+    const openP = controller.openSession({ id: 'phi-1' }, 'Hero');
     ws.emit({ type: 'snapshot', session: 's1', reqId: ws.lastSent().reqId as string } as ServerMessage);
     await openP;
     expect(useSessionStore.getState().sessions['s1']).toBeDefined();
@@ -368,25 +422,17 @@ describe('CR-5 再接続時の自動再認証+reattach', () => {
     await Promise.resolve(); // 2回目 open → reattach 起動
     ws = MockWebSocket.last!;
 
-    // reattach: 自動 auth が送られる
-    await Promise.resolve();
-    const reauth = JSON.parse(ws.sent[0]);
-    expect(reauth.type).toBe('auth');
-    expect(reauth.id).toBe('user');
-    // auth 応答 → 続いて session.open(reattach)
-    ws.emit({
-      type: 'auth',
-      reqId: reauth.reqId,
-      ok: true,
-      characters: [{ charId: 'c1', name: 'A' }],
-    });
+    // reattach: REST 再確立(WS には流れない) → session.open(reattach)
     await new Promise((r) => setTimeout(r, 0));
-    const reopen = JSON.parse(ws.sent[1]);
+    const reopen = JSON.parse(ws.sent[0]);
     expect(reopen.type).toBe('session.open');
-    expect(reopen.charId).toBe('c1');
+    expect(reopen.id).toBe('phi-1');
+    // REST が再度呼ばれている(establishSession)
+    expect((globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.length)
+      .toBeGreaterThanOrEqual(2);
   });
 
-  it('未ログイン(資格なし)で再接続しても auth を送らない', async () => {
+  it('未ログイン(ID 未保持)で再接続しても何も送らない', async () => {
     const { controller } = setup();
     await Promise.resolve(); // 初回 open
     const ws = MockWebSocket.last!;

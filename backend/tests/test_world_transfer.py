@@ -65,7 +65,6 @@ async def _wait(cond, timeout=2.0):
 
 async def test_world_transfer_success():
     store = Store.open(":memory:")
-    store.create_account("acc", "h")
     store.upsert_character("char1", "acc", display_name="Hero")
 
     src = FakeSocket("src")

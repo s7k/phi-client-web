@@ -1,11 +1,12 @@
 """B8 Store テスト([02]§6 / [08]§4 / [12]§1.4)。
 
 メモリ DB で CRUD・gra_key 一意・sha256 冪等・settings upsert・
-Index.txt 取込/生成ラウンドトリップを検証。
+Index.txt 取込/生成ラウンドトリップを検証。ID-only: saved_ids を対象。
 """
 import pytest
 
 from app.store import Store
+from app.store.db import id_key_of
 
 
 @pytest.fixture
@@ -58,93 +59,79 @@ def test_tables_present(store):
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()
     names = {r["name"] for r in rows}
-    for t in ("accounts", "characters", "sessions", "sessions_web",
+    for t in ("saved_ids", "characters", "sessions", "sessions_web",
               "settings", "chara_graphics", "chara_index"):
         assert t in names
+    # ID-only 再設計で accounts は廃止。
+    assert "accounts" not in names
 
 
 # ----------------------------------------------------------------------
-# accounts / characters
+# saved_ids(暗号保存 / 管理者フラグ)
 # ----------------------------------------------------------------------
 
-def test_account_crud(store):
-    store.create_account("alice", "hash1")
-    row = store.get_account("alice")
-    assert row["id"] == "alice"
-    assert row["password_hash"] == "hash1"
+def test_saved_id_crud(store):
+    key = id_key_of("alice")
+    store.upsert_saved_id(key, b"enc1", label="L1")
+    row = store.get_saved_id(key)
+    assert row["id_key"] == key
+    assert row["id_enc"] == b"enc1"
+    assert row["label"] == "L1"
     assert row["created_at"].endswith("Z")
+    # upsert で id_enc/label 更新(is_admin/label は None で維持)
+    store.upsert_saved_id(key, b"enc2")
+    assert store.get_saved_id(key)["id_enc"] == b"enc2"
+    assert store.get_saved_id(key)["label"] == "L1"
+    assert store.get_saved_id(id_key_of("missing")) is None
 
-    store.update_password_hash("alice", "hash2")
-    assert store.get_account("alice")["password_hash"] == "hash2"
-    assert store.get_account("missing") is None
+
+def test_saved_id_touch_and_delete(store):
+    key = id_key_of("alice")
+    store.upsert_saved_id(key, b"e")
+    store.touch_saved_id(key, "2026-06-01T00:00:00Z")
+    assert store.get_saved_id(key)["last_used_at"] == "2026-06-01T00:00:00Z"
+    assert store.delete_saved_id(key) is True
+    assert store.delete_saved_id(key) is False
+
+
+def test_list_saved_ids_sorted(store):
+    for a in ("carol", "alice", "bob"):
+        store.upsert_saved_id(id_key_of(a), b"e", label=a)
+    rows = store.list_saved_ids()
+    keys = [r["id_key"] for r in rows]
+    assert keys == sorted(keys)
 
 
 # ----------------------------------------------------------------------
 # is_admin(管理者フラグ)
 # ----------------------------------------------------------------------
 
-def test_account_default_not_admin(store):
-    store.create_account("alice", "h")
-    assert store.get_account("alice")["is_admin"] == 0
-    assert store.is_account_admin("alice") is False
-    assert store.list_admins() == []
+def test_saved_default_not_admin(store):
+    key = id_key_of("alice")
+    store.upsert_saved_id(key, b"e")
+    assert store.get_saved_id(key)["is_admin"] == 0
+    assert store.is_saved_admin(key) is False
+    assert store.list_admin_keys() == []
 
 
-def test_set_admin_grant_and_revoke(store):
-    store.create_account("alice", "h")
-    store.set_admin("alice", True)
-    assert store.is_account_admin("alice") is True
-    assert store.get_account("alice")["is_admin"] == 1
-    assert store.list_admins() == ["alice"]
-    store.set_admin("alice", False)
-    assert store.is_account_admin("alice") is False
-    assert store.list_admins() == []
+def test_set_saved_admin_grant_and_revoke(store):
+    key = id_key_of("alice")
+    store.upsert_saved_id(key, b"e")
+    store.set_saved_admin(key, True)
+    assert store.is_saved_admin(key) is True
+    assert store.get_saved_id(key)["is_admin"] == 1
+    assert store.list_admin_keys() == [key]
+    store.set_saved_admin(key, False)
+    assert store.is_saved_admin(key) is False
+    assert store.list_admin_keys() == []
 
 
-def test_is_account_admin_missing_is_false(store):
-    assert store.is_account_admin("nobody") is False
-
-
-def test_list_admins_sorted(store):
-    for a in ("carol", "alice", "bob"):
-        store.create_account(a, "h")
-        store.set_admin(a, True)
-    store.create_account("dave", "h")  # 非管理者は除外
-    assert store.list_admins() == ["alice", "bob", "carol"]
-
-
-def test_migrate_adds_is_admin_to_legacy_db(tmp_path):
-    """既存DB(is_admin 列なし)に migrate() で冪等に列追加。"""
-    import sqlite3
-
-    db = str(tmp_path / "legacy.db")
-    conn = sqlite3.connect(db)
-    # 旧スキーマ(is_admin 列なし)で accounts を作成。
-    conn.execute(
-        "CREATE TABLE accounts (id TEXT PRIMARY KEY, "
-        "password_hash TEXT NOT NULL, created_at TEXT NOT NULL)"
-    )
-    conn.execute(
-        "INSERT INTO accounts (id, password_hash, created_at) "
-        "VALUES ('old', 'h', '2020-01-01T00:00:00Z')"
-    )
-    conn.commit()
-    conn.close()
-
-    # Store.open は migrate() を走らせ ALTER TABLE で列追加。
-    s = Store.open(db)
-    cols = {r["name"] for r in s.conn.execute("PRAGMA table_info(accounts)")}
-    assert "is_admin" in cols
-    assert s.is_account_admin("old") is False  # 既定 0
-    # 冪等: 再 migrate しても落ちない。
-    s.migrate()
-    assert s.is_account_admin("old") is False
-    s.close()
+def test_is_saved_admin_missing_is_false(store):
+    assert store.is_saved_admin(id_key_of("nobody")) is False
 
 
 def test_character_upsert_and_list(store):
-    store.create_account("alice", "h")
-    store.upsert_character("c1", "alice", display_name="Hero",
+    store.upsert_character("c1", "owner", display_name="Hero",
                            legacy_uid_enc=b"\x01\x02", legacy_host="game1")
     row = store.get_character("c1")
     assert row["display_name"] == "Hero"
@@ -152,11 +139,11 @@ def test_character_upsert_and_list(store):
     assert row["legacy_host"] == "game1"
 
     # upsert で更新
-    store.upsert_character("c1", "alice", display_name="Hero2")
+    store.upsert_character("c1", "owner", display_name="Hero2")
     assert store.get_character("c1")["display_name"] == "Hero2"
 
-    store.upsert_character("c2", "alice")
-    chars = store.list_characters("alice")
+    store.upsert_character("c2", "owner")
+    chars = store.list_characters("owner")
     assert [c["char_id"] for c in chars] == ["c1", "c2"]
 
 
@@ -165,8 +152,7 @@ def test_character_upsert_and_list(store):
 # ----------------------------------------------------------------------
 
 def test_game_session(store):
-    store.create_account("a", "h")
-    store.upsert_character("c1", "a")
+    store.upsert_character("c1", "owner")
     store.create_session("s1", "c1")
     assert store.get_session("s1")["state"] == "attached"
     store.set_session_state("s1", "detached")
@@ -176,15 +162,16 @@ def test_game_session(store):
 
 
 def test_web_session(store):
-    store.create_account("a", "h")
-    store.create_web_session("ws1", "a", "2026-06-01T00:00:00Z",
+    store.create_web_session("tok1", id_key_of("a"), b"enc",
+                             "2026-06-01T00:00:00Z",
                              "2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z")
-    row = store.get_web_session("ws1")
-    assert row["account_id"] == "a"
-    store.touch_web_session("ws1", "2026-06-01T00:10:00Z")
-    assert store.get_web_session("ws1")["last_seen_at"] == "2026-06-01T00:10:00Z"
-    store.delete_web_session("ws1")
-    assert store.get_web_session("ws1") is None
+    row = store.get_web_session("tok1")
+    assert row["id_key"] == id_key_of("a")
+    assert row["id_enc"] == b"enc"
+    store.touch_web_session("tok1", "2026-06-01T00:10:00Z")
+    assert store.get_web_session("tok1")["last_seen_at"] == "2026-06-01T00:10:00Z"
+    store.delete_web_session("tok1")
+    assert store.get_web_session("tok1") is None
 
 
 # ----------------------------------------------------------------------

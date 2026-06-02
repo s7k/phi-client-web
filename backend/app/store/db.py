@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -24,6 +25,11 @@ _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 def utc_now() -> str:
     """ISO8601(UTC, 秒精度, 末尾 'Z')。"""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def id_key_of(plain_id: str) -> str:
+    """平文 PHI ID → 検索キー sha256(16進)。生ID非保持の照合用([12]§1)。"""
+    return hashlib.sha256(plain_id.encode("utf-8")).hexdigest()
 
 
 def gra_key_of(gra_name: str) -> str:
@@ -93,80 +99,107 @@ class Store:
         return store
 
     def migrate(self) -> None:
-        """schema.sql を適用(冪等)。既存DBへの追加列も冪等補完。"""
+        """schema.sql を適用(冪等)。"""
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         self.conn.executescript(sql)
-        self._migrate_accounts_is_admin()
         self.conn.commit()
-
-    def _migrate_accounts_is_admin(self) -> None:
-        """既存DB: accounts に is_admin 列が無ければ追加(冪等)。
-
-        新規DB は schema.sql の CREATE TABLE で既に列を持つ。旧DB(列なし)へ
-        ALTER TABLE で後付け。table_info を見て存在判定し二重追加を防ぐ。
-        """
-        cols = {
-            r["name"]
-            for r in self.conn.execute("PRAGMA table_info(accounts)").fetchall()
-        }
-        if "is_admin" not in cols:
-            self.conn.execute(
-                "ALTER TABLE accounts ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
-            )
 
     def close(self) -> None:
         self.conn.close()
 
     # ------------------------------------------------------------------
-    # accounts
+    # saved_ids(ID-only 認証, 暗号保存 [12]§1)
     # ------------------------------------------------------------------
+    # 生 PHI ID は保持せず、id_key=sha256(id) を PK、id_enc=暗号文を保存する。
+    # IDは資格情報のためログ/エラーへ出さない。引数の id_key/id_enc は呼出側
+    # (auth/admin_cli)で算出・暗号化済みのものを受け取る。
 
-    def create_account(self, account_id: str, password_hash: str) -> None:
-        self.conn.execute(
-            "INSERT INTO accounts (id, password_hash, created_at) VALUES (?, ?, ?)",
-            (account_id, password_hash, utc_now()),
-        )
+    def upsert_saved_id(
+        self,
+        id_key: str,
+        id_enc: bytes,
+        *,
+        label: str | None = None,
+        is_admin: bool | None = None,
+    ) -> None:
+        """保存IDを upsert。is_admin/label は None なら既存値を維持。"""
+        existing = self.get_saved_id(id_key)
+        if existing is None:
+            self.conn.execute(
+                "INSERT INTO saved_ids "
+                "(id_key, id_enc, label, is_admin, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (id_key, id_enc, label,
+                 1 if is_admin else 0, utc_now()),
+            )
+        else:
+            new_label = existing["label"] if label is None else label
+            new_admin = (
+                existing["is_admin"] if is_admin is None else (1 if is_admin else 0)
+            )
+            self.conn.execute(
+                "UPDATE saved_ids SET id_enc = ?, label = ?, is_admin = ? "
+                "WHERE id_key = ?",
+                (id_enc, new_label, new_admin, id_key),
+            )
         self.conn.commit()
 
-    def get_account(self, account_id: str) -> sqlite3.Row | None:
+    def get_saved_id(self, id_key: str) -> sqlite3.Row | None:
         cur = self.conn.execute(
-            "SELECT id, password_hash, created_at, is_admin "
-            "FROM accounts WHERE id = ?",
-            (account_id,),
+            "SELECT id_key, id_enc, label, is_admin, created_at, last_used_at "
+            "FROM saved_ids WHERE id_key = ?",
+            (id_key,),
         )
         return cur.fetchone()
 
-    def update_password_hash(self, account_id: str, password_hash: str) -> None:
+    def list_saved_ids(self) -> list[sqlite3.Row]:
+        """保存ID一覧(id_key 昇順)。生IDは含まない(id_key/label/is_admin)。"""
+        cur = self.conn.execute(
+            "SELECT id_key, id_enc, label, is_admin, created_at, last_used_at "
+            "FROM saved_ids ORDER BY id_key"
+        )
+        return cur.fetchall()
+
+    def touch_saved_id(self, id_key: str, when: str | None = None) -> None:
+        """last_used_at を更新(存在時のみ)。"""
         self.conn.execute(
-            "UPDATE accounts SET password_hash = ? WHERE id = ?",
-            (password_hash, account_id),
+            "UPDATE saved_ids SET last_used_at = ? WHERE id_key = ?",
+            (when or utc_now(), id_key),
         )
         self.conn.commit()
 
+    def delete_saved_id(self, id_key: str) -> bool:
+        """保存IDを削除。削除行があれば True。"""
+        cur = self.conn.execute(
+            "DELETE FROM saved_ids WHERE id_key = ?", (id_key,)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     # ---- 管理者フラグ(is_admin) ----
 
-    def is_account_admin(self, account_id: str) -> bool:
-        """account が管理者か。未登録は False。"""
+    def is_saved_admin(self, id_key: str) -> bool:
+        """保存ID(id_key)が管理者か。未登録は False。"""
         cur = self.conn.execute(
-            "SELECT is_admin FROM accounts WHERE id = ?", (account_id,)
+            "SELECT is_admin FROM saved_ids WHERE id_key = ?", (id_key,)
         )
         row = cur.fetchone()
         return bool(row["is_admin"]) if row is not None else False
 
-    def set_admin(self, account_id: str, value: bool) -> None:
-        """account の is_admin を設定(grant/revoke 共用)。"""
+    def set_saved_admin(self, id_key: str, value: bool) -> None:
+        """保存IDの is_admin を設定(grant/revoke 共用)。"""
         self.conn.execute(
-            "UPDATE accounts SET is_admin = ? WHERE id = ?",
-            (1 if value else 0, account_id),
+            "UPDATE saved_ids SET is_admin = ? WHERE id_key = ?",
+            (1 if value else 0, id_key),
         )
         self.conn.commit()
 
-    def list_admins(self) -> list[str]:
-        """管理者の account id 一覧(昇順)。"""
+    def list_admin_keys(self) -> list[str]:
+        """管理者の id_key 一覧(昇順)。生IDは出さない。"""
         cur = self.conn.execute(
-            "SELECT id FROM accounts WHERE is_admin = 1 ORDER BY id"
+            "SELECT id_key FROM saved_ids WHERE is_admin = 1 ORDER BY id_key"
         )
-        return [r["id"] for r in cur.fetchall()]
+        return [r["id_key"] for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # characters
@@ -256,8 +289,9 @@ class Store:
 
     def create_web_session(
         self,
-        session_id: str,
-        account_id: str,
+        token: str,
+        id_key: str,
+        id_enc: bytes,
         created_at: str,
         last_seen_at: str,
         expires_at: str,
@@ -265,29 +299,29 @@ class Store:
         self.conn.execute(
             """
             INSERT INTO sessions_web
-              (session_id, account_id, created_at, last_seen_at, expires_at)
-            VALUES (?, ?, ?, ?, ?)
+              (token, id_key, id_enc, created_at, last_seen_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (session_id, account_id, created_at, last_seen_at, expires_at),
+            (token, id_key, id_enc, created_at, last_seen_at, expires_at),
         )
         self.conn.commit()
 
-    def get_web_session(self, session_id: str) -> sqlite3.Row | None:
+    def get_web_session(self, token: str) -> sqlite3.Row | None:
         cur = self.conn.execute(
-            "SELECT * FROM sessions_web WHERE session_id = ?", (session_id,)
+            "SELECT * FROM sessions_web WHERE token = ?", (token,)
         )
         return cur.fetchone()
 
-    def touch_web_session(self, session_id: str, last_seen_at: str) -> None:
+    def touch_web_session(self, token: str, last_seen_at: str) -> None:
         self.conn.execute(
-            "UPDATE sessions_web SET last_seen_at = ? WHERE session_id = ?",
-            (last_seen_at, session_id),
+            "UPDATE sessions_web SET last_seen_at = ? WHERE token = ?",
+            (last_seen_at, token),
         )
         self.conn.commit()
 
-    def delete_web_session(self, session_id: str) -> None:
+    def delete_web_session(self, token: str) -> None:
         self.conn.execute(
-            "DELETE FROM sessions_web WHERE session_id = ?", (session_id,)
+            "DELETE FROM sessions_web WHERE token = ?", (token,)
         )
         self.conn.commit()
 
@@ -295,44 +329,44 @@ class Store:
     # settings(char_id, key) upsert
     # ------------------------------------------------------------------
 
-    def set_setting(self, char_id: str, key: str, value: str | None) -> None:
+    def set_setting(self, owner: str, key: str, value: str | None) -> None:
         self.conn.execute(
             """
-            INSERT INTO settings (char_id, key, value) VALUES (?, ?, ?)
-            ON CONFLICT(char_id, key) DO UPDATE SET value = excluded.value
+            INSERT INTO settings (owner, key, value) VALUES (?, ?, ?)
+            ON CONFLICT(owner, key) DO UPDATE SET value = excluded.value
             """,
-            (char_id, key, value),
+            (owner, key, value),
         )
         self.conn.commit()
 
-    def get_setting(self, char_id: str, key: str) -> str | None:
+    def get_setting(self, owner: str, key: str) -> str | None:
         cur = self.conn.execute(
-            "SELECT value FROM settings WHERE char_id = ? AND key = ?",
-            (char_id, key),
+            "SELECT value FROM settings WHERE owner = ? AND key = ?",
+            (owner, key),
         )
         row = cur.fetchone()
         return row["value"] if row else None
 
-    def get_settings(self, char_id: str) -> dict[str, str | None]:
+    def get_settings(self, owner: str) -> dict[str, str | None]:
         cur = self.conn.execute(
-            "SELECT key, value FROM settings WHERE char_id = ?", (char_id,)
+            "SELECT key, value FROM settings WHERE owner = ?", (owner,)
         )
         return {r["key"]: r["value"] for r in cur.fetchall()}
 
-    # ---- アカウント単位の設定(CR-1, [07]§5.7/§6.13) ----
-    # settings テーブルの所有キー(char_id 列)に account id を流用し、
-    # WS settings.get/set を scope 単位(keybind/notify/display/intervals)で
-    # 永続化する。値は JSON 文字列(任意構造)を value 列へ格納。
+    # ---- ID 単位の設定(CR-1, [07]§5.7/§6.13) ----
+    # settings の所有キー(owner 列)に id_key を流用し、WS settings.get/set を
+    # scope 単位(keybind/notify/display/intervals)で永続化する。
+    # 値は JSON 文字列(任意構造)を value 列へ格納。
 
     def set_account_setting(
-        self, account_id: str, scope: str, value: str | None
+        self, owner: str, scope: str, value: str | None
     ) -> None:
-        """アカウント+scope の設定値(JSON 文字列)を upsert。"""
-        self.set_setting(account_id, scope, value)
+        """所有者(id_key)+scope の設定値(JSON 文字列)を upsert。"""
+        self.set_setting(owner, scope, value)
 
-    def get_account_setting(self, account_id: str, scope: str) -> str | None:
-        """アカウント+scope の設定値(JSON 文字列 or None)を取得。"""
-        return self.get_setting(account_id, scope)
+    def get_account_setting(self, owner: str, scope: str) -> str | None:
+        """所有者(id_key)+scope の設定値(JSON 文字列 or None)を取得。"""
+        return self.get_setting(owner, scope)
 
     # ------------------------------------------------------------------
     # chara_graphics([08]§4)

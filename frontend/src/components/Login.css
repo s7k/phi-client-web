@@ -140,6 +140,21 @@
   text-align: center;
 }
 
+.login__remember {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.login__remember input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #38bdf8;
+}
+
 .login__link {
   background: none;
   border: none;

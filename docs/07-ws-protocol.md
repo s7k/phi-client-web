@@ -44,22 +44,28 @@ phi-web の BE(ゲートウェイ) と FE(ブラウザ) 間の通信プロトコ
 
 ## 4. 接続ライフサイクル
 
+**ID-only認証**(DEVLOG A-31): PHIは**IDのみで識別**、`#open <uid>` の uid 自体が資格情報(6字パス埋込)。**別Webパスワードは持たない**。
+
 ```
 FE                                   BE
-│ ── WS接続 ───────────────────────▶ │
-│ ◀─ hello (protocolVersion) ─────── │
-│ ── auth (id, password) ──────────▶ │   reqId相関
-│ ◀─ auth (ok, characters[]) ─────── │
-│ ── session.open (charId) ────────▶ │   → BEがレガシー#open(または既存接続再アタッチ)
-│ ◀─ connection (state=connected) ── │
-│ ◀─ snapshot (map,status,cond,…) ── │   現在状態の一括再送
-│ ◀─ map / status / message … ────── │   以降ストリーム
+│ ── POST /api/auth/session {id} ──▶ │   REST. cookie(phi_session)発行
+│ ◀─ {ok, isAdmin, label?} ───────── │
+│ ── WS接続(cookie) ───────────────▶ │   接続時 cookie 検証
+│ ◀─ hello (protocolVersion, authenticated, isAdmin) │
+│ ── saved.list ───────────────────▶ │   (任意)保存IDピッカー
+│ ◀─ saved {items:[{ref,label,isAdmin}]} │   生ID非公開
+│ ── session.open {id | ref} ──────▶ │   id=入力PHI ID / ref=保存id_key → #open <平文ID>
+│ ◀─ session.open {ok, session, isAdmin} │
+│ ◀─ connection (connected) ──────── │
+│ ◀─ snapshot (map,status,cond,…) ── │
 │ ── chat / move / command … ──────▶ │
 ```
 
-### 4.1 認証・キャラ選択
-- `auth` 成功でアカウントに紐づくキャラ一覧を返す。FEがキャラ選択し `session.open`。
-- 認証はSQLite `accounts` 照合([02])。
+### 4.1 認証・キャラ選択(ID-only)
+- 認証 = **PHI ID のみ**。`POST /api/auth/session {id}` で cookie 発行(別パスワード無し)。
+- ID(=資格情報)は **SQLite `saved_ids` に暗号保存**(`id_key=sha256(id)`, `id_enc`, PHI_SECRET_KEY)。レガシー .phirc 相当。**IDはログ/応答に平文露出しない**(`saved.list` は ref/label のみ)。
+- `session.open` は `id`(新規入力)または `ref`(保存id_key)。BEが平文IDを解決し `#open` に使用。
+- 管理者 = `saved_ids.is_admin`(CLI `admin_cli` で付与)。`isAdmin` を各応答で返しFEが管理UI出し分け。
 
 ### 4.2 常時接続・再アタッチ・スナップショット
 - BEはFE切断後もタイムアウトまでレガシー接続を保持([02])。

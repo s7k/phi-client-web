@@ -17,13 +17,14 @@ from app.ws_server import WsConnection
 class FakeWebSocket:
     """Starlette WebSocket 互換の最小偽物。
 
-    `accept`/`send_json`/`receive_json` を持つ。`feed` でクライアント送信を積む。
-    送信は `sent` に記録。受信キューが尽きたら WebSocketDisconnect 相当で抜ける。
+    `accept`/`send_json`/`receive_json`/`cookies` を持つ。`feed` でクライアント
+    送信を積む。送信は `sent` に記録。受信キューが尽きたら WebSocketDisconnect。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cookies: dict | None = None) -> None:
         self.accepted = False
         self.sent: list[dict] = []
+        self.cookies = cookies or {}
         self._inbox: asyncio.Queue = asyncio.Queue()
 
     async def accept(self) -> None:
@@ -112,59 +113,75 @@ async def test_hello_sent_on_connect(server):
     await task
 
 
-async def test_auth_stub_returns_characters(server):
+async def test_hello_reports_unauthenticated_without_cookie(server):
+    # auth 未設定/cookie 無しでは hello.authenticated=False。
     ws = FakeWebSocket()
     _, task = await _run_conn(ws, server)
-    ws.feed({"type": "auth", "reqId": "r1", "id": "user1", "password": "x"})
-    await _wait(lambda: any(m["type"] == "auth" and m.get("reqId") == "r1"
-                            for m in ws.sent))
-    auth = next(m for m in ws.sent if m["type"] == "auth" and m.get("reqId") == "r1")
-    assert auth["ok"] is True
-    assert isinstance(auth["characters"], list)
-    assert auth["isAdmin"] is False  # stub は常に非管理者
+    await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
+    hello = next(m for m in ws.sent if m["type"] == "hello")
+    assert hello["authenticated"] is False
+    assert hello["isAdmin"] is False
     ws.disconnect()
     await task
 
 
-async def test_auth_with_service_returns_is_admin(server):
-    """AuthService 連携時、auth 応答に DB の is_admin を反映。"""
+async def test_cookie_auth_sets_authenticated_and_admin(server):
+    """cookie token 検証で hello.authenticated=True / isAdmin 反映。"""
     from app.auth import AuthService, UidCipher
     from app.store import Store
+    from app.store.db import id_key_of
+    from app.ws_server import COOKIE_NAME
 
     store = Store.open(":memory:")
     auth = AuthService(store, UidCipher(UidCipher.generate_key()))
-    auth.register_account("adm", "pw")
-    store.set_admin("adm", True)
-    auth.register_account("usr", "pw")
+    auth.remember_id("ADM_ID", is_admin=True)
+    tok = auth.establish_session("ADM_ID")
 
-    # 管理者 adm。
+    ws = FakeWebSocket(cookies={COOKIE_NAME: tok})
+    conn = WsConnection(ws, server, auth=auth)
+    task = asyncio.create_task(conn.run())
+    await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
+    hello = next(m for m in ws.sent if m["type"] == "hello")
+    assert hello["authenticated"] is True
+    assert hello["isAdmin"] is True
+    ws.disconnect()
+    await task
+    store.close()
+
+
+async def test_saved_list_returns_refs_no_raw_id(server):
+    """saved.list は ref(id_key)/label/isAdmin のみ(生ID非公開)。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+    from app.store.db import id_key_of
+
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+    auth.remember_id("ID_A", label="A", is_admin=True)
+    auth.remember_id("ID_B", label="B")
+
     ws = FakeWebSocket()
     conn = WsConnection(ws, server, auth=auth)
     task = asyncio.create_task(conn.run())
-    ws.feed({"type": "auth", "reqId": "a", "id": "adm", "password": "pw"})
-    await _wait(lambda: any(m.get("reqId") == "a" for m in ws.sent))
-    resp = next(m for m in ws.sent if m.get("reqId") == "a")
-    assert resp["ok"] is True and resp["isAdmin"] is True
+    ws.feed({"type": "saved.list", "reqId": "s"})
+    await _wait(lambda: any(m["type"] == "saved" for m in ws.sent))
+    resp = next(m for m in ws.sent if m["type"] == "saved")
+    refs = {it["ref"]: it for it in resp["items"]}
+    assert id_key_of("ID_A") in refs
+    assert refs[id_key_of("ID_A")]["isAdmin"] is True
+    assert refs[id_key_of("ID_B")]["label"] == "B"
+    # 生IDは応答に含まれない。
+    blob = str(resp)
+    assert "ID_A" not in blob and "ID_B" not in blob
     ws.disconnect()
     await task
-
-    # 非管理者 usr。
-    ws2 = FakeWebSocket()
-    conn2 = WsConnection(ws2, server, auth=auth)
-    task2 = asyncio.create_task(conn2.run())
-    ws2.feed({"type": "auth", "reqId": "b", "id": "usr", "password": "pw"})
-    await _wait(lambda: any(m.get("reqId") == "b" for m in ws2.sent))
-    resp2 = next(m for m in ws2.sent if m.get("reqId") == "b")
-    assert resp2["ok"] is True and resp2["isAdmin"] is False
-    ws2.disconnect()
-    await task2
     store.close()
 
 
 async def test_session_open_response_a10(server, fake_sock):
     ws = FakeWebSocket()
     _, task = await _run_conn(ws, server)
-    ws.feed({"type": "session.open", "reqId": "r2", "charId": "char1"})
+    ws.feed({"type": "session.open", "reqId": "r2", "id": "char1"})
     await _wait(lambda: any(m["type"] == "session.open" and m.get("reqId") == "r2"
                             for m in ws.sent))
     resp = next(m for m in ws.sent
@@ -183,7 +200,7 @@ async def test_session_open_response_a10(server, fake_sock):
 async def test_intent_dispatched_to_legacy(server, fake_sock):
     ws = FakeWebSocket()
     _, task = await _run_conn(ws, server)
-    ws.feed({"type": "session.open", "reqId": "r2", "charId": "char1"})
+    ws.feed({"type": "session.open", "reqId": "r2", "id": "char1"})
     await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
     sid = next(m for m in ws.sent if m["type"] == "session.open")["session"]
     fake_sock.sent.clear()
@@ -196,7 +213,7 @@ async def test_intent_dispatched_to_legacy(server, fake_sock):
 async def test_session_omitted_resolves_to_active(server, fake_sock):
     ws = FakeWebSocket()
     _, task = await _run_conn(ws, server)
-    ws.feed({"type": "session.open", "reqId": "r2", "charId": "char1"})
+    ws.feed({"type": "session.open", "reqId": "r2", "id": "char1"})
     await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
     fake_sock.sent.clear()
     # session 省略 → アクティブ(単一)へ解決(A-03)
@@ -209,7 +226,7 @@ async def test_session_omitted_resolves_to_active(server, fake_sock):
 async def test_stream_event_forwarded_to_ws(server, fake_sock):
     ws = FakeWebSocket()
     _, task = await _run_conn(ws, server)
-    ws.feed({"type": "session.open", "reqId": "r2", "charId": "char1"})
+    ws.feed({"type": "session.open", "reqId": "r2", "id": "char1"})
     await _wait(lambda: any(m["type"] == "snapshot" for m in ws.sent))
     fake_sock.inject(b"#status Hero:1:1:1:1:1:1:1:1:1:1")
     await _wait(lambda: any(m["type"] == "status" for m in ws.sent))
@@ -223,7 +240,7 @@ async def test_stream_event_forwarded_to_ws(server, fake_sock):
 async def test_bad_request_on_unknown_intent(server, fake_sock):
     ws = FakeWebSocket()
     _, task = await _run_conn(ws, server)
-    ws.feed({"type": "session.open", "reqId": "r2", "charId": "char1"})
+    ws.feed({"type": "session.open", "reqId": "r2", "id": "char1"})
     await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
     sid = next(m for m in ws.sent if m["type"] == "session.open")["session"]
     ws.feed({"type": "bogus", "session": sid})
@@ -245,7 +262,7 @@ async def _open_session(ws, mgr, **kw):
     """conn を limiters 付きで起動し char1 セッションを開いて sid を返す。"""
     conn = WsConnection(ws, mgr, **kw)
     task = asyncio.create_task(conn.run())
-    ws.feed({"type": "session.open", "reqId": "r", "charId": "char1"})
+    ws.feed({"type": "session.open", "reqId": "r", "id": "char1"})
     await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
     sid = next(m for m in ws.sent if m["type"] == "session.open")["session"]
     return conn, task, sid
@@ -356,40 +373,54 @@ async def test_non_raw_command_not_limited(server, fake_sock):
     await task
 
 
-async def test_ws_conn_limit_rejects_6th(server):
+def _make_auth(*ids):
+    """テスト用 AuthService(id を remember 済)を返す。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+    for i in ids:
+        auth.remember_id(i)
+    return auth
+
+
+async def test_ws_conn_limit_rejects_authenticated(server):
+    # cookie 認証時、同時接続上限超過で未認証扱い(hello.authenticated=False)。
+    from app.ws_server import COOKIE_NAME
     cl = ConcurrencyLimiter(limit=2)
+    auth = _make_auth("acc")
+    tok = auth.establish_session("acc")  # 同一 id_key で複数接続
     conns = []
     for i in range(2):
-        ws = FakeWebSocket()
-        conn = WsConnection(ws, server, conn_limiter=cl)
+        ws = FakeWebSocket(cookies={COOKIE_NAME: tok})
+        conn = WsConnection(ws, server, auth=auth, conn_limiter=cl)
         t = asyncio.create_task(conn.run())
-        ws.feed({"type": "auth", "id": "acc"})
         await _wait(lambda w=ws: any(
-            m["type"] == "auth" and m.get("ok") for m in w.sent))
+            m["type"] == "hello" and m.get("authenticated") for m in w.sent))
         conns.append((ws, t))
-    # 3本目(limit=2)は RATE_LIMITED
-    ws3 = FakeWebSocket()
-    conn3 = WsConnection(ws3, server, conn_limiter=cl)
+    # 3本目(limit=2): 同時接続確保できず未認証(authenticated=False)。
+    ws3 = FakeWebSocket(cookies={COOKIE_NAME: tok})
+    conn3 = WsConnection(ws3, server, auth=auth, conn_limiter=cl)
     t3 = asyncio.create_task(conn3.run())
-    ws3.feed({"type": "auth", "id": "acc"})
-    await _wait(lambda: any(
-        m["type"] == "auth" and m.get("error", {}).get("code") == "RATE_LIMITED"
-        for m in ws3.sent))
+    await _wait(lambda: any(m["type"] == "hello" for m in ws3.sent))
+    hello3 = next(m for m in ws3.sent if m["type"] == "hello")
+    assert hello3["authenticated"] is False
     ws3.disconnect()
     await t3
-    # 1本切断 → 解放され新規接続可
+    # 1本切断 → 解放され新規接続が認証可。
     ws0, t0 = conns[0]
     ws0.disconnect()
     await t0
-    await _wait(lambda: cl.count("acc") == 1)
-    ws4 = FakeWebSocket()
-    conn4 = WsConnection(ws4, server, conn_limiter=cl)
+    await _wait(lambda: cl.count(__import__("app.store.db", fromlist=["id_key_of"]).id_key_of("acc")) == 1)
+    ws4 = FakeWebSocket(cookies={COOKIE_NAME: tok})
+    conn4 = WsConnection(ws4, server, auth=auth, conn_limiter=cl)
     t4 = asyncio.create_task(conn4.run())
-    ws4.feed({"type": "auth", "id": "acc"})
-    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws4.sent))
+    await _wait(lambda: any(
+        m["type"] == "hello" and m.get("authenticated") for m in ws4.sent))
     for ws, t in [conns[1], (ws4, t4)]:
         ws.disconnect()
         await t
+    auth.store.close()
 
 
 # ======================================================================
@@ -398,31 +429,35 @@ async def test_ws_conn_limit_rejects_6th(server):
 
 
 class FakeStore:
-    """settings の account-scoped CRUD のみを持つ最小 Store。"""
+    """settings の owner-scoped CRUD のみを持つ最小 Store。"""
 
     def __init__(self) -> None:
         self.data: dict[tuple[str, str], str | None] = {}
 
-    def set_account_setting(self, account_id, scope, value):
-        self.data[(account_id, scope)] = value
+    def set_account_setting(self, owner, scope, value):
+        self.data[(owner, scope)] = value
 
-    def get_account_setting(self, account_id, scope):
-        return self.data.get((account_id, scope))
+    def get_account_setting(self, owner, scope):
+        return self.data.get((owner, scope))
 
 
-async def _auth_stub(ws, mgr, **kw):
-    """stub auth で account を確立した conn を起動。"""
-    conn = WsConnection(ws, mgr, **kw)
+async def _auth_conn(ws, mgr, *, plain_id="acc1", auth=None, **kw):
+    """cookie 認証済みの conn を起動(settings 等の要認証フロー用)。"""
+    from app.ws_server import COOKIE_NAME
+    auth = auth or _make_auth(plain_id)
+    tok = auth.establish_session(plain_id)
+    ws.cookies[COOKIE_NAME] = tok
+    conn = WsConnection(ws, mgr, auth=auth, **kw)
     task = asyncio.create_task(conn.run())
-    ws.feed({"type": "auth", "id": "acc1"})
-    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws.sent))
+    await _wait(lambda: any(
+        m["type"] == "hello" and m.get("authenticated") for m in ws.sent))
     return conn, task
 
 
 async def test_settings_set_then_get_roundtrip(server):
     store = FakeStore()
     ws = FakeWebSocket()
-    _, task = await _auth_stub(ws, server, store=store)
+    _, task = await _auth_conn(ws, server, store=store)
     ws.feed({"type": "settings.set", "reqId": "s1", "scope": "keybind",
              "value": {"up": "w"}})
     await _wait(lambda: any(m["type"] == "settings" and m.get("reqId") == "s1"
@@ -443,7 +478,7 @@ async def test_settings_set_then_get_roundtrip(server):
 async def test_settings_get_missing_returns_null(server):
     store = FakeStore()
     ws = FakeWebSocket()
-    _, task = await _auth_stub(ws, server, store=store)
+    _, task = await _auth_conn(ws, server, store=store)
     ws.feed({"type": "settings.get", "reqId": "g", "scope": "notify"})
     await _wait(lambda: any(m.get("reqId") == "g" for m in ws.sent))
     resp = next(m for m in ws.sent if m.get("reqId") == "g")
@@ -455,7 +490,7 @@ async def test_settings_get_missing_returns_null(server):
 async def test_settings_invalid_scope_bad_request(server):
     store = FakeStore()
     ws = FakeWebSocket()
-    _, task = await _auth_stub(ws, server, store=store)
+    _, task = await _auth_conn(ws, server, store=store)
     ws.feed({"type": "settings.get", "reqId": "g", "scope": "bogus"})
     await _wait(lambda: any(m["type"] == "error" for m in ws.sent))
     err = next(m for m in ws.sent if m["type"] == "error")
@@ -465,22 +500,16 @@ async def test_settings_invalid_scope_bad_request(server):
 
 
 async def test_settings_account_scoped(server):
-    # 別アカウントの設定は混ざらない(所有キー=account id)。
+    # 別IDの設定は混ざらない(所有キー=id_key)。
     store = FakeStore()
     ws1 = FakeWebSocket()
-    conn1 = WsConnection(ws1, server, store=store)
-    t1 = asyncio.create_task(conn1.run())
-    ws1.feed({"type": "auth", "id": "accA"})
-    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws1.sent))
+    _, t1 = await _auth_conn(ws1, server, plain_id="accA", store=store)
     ws1.feed({"type": "settings.set", "reqId": "x", "scope": "display",
               "value": {"theme": "dark"}})
     await _wait(lambda: any(m.get("reqId") == "x" for m in ws1.sent))
 
     ws2 = FakeWebSocket()
-    conn2 = WsConnection(ws2, server, store=store)
-    t2 = asyncio.create_task(conn2.run())
-    ws2.feed({"type": "auth", "id": "accB"})
-    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws2.sent))
+    _, t2 = await _auth_conn(ws2, server, plain_id="accB", store=store)
     ws2.feed({"type": "settings.get", "reqId": "y", "scope": "display"})
     await _wait(lambda: any(m.get("reqId") == "y" for m in ws2.sent))
     resp = next(m for m in ws2.sent if m.get("reqId") == "y")

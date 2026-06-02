@@ -68,18 +68,28 @@ export type ConnectionState =
 
 // --- 5.1 接続・セッション ---
 
-export interface AuthRequest extends Envelope {
-  type: 'auth';
-  /** reqId必須([07]§5.1)。 */
+/**
+ * 保存済みID一覧要求([07]§5.1, ID-only ログイン)。
+ * 応答: `saved.list`(SavedListEvent)。ラベルのみ返り、生IDは ref で隠蔽。
+ */
+export interface SavedListRequest extends Envelope {
+  type: 'saved.list';
+  /** reqId必須(reqId相関で応答待ち)。 */
   reqId: string;
-  id: string;
-  password: string;
 }
 
+/**
+ * セッション開始([07]§5.1, ID-only)。
+ * 新規入力は `id`、保存選択は `ref`。どちらか一方を指定。
+ * **応答**: `{type:"session.open", reqId, ok, session, isAdmin}` → 続けて connection+snapshot。
+ */
 export interface SessionOpenRequest extends Envelope {
   type: 'session.open';
   reqId?: string;
-  charId: string;
+  /** 新規入力の PHI ID(生)。 */
+  id?: string;
+  /** 保存済みID参照(SavedListItem.ref)。生IDを露出しない。 */
+  ref?: string;
 }
 
 export interface SessionCloseRequest extends Envelope {
@@ -261,7 +271,7 @@ export interface PingRequest extends Envelope {
 
 /** 全 C→S メッセージの discriminated union。 */
 export type ClientMessage =
-  | AuthRequest
+  | SavedListRequest
   | SessionOpenRequest
   | SessionCloseRequest
   | MoveRequest
@@ -288,16 +298,32 @@ export interface HelloEvent extends Envelope {
   serverTime: number;
 }
 
-/** auth応答([07]§6.1)。reqId相関。 */
-export interface AuthResponse extends Envelope, ResponseFields {
-  type: 'auth';
-  characters?: CharacterSummary[];
+/**
+ * session.open 応答([07]§6.1, ID-only)。reqId相関。
+ * ok=true で session 払い出し。isAdmin で管理UI出し分け。
+ */
+export interface SessionOpenResponse extends Envelope, ResponseFields {
+  type: 'session.open';
+  /** 割当セッションID(A-10)。 */
+  session?: string;
+  /** 管理者か(将来のアップロード等の管理UI出し分け)。 */
+  isAdmin?: boolean;
 }
 
-export interface CharacterSummary {
-  charId: string;
-  name: string;
-  lastServer?: string;
+/** 保存済みID 1件。ラベルで選択し ref で session.open。生IDは含めない。 */
+export interface SavedListItem {
+  /** session.open に渡す不透明参照(生IDの代理)。 */
+  ref: string;
+  /** ユーザ表示用ラベル。 */
+  label: string;
+  /** 管理者IDか。 */
+  isAdmin?: boolean;
+}
+
+/** 保存済みID一覧応答([07]§6.1, ID-only)。reqId相関。 */
+export interface SavedListEvent extends Envelope, ResponseFields {
+  type: 'saved.list';
+  items: SavedListItem[];
 }
 
 export interface ConnectionEvent extends Envelope {
@@ -542,7 +568,8 @@ export interface ErrorEvent extends Envelope {
 /** 全 S→C メッセージの discriminated union。 */
 export type ServerMessage =
   | HelloEvent
-  | AuthResponse
+  | SessionOpenResponse
+  | SavedListEvent
   | ConnectionEvent
   | SnapshotEvent
   | MapEvent

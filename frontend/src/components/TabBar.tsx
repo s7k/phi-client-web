@@ -22,7 +22,6 @@ const STATE_MARK: Record<ConnectionState, { mark: string; label: string }> = {
 
 export function TabBar() {
   const sessions = useSessionStore((s) => s.sessions);
-  const characters = useSessionStore((s) => s.characters);
   const setActive = useSessionStore((s) => s.setActive);
   const conn = useConnectionStore((s) => s.sessions);
   const unread = useChatStore((s) => s.unread);
@@ -32,10 +31,6 @@ export function TabBar() {
 
   const entries = Object.values(sessions);
   if (entries.length === 0) return null;
-
-  /** charId → 表示名(auth のキャラ一覧から)。 */
-  const nameOf = (charId: string) =>
-    characters.find((c) => c.charId === charId)?.name ?? charId;
 
   function select(session: string) {
     setActive(session);
@@ -65,7 +60,7 @@ export function TabBar() {
             >
               {m.mark}
             </span>
-            <span className="tabbar__name">{nameOf(info.charId)}</span>
+            <span className="tabbar__name">{info.label}</span>
             {u > 0 && <span className="tabbar__unread">{u}</span>}
           </button>
         );

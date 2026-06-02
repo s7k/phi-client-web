@@ -21,7 +21,8 @@ import { useConnectionStore } from '../src/stores/connectionStore';
 /** controller の最小スタブ。 */
 function makeController(over: Partial<WsController> = {}): WsController {
   return {
-    auth: vi.fn(async () => []),
+    establishSession: vi.fn(async () => ({ ok: true, isAdmin: false })),
+    fetchSavedList: vi.fn(async () => []),
     openSession: vi.fn(async () => 's1'),
     sendChat: vi.fn(),
     sendMove: vi.fn(),
@@ -48,39 +49,56 @@ beforeEach(() => {
   useConnectionStore.getState().reset();
 });
 
-describe('Login (F3)', () => {
-  it('ログイン→auth呼出→キャラ選択→openSession', async () => {
-    const auth = vi.fn(async () => {
-      useSessionStore.getState().setCharacters([{ charId: 'c1', name: 'A' }]);
-      return [{ charId: 'c1', name: 'A' }];
-    });
+describe('Login (F3, ID-only)', () => {
+  it('PHI ID 入力→establishSession→openSession(id)→activeTab', async () => {
+    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false }));
     const openSession = vi.fn(async () => 's1');
-    const ctrl = makeController({ auth, openSession });
+    const ctrl = makeController({ establishSession, openSession });
     renderWith(ctrl, <Login />);
 
-    fireEvent.change(screen.getByLabelText('ID'), { target: { value: 'u' } });
-    fireEvent.change(screen.getByLabelText('パスワード'), {
-      target: { value: 'p' },
-    });
+    // パスワード欄が無いこと
+    expect(screen.queryByText('パスワード')).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
     fireEvent.click(screen.getByText('ログイン'));
 
-    await waitFor(() => expect(auth).toHaveBeenCalledWith('u', 'p'));
-    // キャラ選択フェーズ
-    const charBtn = await screen.findByText('A');
-    fireEvent.click(charBtn);
-    await waitFor(() => expect(openSession).toHaveBeenCalledWith('c1'));
+    await waitFor(() => expect(establishSession).toHaveBeenCalledWith('phi-1', { remember: false }));
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith({ id: 'phi-1' }));
     expect(useUiStore.getState().activeTab).toBe('s1');
   });
 
-  it('auth失敗でエラー表示', async () => {
-    const auth = vi.fn(async () => {
+  it('保存する にチェック→establishSession に remember:true', async () => {
+    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false }));
+    const ctrl = makeController({ establishSession });
+    renderWith(ctrl, <Login />);
+    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
+    fireEvent.click(screen.getByLabelText('このIDを保存する'));
+    fireEvent.click(screen.getByText('ログイン'));
+    await waitFor(() =>
+      expect(establishSession).toHaveBeenCalledWith('phi-1', { remember: true }),
+    );
+  });
+
+  it('保存済みラベルから選択→openSession(ref)', async () => {
+    const openSession = vi.fn(async () => 's9');
+    const fetchSavedList = vi.fn(async () => {
+      useSessionStore.getState().setSaved([{ ref: 'r1', label: 'Hero' }]);
+      return [{ ref: 'r1', label: 'Hero' }];
+    });
+    const ctrl = makeController({ openSession, fetchSavedList });
+    renderWith(ctrl, <Login />);
+    const savedBtn = await screen.findByText('Hero');
+    fireEvent.click(savedBtn);
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith({ ref: 'r1' }, 'Hero'));
+    expect(useUiStore.getState().activeTab).toBe('s9');
+  });
+
+  it('認証失敗でエラー表示', async () => {
+    const establishSession = vi.fn(async () => {
       throw new Error('認証失敗');
     });
-    renderWith(makeController({ auth }), <Login />);
-    fireEvent.change(screen.getByLabelText('ID'), { target: { value: 'u' } });
-    fireEvent.change(screen.getByLabelText('パスワード'), {
-      target: { value: 'p' },
-    });
+    renderWith(makeController({ establishSession }), <Login />);
+    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-x' } });
     fireEvent.click(screen.getByText('ログイン'));
     expect(await screen.findByRole('alert')).toHaveTextContent('認証失敗');
   });
@@ -258,12 +276,8 @@ describe('TabBar (F9)', () => {
   });
 
   it('複数session切替・接続マーク・未読バッジ', () => {
-    useSessionStore.getState().setCharacters([
-      { charId: 'c1', name: 'Alice' },
-      { charId: 'c2', name: 'Bob' },
-    ]);
-    useSessionStore.getState().addSession('s1', 'c1');
-    useSessionStore.getState().addSession('s2', 'c2');
+    useSessionStore.getState().addSession({ session: 's1', label: 'Alice', opener: { id: 'phi-1' } });
+    useSessionStore.getState().addSession({ session: 's2', label: 'Bob', opener: { ref: 'r2' } });
     useConnectionStore.getState().setSessionConnection('s1', 'connected');
     useConnectionStore.getState().setSessionConnection('s2', 'closed');
     useChatStore.getState().addMessage('s2', {

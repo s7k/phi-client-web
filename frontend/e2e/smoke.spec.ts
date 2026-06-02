@@ -20,9 +20,10 @@ test.describe('phi-web スモーク', () => {
     await expect(page).toHaveTitle(/phi-web/);
     await expect(page.getByRole('heading', { name: 'phi-web' })).toBeVisible();
 
-    // ログインフォーム: ID / パスワード入力とログインボタン
-    await expect(page.getByLabel('ID')).toBeVisible();
-    await expect(page.getByLabel('パスワード')).toBeVisible();
+    // ログインフォーム(ID-only): PHI ID 入力とログインボタン。パスワード欄は無し。
+    await expect(page.getByLabel('PHI ID')).toBeVisible();
+    await expect(page.getByLabel('パスワード')).toHaveCount(0);
+    await expect(page.getByLabel('このIDを保存する')).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'ログイン' }),
     ).toBeVisible();

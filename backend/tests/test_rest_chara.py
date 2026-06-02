@@ -239,9 +239,7 @@ def gated_app(tmp_path):
     - admins にある → account_id を返す(管理者)。
     """
     store = Store.open(":memory:")
-    # uploaded_by の FK 用に admin1 アカウントを実在させる。
-    store.create_account("admin1", "h")
-    store.set_admin("admin1", True)
+    # ID-only: uploaded_by は id_key(FK なし)。スタブ依存で管理者集合を判定。
     admins = {"admin1"}
 
     async def require_admin(request: Request) -> str:

@@ -20,7 +20,13 @@ from app.protocol.parser import ProtocolParser
 from app.session import SessionManager
 from app.ws_server import WsConnection
 
-from tests.test_ws_server import FakeSocket, FakeStore, FakeWebSocket, _wait
+from tests.test_ws_server import (
+    FakeSocket,
+    FakeStore,
+    FakeWebSocket,
+    _auth_conn,
+    _wait,
+)
 
 
 # ----------------------------------------------------------------------
@@ -46,16 +52,13 @@ _VALID_INTENTS: dict[str, dict] = {
 
 @pytest.fixture
 async def wired():
-    """auth 済 + session.open 済の conn を返す(store/socket 配線済)。"""
+    """cookie 認証済 + session.open 済の conn を返す(store/socket 配線済)。"""
     sock = FakeSocket()
     mgr = SessionManager(socket_factory=lambda: sock)
     store = FakeStore()
     ws = FakeWebSocket()
-    conn = WsConnection(ws, mgr, store=store)
-    task = asyncio.create_task(conn.run())
-    ws.feed({"type": "auth", "id": "acc1"})
-    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws.sent))
-    ws.feed({"type": "session.open", "reqId": "o", "charId": "char1"})
+    _, task = await _auth_conn(ws, mgr, store=store)
+    ws.feed({"type": "session.open", "reqId": "o", "id": "char1"})
     await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
     sid = next(m for m in ws.sent if m["type"] == "session.open")["session"]
     yield ws, sid, task
@@ -118,7 +121,7 @@ def _parser_emittable_types() -> set[str]:
 
 
 def test_all_sc_event_types_reachable():
-    # [07]§6 の S→C event 型。hello/auth/connection/snapshot/settings/pong は
+    # [07]§6 の S→C event 型。hello/saved/connection/snapshot/settings/pong は
     # ws_server が、それ以外は parser が emit する。
     from_parser = _parser_emittable_types()
     # parser 由来で到達すべき型
@@ -135,7 +138,7 @@ def test_all_sc_event_types_reachable():
 
     import app.ws_server as wsmod
     src = inspect.getsource(wsmod)
-    for t in ("hello", "auth", "settings", "pong", "error"):
+    for t in ("hello", "saved", "settings", "pong", "error"):
         assert f'"{t}"' in src or f"'{t}'" in src, f"ws_server に {t} emit が無い"
     # snapshot は session.build_snapshot 由来
     import app.session as smod

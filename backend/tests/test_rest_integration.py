@@ -1,7 +1,8 @@
 """REST 統合テスト(create_app)。
 
-TestClient で 認証フロー(未認証401 → login → 認証要求成功)、登録エンドポイント、
-CSRF Origin 検査、レート制限(429)を検証。⛔ 登録はモックTCP代行(実サーバ未接続)。
+TestClient で 認証フロー(未認証401 → session 確立 → 認証要求成功)、登録
+エンドポイント、CSRF Origin 検査、レート制限(429)を検証(ID-only)。
+⛔ 登録はモックTCP代行(実サーバ未接続)。
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from app.auth import AuthService, UidCipher
 from app.gfx import CL_TEAL
 from app.ratelimit import ConcurrencyLimiter, RateLimiter
 from app.store import Store
+from app.store.db import id_key_of
 from app.ws_server import create_app
 
 
@@ -62,9 +64,8 @@ def env(tmp_path, monkeypatch):
     store = Store.open(":memory:")
     cipher = UidCipher(UidCipher.generate_key())
     auth = AuthService(store, cipher)
-    auth.register_account("alice", "password1")
-    # alice を管理者化(キャラグラ変更系は管理者限定 [08]§10)。
-    store.set_admin("alice", True)
+    # alice を保存ID登録し管理者化(キャラグラ変更系は管理者限定 [08]§10)。
+    auth.remember_id("alice", is_admin=True)
 
     def on_send(text):
         if text == "#ex-get REGINFO IMG":
@@ -103,7 +104,13 @@ def env(tmp_path, monkeypatch):
 HDR = {"Origin": "https://app.test"}
 
 
-# --- 認証フロー -----------------------------------------------------------
+def _session(env, plain_id, **body):
+    """`/api/auth/session` でセッション確立(cookie 取得)。"""
+    return env.post("/api/auth/session",
+                    json={"id": plain_id, **body}, headers=HDR)
+
+
+# --- 認証フロー(ID-only セッション確立) ---------------------------------
 
 def test_upload_requires_auth(env):
     # 未認証 → 401
@@ -116,21 +123,22 @@ def test_upload_requires_auth(env):
     assert r.status_code == 401
 
 
-def test_login_returns_is_admin(env):
+def test_session_returns_is_admin(env):
     # 管理者 alice → isAdmin True。
-    r = env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
-                 headers=HDR)
+    r = _session(env, "alice")
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "isAdmin": True}
+    assert r.json()["ok"] is True
+    assert r.json()["isAdmin"] is True
 
 
-def test_login_non_admin_is_admin_false_and_upload_403(env):
-    # 非管理者 bob を追加。login で isAdmin False、upload は 403。
-    env._store.create_account("bob", "$argon2id$dummy")  # noqa: SLF001
-    from app.auth import hash_password
-    env._store.update_password_hash("bob", hash_password("pw"))
-    r = env.post("/api/auth/login", json={"id": "bob", "password": "pw"},
-                 headers=HDR)
+def test_session_no_id_400(env):
+    r = env.post("/api/auth/session", json={}, headers=HDR)
+    assert r.status_code == 400
+
+
+def test_session_non_admin_is_admin_false_and_upload_403(env):
+    # 未登録 ID bob でセッション確立 → isAdmin False、upload は 403。
+    r = _session(env, "bob")
     assert r.status_code == 200
     assert r.json()["isAdmin"] is False
     r2 = env.post(
@@ -142,9 +150,8 @@ def test_login_non_admin_is_admin_false_and_upload_403(env):
     assert r2.status_code == 403
 
 
-def test_login_then_upload(env):
-    r = env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
-                 headers=HDR)
+def test_session_then_upload(env):
+    r = _session(env, "alice")
     assert r.status_code == 200
     # cookie が TestClient に保持される
     r2 = env.post(
@@ -157,51 +164,13 @@ def test_login_then_upload(env):
     assert r2.json()["graName"] == "g"
 
 
-def test_login_bad_password(env):
-    r = env.post("/api/auth/login", json={"id": "alice", "password": "wrong"},
-                 headers=HDR)
-    assert r.status_code == 401
-
-
-# --- CR-11: login 総当たり 失敗バックオフ --------------------------------
-
-def test_login_brute_force_throttled(tmp_path):
-    """連続失敗で 429 になり、正規パスワードでも一時的に拒否される。"""
-    from app.ratelimit import (
-        ConcurrencyLimiter,
-        LoginThrottle,
-        RateLimiter,
-    )
-    from app.ws_server import create_app
-
-    store = Store.open(":memory:")
-    cipher = UidCipher(UidCipher.generate_key())
-    auth = AuthService(store, cipher)
-    auth.register_account("alice", "password1")
-
-    lt = LoginThrottle(rate=(3, 300.0))  # 3 失敗 / 5分。
-    app = create_app(
-        manager=object(),
-        auth=auth,
-        assets_dir=str(tmp_path / "assets"),
-        registrar_factory=lambda: None,
-        rate_limiter=RateLimiter(),
-        conn_limiter=ConcurrencyLimiter(),
-        login_throttle=lt,
-        allowed_origins={"https://app.test"},
-    )
-    c = TestClient(app, base_url="https://testserver")
-    hdr = {"Origin": "https://app.test"}
-    # 3 回失敗(401)。
-    for _ in range(3):
-        r = c.post("/api/auth/login",
-                   json={"id": "alice", "password": "x"}, headers=hdr)
-        assert r.status_code == 401
-    # 4 回目は throttle で 429(正規 pass でも拒否)。
-    r = c.post("/api/auth/login",
-               json={"id": "alice", "password": "password1"}, headers=hdr)
-    assert r.status_code == 429
-    store.close()
+def test_session_remember_persists_label(env):
+    # remember=True で saved_ids に upsert され label が返る。
+    r = _session(env, "carol", remember=True, label="サブ")
+    assert r.status_code == 200
+    assert r.json().get("label") == "サブ"
+    row = env._store.get_saved_id(id_key_of("carol"))
+    assert row is not None and row["label"] == "サブ"
 
 
 def test_lifespan_shutdown_invokes_manager(tmp_path):
@@ -231,47 +200,8 @@ def test_lifespan_shutdown_invokes_manager(tmp_path):
     store.close()
 
 
-def test_login_success_resets_throttle(tmp_path):
-    """成功でカウンタがリセットされ、以後の失敗予算が回復する。"""
-    from app.ratelimit import (
-        ConcurrencyLimiter,
-        LoginThrottle,
-        RateLimiter,
-    )
-    from app.ws_server import create_app
-
-    store = Store.open(":memory:")
-    cipher = UidCipher(UidCipher.generate_key())
-    auth = AuthService(store, cipher)
-    auth.register_account("alice", "password1")
-
-    lt = LoginThrottle(rate=(3, 300.0))
-    app = create_app(
-        manager=object(), auth=auth,
-        assets_dir=str(tmp_path / "assets"),
-        registrar_factory=lambda: None,
-        rate_limiter=RateLimiter(), conn_limiter=ConcurrencyLimiter(),
-        login_throttle=lt, allowed_origins={"https://app.test"},
-    )
-    c = TestClient(app, base_url="https://testserver")
-    hdr = {"Origin": "https://app.test"}
-    # 2 回失敗 → まだ予算あり。
-    for _ in range(2):
-        assert c.post("/api/auth/login",
-                      json={"id": "alice", "password": "x"},
-                      headers=hdr).status_code == 401
-    # 成功でリセット。
-    assert c.post("/api/auth/login",
-                  json={"id": "alice", "password": "password1"},
-                  headers=hdr).status_code == 200
-    # リセット後、再び失敗予算が満タン(3回失敗してもまだ check 可)。
-    assert lt.check("alice", "testclient") or lt.bucket_count() == 0
-    store.close()
-
-
 def test_logout(env):
-    env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
-             headers=HDR)
+    _session(env, "alice")
     r = env.post("/api/auth/logout", headers=HDR)
     assert r.status_code == 200
     # ログアウト後はアップロード 401
@@ -287,7 +217,7 @@ def test_logout(env):
 # --- CSRF -----------------------------------------------------------------
 
 def test_csrf_blocks_bad_origin(env):
-    r = env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
+    r = env.post("/api/auth/session", json={"id": "alice"},
                  headers={"Origin": "https://evil.test"})
     assert r.status_code == 403
 
@@ -300,16 +230,14 @@ def test_csrf_allows_get_without_origin(env):
 # --- 登録(モックTCP代行) -------------------------------------------------
 
 def test_register_graphics(env):
-    env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
-             headers=HDR)
+    _session(env, "alice")
     r = env.get("/api/register/graphics", headers=HDR)
     assert r.status_code == 200
     assert r.json()["graphics"] == [{"index": 0, "graName": "戦士"}]
 
 
 def test_register_success(env):
-    env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
-             headers=HDR)
+    _session(env, "alice")
     r = env.post("/api/register",
                  json={"name": "Hero", "pass": "abc123", "imageIndex": 0,
                        "mail": "h@x.z"},
@@ -318,16 +246,15 @@ def test_register_success(env):
     body = r.json()
     assert body["name"] == "Hero"
     char_id = body["charId"]
-    # characters に uid 暗号化保存済
+    # characters に uid 暗号化保存済(account_id=id_key, 生ID非保持)
     row = env._store.get_character(char_id)
     assert row is not None
     assert row["legacy_uid_enc"] is not None
-    assert row["account_id"] == "alice"
+    assert row["account_id"] == id_key_of("alice")
 
 
 def test_register_local_reject(env):
-    env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
-             headers=HDR)
+    _session(env, "alice")
     r = env.post("/api/register",
                  json={"name": "H", "pass": "x", "imageIndex": 0},
                  headers=HDR)
@@ -338,8 +265,7 @@ def test_register_local_reject(env):
 
 
 def test_register_rate_limit_429(env):
-    env.post("/api/auth/login", json={"id": "alice", "password": "password1"},
-             headers=HDR)
+    _session(env, "alice")
     body = {"name": "Hero", "pass": "abc123", "imageIndex": 0}
     for _ in range(5):
         r = env.post("/api/register", json=body, headers=HDR)

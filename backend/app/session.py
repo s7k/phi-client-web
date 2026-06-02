@@ -43,11 +43,18 @@ class _ClosedEmitted(Exception):
 
 
 class _SessionState:
-    """1 キャラセッションの実行時状態。"""
+    """1 キャラセッションの実行時状態。
 
-    def __init__(self, session_id: str, char_id: str, socket: LegacySocket) -> None:
+    - `key`: 再アタッチ用の非機密キー(id_key 等)。`_by_char` の索引。
+    - `open_id`: `#open` に渡す**平文 PHI ID**(資格情報)。ログ非出力。
+    """
+
+    def __init__(
+        self, session_id: str, key: str, open_id: str, socket: LegacySocket
+    ) -> None:
         self.id = session_id
-        self.char_id = char_id
+        self.key = key
+        self.open_id = open_id
         self.socket = socket
         # 現在の接続先(世界移動で更新)。snapshot/再ログイン用。
         self.host = ""
@@ -106,16 +113,22 @@ class SessionManager:
 
     async def open_session(
         self,
-        char_id: str,
+        open_id: str,
         on_event: EventCallback,
         host: str | None = None,
         port: int | None = None,
+        *,
+        key: str | None = None,
     ) -> str:
-        """charId のセッションを開く。新規=接続+ログイン、既存=再アタッチ。
+        """セッションを開く。新規=接続+ログイン、既存=再アタッチ。
+
+        - `open_id`: `#open` に渡す**平文 PHI ID**(資格情報, ログ非出力)。
+        - `key`: 再アタッチ索引(非機密。既定は open_id)。WS 層は id_key を渡す。
 
         Returns 割当 session_id(A-10)。
         """
-        existing = self._by_char.get(char_id)
+        reattach_key = key if key is not None else open_id
+        existing = self._by_char.get(reattach_key)
         if existing is not None and existing.socket.connected:
             # 再アタッチ: detach タイマをキャンセルし、on_event を差し替え、
             # 現在状態を snapshot で再送(CR-6)。
@@ -129,15 +142,15 @@ class SessionManager:
 
         sock = self._socket_factory()
         session_id = uuid.uuid4().hex[:8]
-        st = _SessionState(session_id, char_id, sock)
+        st = _SessionState(session_id, reattach_key, open_id, sock)
         st.on_event = on_event
-        self._by_char[char_id] = st
+        self._by_char[reattach_key] = st
         self._sessions[session_id] = st
 
         st.host = host or self._host
         st.port = port or self._port
         await sock.connect(st.host, st.port)
-        await self._login(st, char_id)
+        await self._login(st)
 
         self._emit(st, {"type": "connection", "state": "connected"})
 
@@ -150,10 +163,13 @@ class SessionManager:
         self._emit(st, self.build_snapshot(session_id))
         return session_id
 
-    async def _login(self, st: _SessionState, char_id: str) -> None:
-        """ログインシーケンス(network_thread._login 準拠)。"""
+    async def _login(self, st: _SessionState) -> None:
+        """ログインシーケンス(network_thread._login 準拠)。
+
+        #open は**平文 PHI ID**(資格情報)。ログには出さない。
+        """
         for line in (
-            f"#open {char_id}",
+            f"#open {st.open_id}",
             f"#version-cli {VERSION_STRING}",
             "#map-iv 10",
             "#status-iv 10",
@@ -394,7 +410,7 @@ class SessionManager:
 
         # 2. 宛先へ reserve
         try:
-            await dst.send_line(f"#reserve {st.char_id}")
+            await dst.send_line(f"#reserve {st.open_id}")
         except (OSError, ConnectionError):
             await dst.close()
             self._emit_transfer_fail(st, server)
@@ -432,7 +448,7 @@ class SessionManager:
         st.port = port
         await old_sock.close()
         try:
-            await self._login(st, st.char_id)
+            await self._login(st)
         except (OSError, ConnectionError):
             self._emit_transfer_fail(st, server)
             return
@@ -475,14 +491,14 @@ class SessionManager:
         if self._store is None:
             return
         try:
-            row = self._store.get_character(st.char_id)
+            row = self._store.get_character(st.key)
             account_id = row["account_id"] if row is not None else None
             display_name = row["display_name"] if row is not None else None
             if account_id is None:
                 # 既存キャラ行が無い場合は last_server だけ更新できないため skip。
                 return
             self._store.upsert_character(
-                st.char_id, account_id,
+                st.key, account_id,
                 display_name=display_name, last_server=server,
                 legacy_uid_enc=row["legacy_uid_enc"] if row is not None else None,
                 legacy_host=server,
@@ -527,7 +543,7 @@ class SessionManager:
         st = self._sessions.pop(session_id, None)
         if st is None:
             return
-        self._by_char.pop(st.char_id, None)
+        self._by_char.pop(st.key, None)
         tasks = []
         # 自身(detach タイマ)からの呼び出しでは自タスクを cancel/await しない。
         current = asyncio.current_task()

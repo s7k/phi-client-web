@@ -1,37 +1,33 @@
-"""B12 認証・レガシー uid 暗号・Web セッション([12]§1)。
+"""B12 認証(ID-only 再設計)・ID 暗号・Web セッション([12]§1)。
 
-2層の認証([12]§1.2)
+ID-only 認証([12]§1.1/§1.2)
 ------------------------------------------------------------------
-- Web認証:   ブラウザ→BE。`accounts.password_hash` で検証。
-- レガシー資格: BE→レガシーサーバ `#open`。`characters.legacy_uid_enc`(暗号化保存)。
+PHI プレイヤーは **ID のみで識別**され、`#open <uid>` の uid 自体に6字
+パスワードが埋め込まれた**資格情報**(レガシー .phirc 相当)。よって別 Web
+パスワードは二重で不要 → 廃止。ID=資格情報として扱い、SQLite には**暗号保存**。
 
-実装方針
-------------------------------------------------------------------
-- パスワードハッシュ([12]§1.4 argon2id):
-    新規ハッシュは `argon2-cffi`(argon2id)。`$argon2id$...` 形式。
-    旧 PBKDF2-HMAC-SHA256(`pbkdf2$...`)も verify 可(scheme 分岐, 移行互換)。
-- uid 暗号: `cryptography` Fernet(AES128-CBC + HMAC, AEAD相当・タイムスタンプ内蔵)。
-    鍵は env `PHI_SECRET_KEY`(urlsafe-base64 32B、Fernet.generate_key() 形式)。
-    SQLite には暗号文(BLOB)のみ保存([12]§1.2)。
-- Web セッション: 不透明乱数 ID(256bit)。idle 30分 / absolute 24h([12]§1.3)。
-    sessions_web へ永続化。検証時に期限判定し、idle 内なら last_seen 更新。
+- 保存IDテーブル `saved_ids`: id_key=sha256(id) を PK、id_enc=暗号文を保存。
+  管理者は saved_ids.is_admin で判定。
+- Web セッション: 入力 ID で cookie `phi_session` token を発行。
+  sessions_web に token/id_key/id_enc(セッション内 #open 用)/expires を保持。
+- ID 暗号: `cryptography` Fernet(AES128-CBC + HMAC, AEAD相当)。鍵は env
+  `PHI_SECRET_KEY`(Fernet.generate_key() 形式)。SQLite には暗号文のみ。
+
+重要: **IDは資格情報。ログ/エラーに出さない**。id_key/token のみ扱う。
 
 CSRF/cookie 属性([12]§1.3: httpOnly/Secure/SameSite=Strict)は REST 層で付与。
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import os
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.store import Store
-from app.store.db import utc_now
+from app.store.db import id_key_of
 
 # ----------------------------------------------------------------------
 # 期限既定([12]§1.3)
@@ -39,60 +35,11 @@ from app.store.db import utc_now
 IDLE_TIMEOUT_SEC = 30 * 60        # idle 30分
 ABSOLUTE_TIMEOUT_SEC = 24 * 3600  # absolute 24h
 
-_PBKDF2_ROUNDS = 600_000  # OWASP 2023 推奨(PBKDF2-HMAC-SHA256, 旧方式 verify 用)
-_SESSION_ID_BYTES = 32    # 256bit 不透明 ID
-
-# argon2id ハッシャ(既定パラメータ; argon2-cffi 推奨値)。
-_PH = PasswordHasher()
+_TOKEN_BYTES = 32    # 256bit 不透明 token
 
 
 # ======================================================================
-# パスワードハッシュ
-# ======================================================================
-
-def hash_password(password: str) -> str:
-    """パスワード → 保存用ハッシュ文字列(argon2id, `$argon2id$...`)。"""
-    return _PH.hash(password)
-
-
-def _verify_pbkdf2(password: str, stored: str) -> bool:
-    """旧 PBKDF2 ハッシュ(`pbkdf2$<rounds>$<salt_hex>$<dk_hex>`)の検証。"""
-    try:
-        scheme, rounds_s, salt_hex, dk_hex = stored.split("$")
-    except ValueError:
-        return False
-    if scheme != "pbkdf2":
-        return False
-    rounds = int(rounds_s)
-    salt = bytes.fromhex(salt_hex)
-    expected = bytes.fromhex(dk_hex)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
-    return hmac.compare_digest(dk, expected)
-
-
-def verify_password(password: str, stored: str) -> bool:
-    """平文パスワードと保存ハッシュを検証。argon2id / 旧 pbkdf2 両対応。"""
-    if stored.startswith("$argon2"):
-        try:
-            return _PH.verify(stored, password)
-        except (VerifyMismatchError, InvalidHashError):
-            return False
-    # 旧 PBKDF2 ハッシュ(移行互換)。
-    return _verify_pbkdf2(password, stored)
-
-
-def needs_rehash(stored: str) -> bool:
-    """保存ハッシュが旧方式/旧パラメータで再ハッシュ推奨か判定。"""
-    if not stored.startswith("$argon2"):
-        return True  # 旧 pbkdf2 → argon2id へ移行推奨
-    try:
-        return _PH.check_needs_rehash(stored)
-    except InvalidHashError:
-        return True
-
-
-# ======================================================================
-# レガシー uid 暗号(Fernet)
+# ID 暗号(Fernet)
 # ======================================================================
 
 def _load_key() -> bytes:
@@ -100,13 +47,16 @@ def _load_key() -> bytes:
     key = os.environ.get("PHI_SECRET_KEY")
     if not key:
         raise RuntimeError(
-            "PHI_SECRET_KEY 未設定(uid 暗号鍵)。Fernet.generate_key() で生成し env 設定"
+            "PHI_SECRET_KEY 未設定(ID 暗号鍵)。Fernet.generate_key() で生成し env 設定"
         )
     return key.encode("utf-8") if isinstance(key, str) else key
 
 
 class UidCipher:
-    """legacy_uid の AEAD 暗号化/復号([12]§1.2)。"""
+    """PHI ID(資格情報)の AEAD 暗号化/復号([12]§1.2)。
+
+    平文 ID を at-rest 暗号化し、復号して #open / セッション確立に使う。
+    """
 
     def __init__(self, key: bytes | None = None) -> None:
         self._fernet = Fernet(key or _load_key())
@@ -116,16 +66,16 @@ class UidCipher:
         """新規鍵生成(urlsafe-base64 32B)。env 設定用。"""
         return Fernet.generate_key()
 
-    def encrypt(self, uid: str) -> bytes:
-        """uid(平文) → 暗号文 BLOB。"""
-        return self._fernet.encrypt(uid.encode("utf-8"))
+    def encrypt(self, plain_id: str) -> bytes:
+        """平文ID → 暗号文 BLOB。"""
+        return self._fernet.encrypt(plain_id.encode("utf-8"))
 
     def decrypt(self, token: bytes) -> str:
-        """暗号文 BLOB → uid(平文)。改ざん/不正鍵は ValueError。"""
+        """暗号文 BLOB → 平文ID。改ざん/不正鍵は ValueError。"""
         try:
             return self._fernet.decrypt(token).decode("utf-8")
         except InvalidToken as exc:
-            raise ValueError("legacy_uid 復号失敗(鍵不一致/改ざん)") from exc
+            raise ValueError("ID 復号失敗(鍵不一致/改ざん)") from exc
 
 
 # ======================================================================
@@ -140,10 +90,24 @@ def _fmt_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-class AuthService:
-    """Web 認証・セッション発行/検証([12]§1.3)。
+@dataclass
+class SessionIdentity:
+    """検証済みセッションの ID 情報(生ID非保持)。
 
-    Store と UidCipher を束ね、login/logout/validate を提供。
+    plain_id は **その場で復号した #open 用**。保持・ログ禁止。
+    """
+    id_key: str
+    id_enc: bytes
+
+    @property
+    def is_anonymous(self) -> bool:
+        return False
+
+
+class AuthService:
+    """ID-only 認証・セッション発行/検証([12]§1.3)。
+
+    Store と UidCipher を束ね、establish_session/logout/validate を提供。
     時刻は `now()` で注入可能(テスト容易性)。
     """
 
@@ -166,74 +130,85 @@ class AuthService:
             self._cipher = UidCipher()
         return self._cipher
 
-    # ---- account 登録(便宜) ----
+    # ---- 保存ID(saved_ids)操作 ----
 
-    def register_account(self, account_id: str, password: str) -> None:
-        self.store.create_account(account_id, hash_password(password))
+    def remember_id(
+        self, plain_id: str, *, label: str | None = None,
+        is_admin: bool | None = None,
+    ) -> str:
+        """平文IDを saved_ids へ暗号 upsert し id_key を返す。
 
-    # ---- login ----
-
-    def authenticate(self, account_id: str, password: str) -> bool:
-        """id+password を accounts と照合。
-
-        成功時、保存ハッシュが旧方式/旧パラメータなら argon2id へ再ハッシュ更新
-        (透過的アップグレード)。
+        既存の is_admin/label は引数 None なら維持。
         """
-        row = self.store.get_account(account_id)
-        if row is None:
-            return False
-        stored = row["password_hash"]
-        if not verify_password(password, stored):
-            return False
-        if needs_rehash(stored):
-            try:
-                self.store.update_password_hash(account_id, hash_password(password))
-            except Exception:  # noqa: BLE001 - 再ハッシュ失敗で認証自体は成功扱い
-                pass
-        return True
+        key = id_key_of(plain_id)
+        enc = self.cipher.encrypt(plain_id)
+        self.store.upsert_saved_id(key, enc, label=label, is_admin=is_admin)
+        return key
 
-    def login(
-        self, account_id: str, password: str, *, now: datetime | None = None
-    ) -> str | None:
-        """認証成功時、sessions_web に発行し不透明 session_id を返す。失敗は None。"""
-        if not self.authenticate(account_id, password):
-            return None
+    # ---- セッション確立(ID のみ) ----
+
+    def establish_session(
+        self, plain_id: str, *, remember: bool = False,
+        label: str | None = None, now: datetime | None = None,
+    ) -> str:
+        """入力 ID でセッション token を発行(sessions_web)。
+
+        - id_key=sha256(id)、id_enc=暗号文(#open 用)を保持。
+        - remember=True で saved_ids へ upsert(任意のラベル付き)。
+        - 既存 saved_ids があれば last_used_at を更新する。
+        Returns 不透明 token(cookie 値)。
+        """
+        key = id_key_of(plain_id)
+        enc = self.cipher.encrypt(plain_id)
         now = now or datetime.now(timezone.utc)
-        sid = secrets.token_urlsafe(_SESSION_ID_BYTES)
         created = _fmt_iso(now)
         expires = _fmt_iso(now + timedelta(seconds=self.absolute_sec))
-        self.store.create_web_session(sid, account_id, created, created, expires)
-        return sid
+        token = secrets.token_urlsafe(_TOKEN_BYTES)
+        self.store.create_web_session(token, key, enc, created, created, expires)
+        if remember:
+            self.store.upsert_saved_id(key, enc, label=label)
+        if self.store.get_saved_id(key) is not None:
+            self.store.touch_saved_id(key, created)
+        return token
 
-    def logout(self, session_id: str) -> None:
+    def logout(self, token: str) -> None:
         """セッション失効(削除)。"""
-        self.store.delete_web_session(session_id)
+        self.store.delete_web_session(token)
 
-    def is_admin(self, account_id: str) -> bool:
-        """account が管理者か(DBフラグ accounts.is_admin)。"""
-        return self.store.is_account_admin(account_id)
+    def is_admin(self, id_key: str) -> bool:
+        """id_key が管理者か(saved_ids.is_admin)。未登録は False。"""
+        return self.store.is_saved_admin(id_key)
 
     def validate(
-        self, session_id: str, *, now: datetime | None = None
-    ) -> str | None:
-        """セッション検証。有効なら account_id 返し idle を延長。
+        self, token: str, *, now: datetime | None = None
+    ) -> SessionIdentity | None:
+        """セッション検証。有効なら SessionIdentity を返し idle を延長。
 
         - absolute 期限超過 / idle 超過 → 失効(削除)して None。
-        - 有効 → last_seen を now に更新し account_id を返す。
+        - 有効 → last_seen を now に更新し SessionIdentity(id_key, id_enc)。
         """
-        row = self.store.get_web_session(session_id)
+        row = self.store.get_web_session(token)
         if row is None:
             return None
         now = now or datetime.now(timezone.utc)
         expires_at = _parse_iso(row["expires_at"])
         last_seen = _parse_iso(row["last_seen_at"])
-        # absolute 期限
         if now >= expires_at:
-            self.store.delete_web_session(session_id)
+            self.store.delete_web_session(token)
             return None
-        # idle 期限
         if now - last_seen > timedelta(seconds=self.idle_sec):
-            self.store.delete_web_session(session_id)
+            self.store.delete_web_session(token)
             return None
-        self.store.touch_web_session(session_id, _fmt_iso(now))
-        return row["account_id"]
+        self.store.touch_web_session(token, _fmt_iso(now))
+        return SessionIdentity(id_key=row["id_key"], id_enc=row["id_enc"])
+
+    def validate_id_key(
+        self, token: str, *, now: datetime | None = None
+    ) -> str | None:
+        """検証して id_key のみ返す(admin 判定/設定所有者キー用)。"""
+        ident = self.validate(token, now=now)
+        return ident.id_key if ident is not None else None
+
+    def open_id_for(self, ident: SessionIdentity) -> str:
+        """セッションの id_enc を復号し #open 用平文 ID を返す(その場限り)。"""
+        return self.cipher.decrypt(ident.id_enc)

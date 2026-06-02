@@ -164,6 +164,17 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - Docker: 本番モード既定(PHI_ENV=production)+XFF1段、`docker compose up`で起動・疎通200を実機確認。
 - 残: WS経路のXFF信頼段数(現状peer host)、chara GETは認証でなくレートで対応(将来認証)。
 
+## 6.7 認証モデル再設計: ID-only(A-31)
+
+- **背景**: PHIはIDのみで識別、uid自体が資格情報(パス埋込)。別Webパスワードは二重で不要(ユーザー指摘)。
+- **A-31 [確定] ID-only認証**: Webパスワード全廃。ログイン=PHI IDのみ。ID(=資格情報)は `saved_ids`(id_key=sha256/id_enc/label/is_admin)にPHI_SECRET_KEYで**暗号保存**(.phirc相当, 元要件「IDをsqlite保管」充足)。
+  - REST `POST /api/auth/session {id}` → cookie発行+`{ok,isAdmin,label?}`。WS接続時cookie検証。
+  - WS `saved.list`→`{items:[{ref,label,isAdmin}]}`(生ID非公開)。`session.open {id|ref}`→平文ID解決→**`#open <平文ID>`**(従来 `#open <char_id>` を修正)。
+  - 管理者=`saved_ids.is_admin`(admin_cli grant/add)。chara変更系require_adminは新方式。
+  - **重要修正**: `open_session` が `legacy_uid_enc` を使わず char_id 平文送出していた件を、平文ID(入力or ref復号)で `#open` するよう是正。
+- 実装: BE(332 tests)/FE(290 tests)。docker実機で `POST /api/auth/session` 200+cookie確認。
+- 残: `characters`(register/world-transfer)は別サブシステムとして存続(将来 saved_ids統合検討)。login_throttleはパス廃止で不要化(IPレート将来用に残置)。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

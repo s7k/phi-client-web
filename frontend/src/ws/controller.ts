@@ -4,7 +4,7 @@
  * 責務:
  * - WS イベント(hello/connection/snapshot/map/status/cond/message/userList/mode/list/edit)
  *   を受け取り対応 store へ反映。
- * - auth / session.open / chat 等の intent 送信ヘルパ。
+ * - establishSession(REST) / saved.list / session.open / chat 等の送信ヘルパ。
  * - A-02: reqId は WsClient.request が採番、BE がエコー。
  * - A-03: S→C は常に session 付与。session 欠落時はアクティブ session で補完。
  *
@@ -12,23 +12,25 @@
  */
 import { WsClient } from './client';
 import type {
-  AuthRequest,
-  AuthResponse,
-  CharacterSummary,
   ChatMode,
   CommandRequest,
   Dir,
   ListSelectRequest,
   MoveMode,
   TurnDir,
+  SavedListEvent,
+  SavedListItem,
+  SavedListRequest,
   ServerMessage,
   SessionOpenRequest,
+  SessionOpenResponse,
   SettingsGetRequest,
   SettingsResponse,
   SettingsScope,
   SettingsSetRequest,
   ViewSetRequest,
 } from '../types/protocol';
+import { establishSession, type SessionAuthResult } from '../api/auth';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useMapStore } from '../stores/mapStore';
@@ -88,10 +90,12 @@ export class WsController {
   readonly client: WsClient;
 
   /**
-   * 再認証用に保持する資格(再接続時の自動 auth に使用)。
+   * 再アタッチ用に保持するログイン情報(ID-only)。
+   * cookie による再確立を基本とするが、cookie 失効に備え PHI ID を保持。
    * 注: メモリ常駐のみ。永続化はせずブラウザリロードで消える。
+   *     PHI ID は資格情報のためログ出力しない。
    */
-  private credentials: { id: string; password: string } | null = null;
+  private auth: { id: string } | null = null;
   /** 初回 open を消費済か(2回目以降の open=再接続とみなし reattach)。 */
   private hadFirstOpen = false;
   /** 再接続フロー多重起動防止。 */
@@ -228,22 +232,23 @@ export class WsController {
   }
 
   /**
-   * 再接続(open)時の自動再認証+各アクティブセッション reattach(CR-5)。
-   * 1. 保持資格で auth(BEがcookie/資格照合)。
-   * 2. 開いている各 session の charId で session.open(reattach)。
+   * 再接続(open)時の自動再確立+各アクティブセッション reattach(CR-5, ID-only)。
+   * 1. 保持 PHI ID でセッション再確立(REST。BE は基本 cookie で照合、
+   *    cookie 失効時のため ID を再送し cookie を再発行)。
+   * 2. 開いている各 session を元の opener(id|ref)で再 open(reattach)。
    *    → BE が connection + snapshot を返し、各 store が復元される。
    */
   private async reattach(): Promise<void> {
     if (this.reattaching) return;
-    if (!this.credentials) return; // 未ログイン(再接続対象なし)。
+    if (!this.auth) return; // 未ログイン(再接続対象なし)。
     this.reattaching = true;
     try {
-      await this.auth(this.credentials.id, this.credentials.password);
+      await this.establishSession(this.auth.id);
       const sessions = Object.values(useSessionStore.getState().sessions);
       for (const info of sessions) {
         try {
           // openSession は応答 session を再登録(BEが同一 session を払い出す想定)。
-          await this.openSession(info.charId);
+          await this.openSession(info.opener, info.label);
         } catch (err) {
           useUiStore.getState().pushError(
             {
@@ -276,42 +281,80 @@ export class WsController {
 
   // ---------- intent 送信ヘルパ ----------
 
-  /** 認証(reqIdエコー待ち)。成功でキャラ一覧を sessionStore へ格納し返す。 */
-  async auth(id: string, password: string): Promise<CharacterSummary[]> {
+  /**
+   * セッション確立(ログイン, ID-only)。
+   * REST POST /api/auth/session {id} で cookie を発行させる。これがログインの実体。
+   * 成功で再アタッチ用に PHI ID を保持し {ok,isAdmin,label?} を返す。
+   * 注: PHI ID は資格情報のためログ出力しない。
+   */
+  async establishSession(
+    id: string,
+    opts: { remember?: boolean } = {},
+  ): Promise<SessionAuthResult> {
     useConnectionStore.getState().setSocketState('connecting');
-    const res = (await this.client.request<AuthRequest>({
-      type: 'auth',
-      id,
-      password,
-    })) as ServerMessage;
-    if (res.type !== 'auth') {
-      throw new Error('予期しない応答: ' + res.type);
-    }
-    const auth = res as AuthResponse;
-    if (!auth.ok) {
-      throw new Error(auth.error?.message ?? '認証失敗');
-    }
-    const chars = auth.characters ?? [];
-    useSessionStore.getState().setCharacters(chars);
-    // 再接続時の自動再認証用に資格を保持(CR-5)。
-    this.credentials = { id, password };
-    return chars;
+    const result = await establishSession(id, opts);
+    // 再接続時の自動再確立用に保持(CR-5)。
+    this.auth = { id };
+    return result;
   }
 
   /**
-   * セッション開始(キャラ選択)。BE は session を払い出し snapshot を送る。
-   * 応答(reqIdエコー)から session を取得し、sessionStore に登録・アクティブ化。
+   * 保存済みID一覧取得(WS saved.list, reqId相関)。
+   * ラベル選択用。生IDは来ず ref で隠蔽。sessionStore へも反映。
    */
-  async openSession(charId: string): Promise<string> {
-    const res = (await this.client.request<SessionOpenRequest>({
-      type: 'session.open',
-      charId,
+  async fetchSavedList(): Promise<SavedListItem[]> {
+    const res = (await this.client.request<SavedListRequest>({
+      type: 'saved.list',
     })) as ServerMessage;
+    if (res.type !== 'saved.list') {
+      throw new Error('予期しない応答: ' + res.type);
+    }
+    const ev = res as SavedListEvent;
+    if (ev.ok === false) {
+      throw new Error(ev.error?.message ?? '保存済みID取得失敗');
+    }
+    const items = ev.items ?? [];
+    useSessionStore.getState().setSaved(items);
+    return items;
+  }
+
+  /**
+   * セッション開始(ID-only)。新規入力は id、保存選択は ref を渡す。
+   * BE は session を払い出し snapshot を送る。
+   * 応答(reqIdエコー)から session を取得し、sessionStore に登録・アクティブ化。
+   * @param opener `{id}` か `{ref}`。
+   * @param label タブ表示用ラベル(省略時は応答 label or 既定)。
+   */
+  async openSession(
+    opener: { id?: string; ref?: string },
+    label?: string,
+  ): Promise<string> {
+    if (!opener.id && !opener.ref) {
+      throw new Error('session.open には id か ref が必要');
+    }
+    const req: Omit<SessionOpenRequest, 'reqId'> & { reqId?: string } = {
+      type: 'session.open',
+    };
+    if (opener.id !== undefined) req.id = opener.id;
+    if (opener.ref !== undefined) req.ref = opener.ref;
+    const res = (await this.client.request<SessionOpenRequest>(
+      req,
+    )) as ServerMessage;
     const session = res.session;
     if (!session) {
       throw new Error('session.open 応答に session 無し');
     }
-    useSessionStore.getState().addSession(session, charId);
+    // session.open 応答は isAdmin を持つ場合がある(snapshot 経由でも可)。
+    const isAdmin =
+      res.type === 'session.open'
+        ? (res as SessionOpenResponse).isAdmin
+        : undefined;
+    useSessionStore.getState().addSession({
+      session,
+      label: label ?? opener.ref ?? opener.id ?? session,
+      opener,
+      isAdmin,
+    });
     useSessionStore.getState().setActive(session);
     return session;
   }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { WsClient } from '../src/ws/client';
 import { WsController } from '../src/ws/controller';
@@ -67,6 +67,17 @@ beforeEach(() => {
   useUserStore.getState().reset();
   useConnectionStore.getState().reset();
   MockWebSocket.last = null;
+  // establishSession の REST を成功スタブ化(cookie 発行を模す)。
+  globalThis.fetch = vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true, isAdmin: false }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  ) as unknown as typeof fetch;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 // ============================================================
@@ -91,7 +102,7 @@ describe('WsController.sendViewSet (A-24)', () => {
     const controller = setup();
     await Promise.resolve();
     const ws = MockWebSocket.last!;
-    useSessionStore.getState().addSession('s1', 'c1');
+    useSessionStore.getState().addSession({ session: 's1', label: 'A', opener: { id: 'phi-1' } });
     useSessionStore.getState().setActive('s1');
     ws.sent = [];
     controller.sendViewSet({ eagleEye: true });
@@ -163,7 +174,7 @@ describe('Settings display 変更で view.set 連動送信', () => {
 // ============================================================
 
 describe('統合フロー(mock WS)', () => {
-  it('auth → session.open → snapshot で各 store に反映', async () => {
+  it('establishSession → session.open → snapshot で各 store に反映', async () => {
     const controller = setup();
     await Promise.resolve(); // open フラッシュ
     const ws = MockWebSocket.last!;
@@ -172,21 +183,12 @@ describe('統合フロー(mock WS)', () => {
     ws.emit({ type: 'hello', protocolVersion: 1, serverTime: 0 } as ServerMessage);
     expect(useConnectionStore.getState().protocolVersion).toBe(1);
 
-    // auth
-    const authP = controller.auth('user', 'pw');
-    const authReqId = ws.lastSent().reqId as string;
-    ws.emit({
-      type: 'auth',
-      reqId: authReqId,
-      ok: true,
-      characters: [{ charId: 'c1', name: 'Hero' }],
-    });
-    const chars = await authP;
-    expect(chars).toHaveLength(1);
-    expect(useSessionStore.getState().characters[0].name).toBe('Hero');
+    // ログイン(ID-only, REST 確立)
+    const res = await controller.establishSession('phi-1');
+    expect(res.ok).toBe(true);
 
-    // session.open
-    const openP = controller.openSession('c1');
+    // session.open(id 指定)
+    const openP = controller.openSession({ id: 'phi-1' }, 'Hero');
     const openReqId = ws.lastSent().reqId as string;
     ws.emit({
       type: 'snapshot',
