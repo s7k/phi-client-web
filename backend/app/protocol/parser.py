@@ -284,13 +284,16 @@ class ProtocolParser:
             evs.append({"type": "list", "active": True, "lines": []})
             return evs
         if starts("#end-list"):
+            # #end-list は「リスト内容の終端」。選択肢は**表示したまま**にし、
+            # 真のリスト終了は #ex-list-mode-end(ログインで有効化)で行う。
+            # (従来は即 active:False で選択肢が一瞬で消えていた)
             self._in_list = False
             lines = self._list_lines
             self._list_lines = []
-            evs = [
-                {"type": "list", "active": True, "lines": lines},
-                {"type": "list", "active": False},
-            ]
+            return [{"type": "list", "active": True, "lines": lines}]
+        if text == "#ex-list-mode-end":
+            # リストモードの真の終了 → 非表示化。
+            evs: list[dict] = [{"type": "list", "active": False}]
             evs.extend(self._set_mode(list=False))
             return evs
 

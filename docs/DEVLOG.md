@@ -240,6 +240,15 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - BE 352 / FE 336 tests緑。docker実機で register→login→キャラ2件追加→一覧(uid非公開)確認。
 - 残: 旧Register.tsx(#ex-register新規作成)は温存・未配線。WS auth失効のApp通知は軽微未対応。
 
+## 6.15 修正: リスト(看板/移動選択)の選択肢が表示されない + 通知音既定オフ
+
+- **通知音**: `DEFAULT_NOTIFY.sound=false`(既定オフ、設定で有効化可)。
+- **リスト選択肢が消える**: parserが `#end-list` で即 `list active:False` を送り、看板/移動の選択肢が一瞬で消えていた。
+  - 修正: `#end-list` は選択肢を **active:True のまま表示維持**(内容終端のみ)。真の終了は `#ex-list-mode-end`(ログインで有効化済)で `active:False`→非表示。`#ex-list-mode-end` ハンドラ追加。
+  - 「数字入力欄」はサーバの `#s-edit`(番号入力)。選択肢が消えていたため文脈喪失していた→選択肢が表示されるように。
+- BE 353 tests緑(end-listでactive維持 / ex-list-mode-endでclose の回帰テスト追加)。
+- 「入力」ダイアログ(#s-edit)は一時的なサーバ入力待ち状態で、現在は出ない(ユーザー報告)。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

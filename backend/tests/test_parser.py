@@ -228,11 +228,21 @@ def test_list_block(parser):
     assert any(e["type"] == "list" and e["active"] for e in evs_start)
     assert parser.feed("1: 短剣".encode("cp932")) == []
     assert parser.feed("2: 鉄の剣".encode("cp932")) == []
+    # #end-list は選択肢を表示したまま active=True を維持(従来は即closeで消えていた)
     evs_end = parser.feed(b"#end-list")
     list_evs = [e for e in evs_end if e["type"] == "list"]
-    # 完成リスト + クローズ
-    assert list_evs[0]["lines"] == ["1: 短剣", "2: 鉄の剣"]
-    assert list_evs[-1]["active"] is False
+    assert list_evs[-1]["lines"] == ["1: 短剣", "2: 鉄の剣"]
+    assert list_evs[-1]["active"] is True
+
+
+def test_list_closes_on_ex_list_mode_end(parser):
+    # 真のリスト終了は #ex-list-mode-end(ログインで有効化)。これで非表示化。
+    parser.feed(b"#list")
+    parser.feed("1: a".encode("cp932"))
+    parser.feed(b"#end-list")
+    evs = parser.feed(b"#ex-list-mode-end")
+    list_evs = [e for e in evs if e["type"] == "list"]
+    assert list_evs and list_evs[-1]["active"] is False
 
 
 # --- more ブロック --------------------------------------------------------
