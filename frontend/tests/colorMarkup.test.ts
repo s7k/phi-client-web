@@ -108,3 +108,16 @@ describe('parseMarkup img= タグ', () => {
     ]);
   });
 });
+
+describe('empty tag /**/ is hidden', () => {
+  it('strips /**/ before name (anti-grief no-op marker)', () => {
+    const segs = parseMarkup('/**/Wilt');
+    const text = segs.filter((s) => s.kind === 'text').map((s: any) => s.text).join('');
+    expect(text).toBe('Wilt');
+  });
+  it('keeps valid color tags while stripping /**/', () => {
+    const segs = parseMarkup('/**//*color=red*/X/*.*/');
+    const text = segs.filter((s) => s.kind === 'text').map((s: any) => s.text).join('');
+    expect(text).toBe('X');
+  });
+});

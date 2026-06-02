@@ -60,7 +60,10 @@ body {
   padding: 0.75rem;
   box-sizing: border-box;
 }
-.game__map    { grid-area: map;    min-height: 0; overflow: auto; }
+.game__map    {
+  grid-area: map; min-height: 0; overflow: auto;
+  display: flex; align-items: center; justify-content: center;  /* エリア中央にマップ配置 */
+}
 .game__chat   { grid-area: chat;   min-height: 0; display: flex; }
 .game__status { grid-area: status; min-height: 0; overflow: auto; }
 .game__chat > * { flex: 1; min-height: 0; }  /* Chat を埋める */

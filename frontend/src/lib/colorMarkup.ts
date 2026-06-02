@@ -128,6 +128,10 @@ export function sanitizeImageUrl(raw: string): string | null {
  * stack: 開いた色(null=既定 push でカウント均衡)。
  */
 export function parseMarkup(text: string): MarkupSegment[] {
+  // 空タグ `/**/`(DM側の荒らし対策で名前前等に付く no-op マーカー。
+  // 先頭`*`の大声化回避エスケープ由来)は不可視にする([05]§1, A-14)。
+  text = text.replace(/\/\*\*\//g, '');
+
   const segments: MarkupSegment[] = [];
   const stack: (string | null)[] = [];
   let pos = 0;
