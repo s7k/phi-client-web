@@ -12,8 +12,8 @@
 .editdialog__box {
   width: 100%;
   max-width: 480px;
-  background: #1e293b;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.25rem;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
@@ -21,7 +21,7 @@
 
 .editdialog__title {
   margin: 0 0 0.75rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.95rem;
   font-weight: 600;
 }
@@ -30,11 +30,11 @@
 .editdialog__textarea {
   width: 100%;
   box-sizing: border-box;
-  background: #0f172a;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5rem 0.65rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.9rem;
   font-family: inherit;
   resize: vertical;
@@ -43,7 +43,7 @@
 .editdialog__input:focus,
 .editdialog__textarea:focus {
   outline: none;
-  border-color: #38bdf8;
+  border-color: var(--accent);
 }
 
 .editdialog__actions {
@@ -63,8 +63,8 @@
 }
 
 .editdialog__cancel {
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--surface-2);
+  color: var(--text);
 }
 .editdialog__submit {
   background: #2563eb;

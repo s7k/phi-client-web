@@ -16,6 +16,7 @@ import { useUiStore } from './stores/uiStore';
 import { useSettingsStore } from './stores/settingsStore';
 import type { DisplaySettings } from './stores/settingsStore';
 import { useKeyHandler } from './lib/useKeyHandler';
+import { useTheme } from './lib/useTheme';
 import { captureCanvas } from './lib/screenshot';
 import { getStoredToken } from './api/auth';
 import { Login } from './components/Login';
@@ -95,6 +96,8 @@ function Game({
 }
 
 export function App({ controller }: { controller: WsController }) {
+  // display.theme/fontScale を documentElement へ適用(ライト/ダーク切替)。
+  useTheme();
   const activeTab = useUiStore((s) => s.activeTab);
   // 起動時 token があればログイン済(自動復帰)→キャラ選択画面へ(A-34)。
   const [loggedIn, setLoggedIn] = useState(() => getStoredToken() !== null);

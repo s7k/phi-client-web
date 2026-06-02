@@ -12,8 +12,8 @@
 .confirm-box {
   width: 100%;
   max-width: 320px;
-  background: #1e293b;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.25rem;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
@@ -22,7 +22,7 @@
 .confirm-msg {
   margin: 0 0 1.25rem;
   white-space: pre-line;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.9rem;
   line-height: 1.5;
 }
@@ -45,8 +45,8 @@
 
 .confirm-cancel {
   background: transparent;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  color: #cbd5e1;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
 }
 
 .confirm-ok {

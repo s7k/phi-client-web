@@ -3,15 +3,15 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: radial-gradient(circle at 30% 20%, #1e293b, #0f172a 70%);
+  background: radial-gradient(circle at 30% 20%, var(--surface), var(--bg) 70%);
   padding: 1.5rem;
 }
 
 .register__card {
   width: 100%;
   max-width: 420px;
-  background: rgba(30, 41, 59, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-faint);
   border-radius: 16px;
   padding: 2rem;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
@@ -23,7 +23,7 @@
   font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: 0.03em;
-  color: #e2e8f0;
+  color: var(--text);
   text-align: center;
 }
 
@@ -38,22 +38,22 @@
   flex-direction: column;
   gap: 0.35rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .register__field input {
   padding: 0.6rem 0.75rem;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: #0f172a;
-  color: #e2e8f0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
   font-size: 0.95rem;
   outline: none;
   transition: border-color 0.15s;
 }
 
 .register__field input:focus {
-  border-color: #38bdf8;
+  border-color: var(--accent);
 }
 
 .register__field input[aria-invalid='true'] {
@@ -67,7 +67,7 @@
 
 .register__hint {
   margin: 0;
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 0.8rem;
 }
 
@@ -91,14 +91,14 @@
   padding: 0.4rem;
   cursor: pointer;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: #0f172a;
-  color: #cbd5e1;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
 }
 
 .register__gra--selected {
-  border-color: #38bdf8;
-  box-shadow: 0 0 0 1px #38bdf8 inset;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
 }
 
 .register__gra-img {
@@ -146,8 +146,8 @@
 }
 
 .register__cancel {
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .register__submit:disabled,

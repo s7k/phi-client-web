@@ -1,12 +1,42 @@
+/* ===== セマンティックトークン(テーマ切替) =====
+   :root = ダーク既定。:root[data-theme="light"] でライト上書き。
+   data-theme は useTheme フックが display.theme から設定する。
+   ここで定義する変数は UI クロム(背景/パネル/入力/枠/文字)のみ。
+   チャットのマークアップ色・マップ/EagleEye描画色・状態異常色等の
+   ゲームコンテンツ色は対象外(各所でハードコード維持)。 */
 :root {
   color-scheme: dark;
+  --bg: #0f172a;            /* ページ背景 */
+  --surface: #1e293b;       /* パネル/カード */
+  --surface-2: #334155;     /* 入力/副次ボタン */
+  --text: #e2e8f0;          /* 主文字 */
+  --text-muted: #94a3b8;    /* 副次文字 */
+  --text-faint: #64748b;    /* 補助/プレースホルダ */
+  --border: rgba(148, 163, 184, 0.3);  /* 枠 */
+  --border-faint: rgba(148, 163, 184, 0.15);  /* 弱い枠 */
+  --accent: #38bdf8;        /* アクセント(リンク/フォーカス/強調) */
+  --surface-glass: rgba(30, 41, 59, 0.9);  /* カード(半透明) */
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #e8edf3;
+  --text: #1e293b;
+  --text-muted: #5b6b7f;
+  --text-faint: #64748b;
+  --border: rgba(100, 116, 139, 0.35);
+  --border-faint: rgba(100, 116, 139, 0.2);
+  --accent: #0284c7;
+  --surface-glass: rgba(255, 255, 255, 0.92);
 }
 
 body {
   margin: 0;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg);
+  color: var(--text);
 }
 
 /* ===== ゲーム画面レイアウト =====
@@ -27,7 +57,7 @@ body {
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
 .game__actions {
@@ -38,13 +68,13 @@ body {
 .game__actions button {
   padding: 0.3rem 0.7rem;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: #1e293b;
-  color: #e2e8f0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
   font-size: 0.8rem;
   cursor: pointer;
 }
-.game__actions button:hover { background: #334155; }
+.game__actions button:hover { background: var(--surface-2); }
 
 /* 本体: デスクトップ grid(左 map+status / 右 chat) */
 .game__body {

@@ -3,15 +3,15 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: radial-gradient(circle at 30% 20%, #1e293b, #0f172a 70%);
+  background: radial-gradient(circle at 30% 20%, var(--surface), var(--bg) 70%);
   padding: 1.5rem;
 }
 
 .charsel__card {
   width: 100%;
   max-width: 440px;
-  background: rgba(30, 41, 59, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-faint);
   border-radius: 16px;
   padding: 2rem;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
@@ -30,27 +30,27 @@
   font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: #e2e8f0;
+  color: var(--text);
 }
 
 .charsel__subtitle {
   margin: 0 0 0.5rem;
   font-size: 1rem;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .charsel__logout {
   cursor: pointer;
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #0f172a;
-  color: #cbd5e1;
+  background: var(--bg);
+  color: var(--text-muted);
   font-size: 0.85rem;
   padding: 0.4rem 0.8rem;
 }
 
 .charsel__logout:not(:disabled):hover {
-  border-color: #38bdf8;
+  border-color: var(--accent);
 }
 
 .charsel__list {
@@ -74,16 +74,16 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  background: #0f172a;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #e2e8f0;
+  color: var(--text);
   text-align: left;
   cursor: pointer;
 }
 
 .charsel__char:not(:disabled):hover {
-  border-color: #38bdf8;
+  border-color: var(--accent);
 }
 
 .charsel__char-name {
@@ -92,7 +92,7 @@
 
 .charsel__char-server {
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--text-faint);
 }
 
 .charsel__delete {
@@ -113,7 +113,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  border-top: 1px solid var(--border-faint);
   padding-top: 1.5rem;
 }
 
@@ -122,21 +122,21 @@
   flex-direction: column;
   gap: 0.35rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .charsel__field input {
   padding: 0.55rem 0.75rem;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: #0f172a;
-  color: #e2e8f0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
   font-size: 0.95rem;
   outline: none;
 }
 
 .charsel__field input:focus {
-  border-color: #38bdf8;
+  border-color: var(--accent);
 }
 
 .charsel__add {
@@ -156,7 +156,7 @@
 }
 
 .charsel__hint {
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 0.85rem;
 }
 

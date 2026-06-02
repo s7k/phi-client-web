@@ -3,15 +3,15 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: radial-gradient(circle at 30% 20%, #1e293b, #0f172a 70%);
+  background: radial-gradient(circle at 30% 20%, var(--surface), var(--bg) 70%);
   padding: 1.5rem;
 }
 
 .login__card {
   width: 100%;
   max-width: 360px;
-  background: rgba(30, 41, 59, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-faint);
   border-radius: 16px;
   padding: 2rem;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
@@ -23,14 +23,14 @@
   font-size: 1.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: #e2e8f0;
+  color: var(--text);
   text-align: center;
 }
 
 .login__subtitle {
   margin: 0 0 1rem;
   font-size: 1rem;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .login__form,
@@ -45,22 +45,22 @@
   flex-direction: column;
   gap: 0.35rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .login__field input {
   padding: 0.6rem 0.75rem;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: #0f172a;
-  color: #e2e8f0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
   font-size: 0.95rem;
   outline: none;
   transition: border-color 0.15s;
 }
 
 .login__field input:focus {
-  border-color: #38bdf8;
+  border-color: var(--accent);
 }
 
 .login__submit,
@@ -103,14 +103,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  background: #0f172a;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  color: #e2e8f0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
   text-align: left;
 }
 
 .login__char:not(:disabled):hover {
-  border-color: #38bdf8;
+  border-color: var(--accent);
 }
 
 .login__char-name {
@@ -119,11 +119,11 @@
 
 .login__char-server {
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--text-faint);
 }
 
 .login__empty {
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 0.85rem;
 }
 
@@ -145,20 +145,20 @@
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .login__remember input {
   width: 1rem;
   height: 1rem;
-  accent-color: #38bdf8;
+  accent-color: var(--accent);
 }
 
 .login__link {
   background: none;
   border: none;
-  color: #38bdf8;
+  color: var(--accent);
   font-size: 0.85rem;
   cursor: pointer;
   padding: 0.25rem;
