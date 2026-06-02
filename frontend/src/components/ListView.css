@@ -1,13 +1,22 @@
+/* リスト(看板/移動ゲート等の選択肢)は **画面下部中央の浮動オーバーレイ**。
+   ステータス欄に埋もれてスマホで見えない問題を解消し、常に前面表示する。 */
 .listview {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(440px, calc(100% - 1.5rem));
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent);
   border-radius: 10px;
   padding: 0.75rem;
   max-height: 60vh;
   overflow: auto;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
 }
 
 .listview__items {
