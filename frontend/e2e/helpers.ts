@@ -52,6 +52,11 @@ export async function mockWsServer(page: Page): Promise<void> {
       }
       if (msg.type === 'auth') {
         ws.send(JSON.stringify({ type: 'auth', ok: true, isAdmin: false }));
+      } else if (msg.type === 'settings.get') {
+        // 起動時 preloadSettings の先読みに空応答(未設定=既定値)。
+        ws.send(JSON.stringify({
+          type: 'settings', reqId: msg.reqId, ok: true, scope: (msg as { scope?: string }).scope, value: null,
+        }));
       } else if (msg.type === 'session.open') {
         ws.send(JSON.stringify({
           type: 'session.open', reqId: msg.reqId, ok: true,

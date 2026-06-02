@@ -7,6 +7,7 @@ import { useChatStore } from '../src/stores/chatStore';
 import { useConnectionStore } from '../src/stores/connectionStore';
 import { useNoticeStore } from '../src/stores/noticeStore';
 import { useUiStore } from '../src/stores/uiStore';
+import { useSettingsStore } from '../src/stores/settingsStore';
 import { clearStoredToken, getStoredToken, setStoredToken } from '../src/api/auth';
 import type { ServerMessage } from '../src/types/protocol';
 
@@ -73,6 +74,7 @@ beforeEach(() => {
   useConnectionStore.getState().reset();
   useNoticeStore.getState().reset();
   useUiStore.getState().reset();
+  useSettingsStore.getState().reset();
   MockWebSocket.last = null;
   clearStoredToken();
   stubAuthFetch();
@@ -263,6 +265,34 @@ describe('WsController イベント配線', () => {
     useSessionStore.getState().setActive('s1');
     ws.emit({ type: 'message', channel: 'log', text: 'noSession' } as ServerMessage);
     expect(useChatStore.getState().bySession['s1'][0].text).toBe('noSession');
+  });
+});
+
+describe('WsController.preloadSettings (起動時の設定先読み)', () => {
+  it('display/keybind/notify/intervals の settings.get を送り store へ反映', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    emitAuthOk(ws); // auth ゲート解除(保留送信フラッシュ)
+    ws.sent = [];
+
+    const p = controller.preloadSettings();
+    await Promise.resolve();
+    const reqs = ws.sent.map((d) => JSON.parse(d)).filter((m) => m.type === 'settings.get');
+    expect(reqs.map((m) => m.scope).sort()).toEqual(
+      ['display', 'intervals', 'keybind', 'notify'],
+    );
+    // 各 settings.get に応答(display は theme=light を返す)。
+    for (const m of reqs) {
+      ws.emit({
+        type: 'settings', reqId: m.reqId, ok: true, scope: m.scope,
+        value: m.scope === 'display' ? { theme: 'light' } : {},
+      } as ServerMessage);
+    }
+    await p;
+    expect(
+      (useSettingsStore.getState().byScope['display'] as { theme?: string })?.theme,
+    ).toBe('light');
   });
 });
 

@@ -9,7 +9,7 @@
  * - game画面: タブ(F9) + ステータス(F6) + マップ(F4) + チャット(F7)。
  *   リスト/編集ダイアログ(F9)とキーハンドラ(F8)を配線。
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { WsProvider } from './ws/WsContext';
 import type { WsController } from './ws/controller';
 import { useUiStore } from './stores/uiStore';
@@ -120,6 +120,13 @@ export function App({ controller }: { controller: WsController }) {
   const activeTab = useUiStore((s) => s.activeTab);
   // 起動時 token があればログイン済(自動復帰)→キャラ選択画面へ(A-34)。
   const [loggedIn, setLoggedIn] = useState(() => getStoredToken() !== null);
+
+  // ログイン後すぐ全設定を先読み(theme/fontScale を起動時に適用。設定画面を
+  // 開くまでライトテーマが反映されなかった件の対策)。
+  useEffect(() => {
+    if (!loggedIn) return;
+    void controller.preloadSettings();
+  }, [loggedIn, controller]);
 
   let screen: React.ReactNode;
   if (!loggedIn) {

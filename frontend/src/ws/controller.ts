@@ -504,6 +504,17 @@ export class WsController {
     return res.value as T | undefined;
   }
 
+  /**
+   * 全 scope の設定を BE から先読みし settingsStore へ反映(ログイン直後に呼ぶ)。
+   * theme/fontScale(display)を起動時に適用するため。これが無いと設定画面を
+   * 開くまでライトテーマ等が反映されなかった。WS auth ゲートで auth ok 後に送信。
+   * 各取得失敗は無視(未設定 scope は既定値のまま)。
+   */
+  async preloadSettings(): Promise<void> {
+    const scopes: SettingsScope[] = ['display', 'keybind', 'notify', 'intervals'];
+    await Promise.all(scopes.map((s) => this.getSettings(s).catch(() => undefined)));
+  }
+
   /** 設定保存(永続化はBE)。即座に settingsStore へ反映(楽観更新)。 */
   setSettings(scope: SettingsScope, value: unknown): void {
     useSettingsStore.getState().setScope(scope, value);
