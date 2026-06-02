@@ -129,14 +129,14 @@ async def test_hello_reports_unauthenticated_on_connect(server):
 
 
 async def test_ws_auth_message_sets_authenticated_and_admin(server):
-    """A-33: WS `{type:auth, token}` 検証で `{auth, ok:true, isAdmin}` 応答。"""
+    """A-33/A-34: WS `{type:auth, token}` 検証で `{auth, ok:true, isAdmin}` 応答。"""
     from app.auth import AuthService, UidCipher
     from app.store import Store
 
     store = Store.open(":memory:")
     auth = AuthService(store, UidCipher(UidCipher.generate_key()))
-    auth.remember_id("ADM_ID", is_admin=True)
-    tok = auth.establish_session("ADM_ID")
+    auth.register("adm", "password1", is_admin=True)
+    tok = auth.login("adm", "password1")
 
     ws = FakeWebSocket()
     conn = WsConnection(ws, server, auth=auth)
@@ -150,7 +150,7 @@ async def test_ws_auth_message_sets_authenticated_and_admin(server):
     assert resp["reqId"] == "a1"
     # token は応答に含めない(資格情報)。
     assert "token" not in resp
-    assert conn._id_key is not None
+    assert conn._account_id == "adm"
     ws.disconnect()
     await task
     store.close()
@@ -172,39 +172,78 @@ async def test_ws_auth_invalid_token_returns_not_ok(server):
     await _wait(lambda: any(m["type"] == "auth" for m in ws.sent))
     resp = next(m for m in ws.sent if m["type"] == "auth")
     assert resp["ok"] is False
-    assert conn._id_key is None
+    assert conn._account_id is None
     ws.disconnect()
     await task
     store.close()
 
 
-async def test_saved_list_returns_refs_no_raw_id(server):
-    """saved.list は ref(id_key)/label/isAdmin のみ(生ID非公開)。"""
+async def test_session_open_charid_decrypts_and_opens(fake_sock):
+    """A-34: session.open {charId} → 所有 char の phi_uid 復号で #open。"""
     from app.auth import AuthService, UidCipher
     from app.store import Store
-    from app.store.db import id_key_of
 
     store = Store.open(":memory:")
     auth = AuthService(store, UidCipher(UidCipher.generate_key()))
-    auth.remember_id("ID_A", label="A", is_admin=True)
-    auth.remember_id("ID_B", label="B")
+    auth.register("wilt", "password1")
+    store.create_character("ch1", "wilt", label="Ransaia Wilt",
+                           phi_uid_enc=auth.cipher.encrypt("uid_secret"),
+                           host="game1", port=5000)
+    tok = auth.login("wilt", "password1")
 
+    mgr = SessionManager(socket_factory=lambda: fake_sock)
     ws = FakeWebSocket()
-    conn = WsConnection(ws, server, auth=auth)
+    conn = WsConnection(ws, mgr, auth=auth)
     task = asyncio.create_task(conn.run())
-    ws.feed({"type": "saved.list", "reqId": "s"})
-    await _wait(lambda: any(m["type"] == "saved" for m in ws.sent))
-    resp = next(m for m in ws.sent if m["type"] == "saved")
-    refs = {it["ref"]: it for it in resp["items"]}
-    assert id_key_of("ID_A") in refs
-    assert refs[id_key_of("ID_A")]["isAdmin"] is True
-    assert refs[id_key_of("ID_B")]["label"] == "B"
-    # 生IDは応答に含まれない。
-    blob = str(resp)
-    assert "ID_A" not in blob and "ID_B" not in blob
+    await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
+    ws.feed({"type": "auth", "token": tok})
+    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws.sent))
+    ws.feed({"type": "session.open", "reqId": "o", "charId": "ch1"})
+    await _wait(lambda: any(m["type"] == "session.open" and m.get("ok")
+                            for m in ws.sent))
+    resp = next(m for m in ws.sent if m["type"] == "session.open")
+    assert resp["ok"] is True
+    assert resp["label"] == "Ransaia Wilt"
+    # 復号 uid で #open、保存 host/port で接続。
+    assert any("#open uid_secret" in s.decode("cp932") for s in fake_sock.sent)
+    assert fake_sock.connect_args == ("game1", 5000)
     ws.disconnect()
     await task
     store.close()
+    await mgr.close_all()
+
+
+async def test_session_open_foreign_char_forbidden(fake_sock):
+    """A-34: 他人の char を session.open → FORBIDDEN(uid 復号も接続も起きない)。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+    auth.register("wilt", "password1")
+    auth.register("other", "password1")
+    store.create_character("ch_other", "other",
+                           phi_uid_enc=auth.cipher.encrypt("uid_x"))
+    tok = auth.login("wilt", "password1")
+
+    mgr = SessionManager(socket_factory=lambda: fake_sock)
+    ws = FakeWebSocket()
+    conn = WsConnection(ws, mgr, auth=auth)
+    task = asyncio.create_task(conn.run())
+    await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
+    ws.feed({"type": "auth", "token": tok})
+    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws.sent))
+    ws.feed({"type": "session.open", "reqId": "o", "charId": "ch_other"})
+    await _wait(lambda: any(m["type"] == "session.open" and not m.get("ok")
+                            for m in ws.sent))
+    resp = next(m for m in ws.sent
+                if m["type"] == "session.open" and not m.get("ok"))
+    assert resp["error"]["code"] == "FORBIDDEN"
+    assert fake_sock.connect_args is None  # 接続していない
+    ws.disconnect()
+    await task
+    store.close()
+    await mgr.close_all()
 
 
 async def test_session_open_response_a10(server, fake_sock):
@@ -284,23 +323,28 @@ async def test_session_open_port_out_of_range_bad_request(server):
     await task
 
 
-async def test_session_open_ref_uses_saved_host_port(fake_sock):
-    """A-32: ref open は保存 host/port を採用し接続(明示無し時)。"""
+async def test_session_open_char_uses_saved_host_port(fake_sock):
+    """A-34: charId open はキャラ保存の host/port を採用し接続。"""
     from app.auth import AuthService, UidCipher
     from app.store import Store
-    from app.store.db import id_key_of
 
     store = Store.open(":memory:")
     auth = AuthService(store, UidCipher(UidCipher.generate_key()))
-    auth.remember_id("ID_R", label="R", host="saved.example", port=7777)
-    ref = id_key_of("ID_R")
+    auth.register("wilt", "password1")
+    store.create_character("chR", "wilt", label="R",
+                           phi_uid_enc=auth.cipher.encrypt("uid_r"),
+                           host="saved.example", port=7777)
+    tok = auth.login("wilt", "password1")
 
     mgr = SessionManager(host="default.example", port=1111,
                          socket_factory=lambda: fake_sock)
     ws = FakeWebSocket()
     conn = WsConnection(ws, mgr, auth=auth)
     task = asyncio.create_task(conn.run())
-    ws.feed({"type": "session.open", "reqId": "r", "ref": ref})
+    await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
+    ws.feed({"type": "auth", "token": tok})
+    await _wait(lambda: any(m["type"] == "auth" and m.get("ok") for m in ws.sent))
+    ws.feed({"type": "session.open", "reqId": "r", "charId": "chR"})
     await _wait(lambda: any(m["type"] == "session.open" and m.get("ok")
                             for m in ws.sent))
     assert fake_sock.connect_args == ("saved.example", 7777)
@@ -308,36 +352,6 @@ async def test_session_open_ref_uses_saved_host_port(fake_sock):
     await task
     store.close()
     await mgr.close_all()
-
-
-async def test_session_open_remember_saves_host_port(server):
-    """A-32: id+remember 時に host/port を saved_ids へ保存。saved.list で往復。"""
-    from app.auth import AuthService, UidCipher
-    from app.store import Store
-    from app.store.db import id_key_of
-
-    store = Store.open(":memory:")
-    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
-
-    ws = FakeWebSocket()
-    conn = WsConnection(ws, server, auth=auth)
-    task = asyncio.create_task(conn.run())
-    ws.feed({"type": "session.open", "reqId": "r", "id": "ID_M",
-             "remember": True, "label": "M", "host": "rem.example", "port": 8800})
-    await _wait(lambda: any(m["type"] == "session.open" and m.get("ok")
-                            for m in ws.sent))
-    # saved_ids へ host/port 保存されている。
-    row = store.get_saved_id(id_key_of("ID_M"))
-    assert row["host"] == "rem.example" and row["port"] == 8800
-    # saved.list 応答にも host/port が含まれる。
-    ws.feed({"type": "saved.list", "reqId": "s"})
-    await _wait(lambda: any(m["type"] == "saved" for m in ws.sent))
-    resp = next(m for m in ws.sent if m["type"] == "saved")
-    item = next(it for it in resp["items"] if it["ref"] == id_key_of("ID_M"))
-    assert item["host"] == "rem.example" and item["port"] == 8800
-    ws.disconnect()
-    await task
-    store.close()
 
 
 async def test_intent_dispatched_to_legacy(server, fake_sock):
@@ -516,14 +530,14 @@ async def test_non_raw_command_not_limited(server, fake_sock):
     await task
 
 
-def _make_auth(*ids):
-    """テスト用 AuthService(id を remember 済)を返す。"""
+def _make_auth(*account_ids):
+    """テスト用 AuthService(アカウントを登録済)を返す。"""
     from app.auth import AuthService, UidCipher
     from app.store import Store
     store = Store.open(":memory:")
     auth = AuthService(store, UidCipher(UidCipher.generate_key()))
-    for i in ids:
-        auth.remember_id(i)
+    for a in account_ids:
+        auth.register(a, "password1")
     return auth
 
 
@@ -538,7 +552,7 @@ async def test_ws_conn_limit_rejects_authenticated(server):
     # A-33: WS auth 時、同時接続上限超過で auth ok:false。
     cl = ConcurrencyLimiter(limit=2)
     auth = _make_auth("acc")
-    tok = auth.establish_session("acc")  # 同一 id_key で複数接続
+    tok = auth.login("acc", "password1")  # 同一 account で複数接続
     conns = []
     for i in range(2):
         ws = FakeWebSocket()
@@ -561,7 +575,7 @@ async def test_ws_conn_limit_rejects_authenticated(server):
     ws0, t0 = conns[0]
     ws0.disconnect()
     await t0
-    await _wait(lambda: cl.count(__import__("app.store.db", fromlist=["id_key_of"]).id_key_of("acc")) == 1)
+    await _wait(lambda: cl.count("acc") == 1)
     ws4 = FakeWebSocket()
     conn4 = WsConnection(ws4, server, auth=auth, conn_limiter=cl)
     t4 = asyncio.create_task(conn4.run())
@@ -593,9 +607,12 @@ class FakeStore:
 
 
 async def _auth_conn(ws, mgr, *, plain_id="acc1", auth=None, **kw):
-    """WS auth 済みの conn を起動(settings 等の要認証フロー用, A-33)。"""
+    """WS auth 済みの conn を起動(settings 等の要認証フロー用, A-33)。
+
+    plain_id は account_id として扱う(A-34)。
+    """
     auth = auth or _make_auth(plain_id)
-    tok = auth.establish_session(plain_id)
+    tok = auth.login(plain_id, "password1")
     conn = WsConnection(ws, mgr, auth=auth, **kw)
     task = asyncio.create_task(conn.run())
     await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))

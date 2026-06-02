@@ -228,6 +228,18 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
   - **チャットログ自動スクロール**(useRef→scrollTop=scrollHeight)で最新が常に見える。
 - App.tsx を topbar + body(map/chat/status 3区画, grid-areas) に再構成。FE 315 tests緑。
 
+## 6.14 認証モデル刷新: アカウント+複数キャラ(A-34, A-31/A-33置換)
+
+- **要望**: 1ログインID(例 wilt + パスワード)の下に**複数キャラ**(ラベル+PHI ID+IP+ポート)を保持。例: wilt → 「Ransaia Wilt」「旧世界 Wilt」。キャラは**既存キャラの登録**(PHI ID+IP+ポート入力)で増やす。アカウント新規登録可。
+- **A-34 確定モデル**:
+  - `accounts(account_id PK, password_hash argon2id, is_admin, created_at)`、`characters(char_id uuid, account_id FK, label, phi_uid_enc[PHI_SECRET_KEY暗号], host, port)`。saved_ids廃止。
+  - REST(Bearer/localStorage token維持): `POST /api/auth/register{accountId,password}`(409重複), `/login→{token,isAdmin}`(401, account+IPレート), `/logout`。`GET/POST/DELETE /api/characters`(uid非公開・所有検証)。
+  - WS: `{type:auth,token}`→account紐付け。`session.open {charId}`→所有検証+phi_uid復号+`#open <uid>`(char.host:port)。旧 {id|ref}/saved.list/establishSession 撤去。
+  - admin=accounts.is_admin。admin_cli: `create-account/grant/revoke/list`。
+  - FE: ログイン(ID+パス)→キャラ選択画面(一覧/追加[label+PHI ID+IP+port]/削除)→カードクリックで接続。複数キャラはタブ同時接続可。
+- BE 352 / FE 336 tests緑。docker実機で register→login→キャラ2件追加→一覧(uid非公開)確認。
+- 残: 旧Register.tsx(#ex-register新規作成)は温存・未配線。WS auth失効のApp通知は軽微未対応。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

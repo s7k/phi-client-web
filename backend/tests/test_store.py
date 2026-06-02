@@ -1,12 +1,11 @@
-"""B8 Store テスト([02]§6 / [08]§4 / [12]§1.4)。
+"""B8 Store テスト([02]§6 / [08]§4 / [12]§1)。
 
 メモリ DB で CRUD・gra_key 一意・sha256 冪等・settings upsert・
-Index.txt 取込/生成ラウンドトリップを検証。ID-only: saved_ids を対象。
+Index.txt 取込/生成ラウンドトリップを検証。A-34: accounts + characters を対象。
 """
 import pytest
 
 from app.store import Store
-from app.store.db import id_key_of
 
 
 @pytest.fixture
@@ -59,120 +58,98 @@ def test_tables_present(store):
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()
     names = {r["name"] for r in rows}
-    for t in ("saved_ids", "characters", "sessions", "sessions_web",
+    for t in ("accounts", "characters", "sessions", "sessions_web",
               "settings", "chara_graphics", "chara_index"):
         assert t in names
-    # ID-only 再設計で accounts は廃止。
-    assert "accounts" not in names
+    # A-34 再設計で saved_ids は廃止。
+    assert "saved_ids" not in names
 
 
 # ----------------------------------------------------------------------
-# saved_ids(暗号保存 / 管理者フラグ)
+# accounts(Web 認証 / 管理者フラグ, A-34)
 # ----------------------------------------------------------------------
 
-def test_saved_id_crud(store):
-    key = id_key_of("alice")
-    store.upsert_saved_id(key, b"enc1", label="L1")
-    row = store.get_saved_id(key)
-    assert row["id_key"] == key
-    assert row["id_enc"] == b"enc1"
-    assert row["label"] == "L1"
+def test_account_crud(store):
+    store.create_account("alice", "hash1")
+    row = store.get_account("alice")
+    assert row["account_id"] == "alice"
+    assert row["password_hash"] == "hash1"
+    assert row["is_admin"] == 0
     assert row["created_at"].endswith("Z")
-    # upsert で id_enc/label 更新(is_admin/label は None で維持)
-    store.upsert_saved_id(key, b"enc2")
-    assert store.get_saved_id(key)["id_enc"] == b"enc2"
-    assert store.get_saved_id(key)["label"] == "L1"
-    assert store.get_saved_id(id_key_of("missing")) is None
+    assert store.get_account("missing") is None
 
 
-def test_saved_id_host_port_roundtrip(store):
-    """A-32: host/port を保存・取得できる。None 指定は既存値維持。"""
-    key = id_key_of("alice")
-    store.upsert_saved_id(key, b"e", label="L", host="h.example", port=9000)
-    row = store.get_saved_id(key)
-    assert row["host"] == "h.example"
-    assert row["port"] == 9000
-    # host/port 省略の upsert は既存値を維持。
-    store.upsert_saved_id(key, b"e2")
-    row = store.get_saved_id(key)
-    assert row["host"] == "h.example" and row["port"] == 9000
-    # 明示更新は上書き。
-    store.upsert_saved_id(key, b"e3", host="other", port=1)
-    row = store.get_saved_id(key)
-    assert row["host"] == "other" and row["port"] == 1
-    # list_saved_ids にも host/port が含まれる。
-    listed = next(r for r in store.list_saved_ids() if r["id_key"] == key)
-    assert listed["host"] == "other" and listed["port"] == 1
+def test_account_duplicate_raises(store):
+    import sqlite3
+    store.create_account("alice", "h")
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_account("alice", "h2")
 
 
-def test_saved_id_host_port_default_none(store):
-    """A-32: host/port 未指定で保存すると NULL(None)。"""
-    key = id_key_of("bob")
-    store.upsert_saved_id(key, b"e")
-    row = store.get_saved_id(key)
-    assert row["host"] is None and row["port"] is None
+def test_account_update_password_hash(store):
+    store.create_account("alice", "h1")
+    store.update_password_hash("alice", "h2")
+    assert store.get_account("alice")["password_hash"] == "h2"
 
 
-def test_saved_id_touch_and_delete(store):
-    key = id_key_of("alice")
-    store.upsert_saved_id(key, b"e")
-    store.touch_saved_id(key, "2026-06-01T00:00:00Z")
-    assert store.get_saved_id(key)["last_used_at"] == "2026-06-01T00:00:00Z"
-    assert store.delete_saved_id(key) is True
-    assert store.delete_saved_id(key) is False
+def test_account_admin_grant_revoke(store):
+    store.create_account("alice", "h")
+    assert store.is_account_admin("alice") is False
+    store.set_account_admin("alice", True)
+    assert store.is_account_admin("alice") is True
+    store.set_account_admin("alice", False)
+    assert store.is_account_admin("alice") is False
 
 
-def test_list_saved_ids_sorted(store):
+def test_account_admin_missing_is_false(store):
+    assert store.is_account_admin("nobody") is False
+
+
+def test_list_accounts_sorted(store):
     for a in ("carol", "alice", "bob"):
-        store.upsert_saved_id(id_key_of(a), b"e", label=a)
-    rows = store.list_saved_ids()
-    keys = [r["id_key"] for r in rows]
-    assert keys == sorted(keys)
+        store.create_account(a, "h")
+    ids = [r["account_id"] for r in store.list_accounts()]
+    assert ids == sorted(ids)
 
 
 # ----------------------------------------------------------------------
-# is_admin(管理者フラグ)
+# characters(アカウント配下の複数キャラ, A-34)
 # ----------------------------------------------------------------------
 
-def test_saved_default_not_admin(store):
-    key = id_key_of("alice")
-    store.upsert_saved_id(key, b"e")
-    assert store.get_saved_id(key)["is_admin"] == 0
-    assert store.is_saved_admin(key) is False
-    assert store.list_admin_keys() == []
-
-
-def test_set_saved_admin_grant_and_revoke(store):
-    key = id_key_of("alice")
-    store.upsert_saved_id(key, b"e")
-    store.set_saved_admin(key, True)
-    assert store.is_saved_admin(key) is True
-    assert store.get_saved_id(key)["is_admin"] == 1
-    assert store.list_admin_keys() == [key]
-    store.set_saved_admin(key, False)
-    assert store.is_saved_admin(key) is False
-    assert store.list_admin_keys() == []
-
-
-def test_is_saved_admin_missing_is_false(store):
-    assert store.is_saved_admin(id_key_of("nobody")) is False
-
-
-def test_character_upsert_and_list(store):
-    store.upsert_character("c1", "owner", display_name="Hero",
-                           legacy_uid_enc=b"\x01\x02", legacy_host="game1")
+def test_character_crud_and_list(store):
+    store.create_account("owner", "h")
+    store.create_character("c1", "owner", label="Hero",
+                           phi_uid_enc=b"\x01\x02", host="game1", port=1000)
     row = store.get_character("c1")
-    assert row["display_name"] == "Hero"
-    assert row["legacy_uid_enc"] == b"\x01\x02"
-    assert row["legacy_host"] == "game1"
+    assert row["label"] == "Hero"
+    assert row["phi_uid_enc"] == b"\x01\x02"
+    assert row["host"] == "game1" and row["port"] == 1000
 
-    # upsert で更新
-    store.upsert_character("c1", "owner", display_name="Hero2")
-    assert store.get_character("c1")["display_name"] == "Hero2"
+    # update: None 指定は維持、明示は上書き
+    store.update_character("c1", label="Hero2")
+    row = store.get_character("c1")
+    assert row["label"] == "Hero2"
+    assert row["host"] == "game1"  # 維持
+    store.update_character("c1", host="game2", port=2000)
+    row = store.get_character("c1")
+    assert row["host"] == "game2" and row["port"] == 2000
 
-    store.upsert_character("c2", "owner")
+    store.create_character("c2", "owner", label="Sub")
     chars = store.list_characters("owner")
     assert [c["char_id"] for c in chars] == ["c1", "c2"]
+
+    assert store.delete_character("c1") is True
+    assert store.delete_character("c1") is False
+    assert [c["char_id"] for c in store.list_characters("owner")] == ["c2"]
+
+
+def test_character_fk_cascade_on_account_delete(store):
+    store.create_account("owner", "h")
+    store.create_character("c1", "owner")
+    store.conn.execute("DELETE FROM accounts WHERE account_id = ?", ("owner",))
+    store.conn.commit()
+    # ON DELETE CASCADE でキャラも消える。
+    assert store.get_character("c1") is None
 
 
 # ----------------------------------------------------------------------
@@ -180,7 +157,8 @@ def test_character_upsert_and_list(store):
 # ----------------------------------------------------------------------
 
 def test_game_session(store):
-    store.upsert_character("c1", "owner")
+    store.create_account("owner", "h")
+    store.create_character("c1", "owner")
     store.create_session("s1", "c1")
     assert store.get_session("s1")["state"] == "attached"
     store.set_session_state("s1", "detached")
@@ -190,12 +168,11 @@ def test_game_session(store):
 
 
 def test_web_session(store):
-    store.create_web_session("tok1", id_key_of("a"), b"enc",
+    store.create_web_session("tok1", "alice",
                              "2026-06-01T00:00:00Z",
                              "2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z")
     row = store.get_web_session("tok1")
-    assert row["id_key"] == id_key_of("a")
-    assert row["id_enc"] == b"enc"
+    assert row["account_id"] == "alice"
     store.touch_web_session("tok1", "2026-06-01T00:10:00Z")
     assert store.get_web_session("tok1")["last_seen_at"] == "2026-06-01T00:10:00Z"
     store.delete_web_session("tok1")

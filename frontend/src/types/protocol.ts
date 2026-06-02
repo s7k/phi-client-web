@@ -69,35 +69,16 @@ export type ConnectionState =
 // --- 5.1 接続・セッション ---
 
 /**
- * 保存済みID一覧要求([07]§5.1, ID-only ログイン)。
- * 応答: `saved.list`(SavedListEvent)。ラベルのみ返り、生IDは ref で隠蔽。
- */
-export interface SavedListRequest extends Envelope {
-  type: 'saved.list';
-  /** reqId必須(reqId相関で応答待ち)。 */
-  reqId: string;
-}
-
-/**
- * セッション開始([07]§5.1, ID-only)。
- * 新規入力は `id`、保存選択は `ref`。どちらか一方を指定。
+ * セッション開始([07]§5.1, A-34 アカウント+キャラ構造)。
+ * ログイン後のキャラ一覧から `charId` で選択して接続する。
+ * PHI uid / 接続先(host/port)は BE がアカウント+charId から解決(FE は送らない)。
  * **応答**: `{type:"session.open", reqId, ok, session, isAdmin}` → 続けて connection+snapshot。
  */
 export interface SessionOpenRequest extends Envelope {
   type: 'session.open';
   reqId?: string;
-  /** 新規入力の PHI ID(生)。 */
-  id?: string;
-  /** 保存済みID参照(SavedListItem.ref)。生IDを露出しない。 */
-  ref?: string;
-  /** 接続先サーバIP/ホスト(A-32)。省略時はBE既定。 */
-  host?: string;
-  /** 接続先ポート(A-32, 1-65535)。省略時はBE既定。 */
-  port?: number;
-  /** このIDを保存する(remember)。新規入力時のみ意味あり。 */
-  remember?: boolean;
-  /** 保存時のラベル(任意)。 */
-  label?: string;
+  /** 接続するキャラの charId(アカウント配下)。 */
+  charId: string;
 }
 
 export interface SessionCloseRequest extends Envelope {
@@ -105,10 +86,10 @@ export interface SessionCloseRequest extends Envelope {
 }
 
 /**
- * WS 認証(A-33, token ベース)。
+ * WS 認証(A-33/A-34, token ベース)。
  * ブラウザ WS はヘッダを送れないため、接続確立後に最初のメッセージとして送る。
- * token は REST `POST /api/auth/session` 応答の token(localStorage 保存)。
- * 応答: `{type:"auth", ok, isAdmin}`(AuthResponse)。ok 受領後に saved.list/session.open。
+ * token は REST `POST /api/auth/login` 応答の token(localStorage 保存)。
+ * 応答: `{type:"auth", ok, isAdmin}`(AuthResponse)。ok 受領後に session.open。
  */
 export interface AuthRequest extends Envelope {
   type: 'auth';
@@ -292,7 +273,6 @@ export interface PingRequest extends Envelope {
 /** 全 C→S メッセージの discriminated union。 */
 export type ClientMessage =
   | AuthRequest
-  | SavedListRequest
   | SessionOpenRequest
   | SessionCloseRequest
   | MoveRequest
@@ -321,7 +301,7 @@ export interface HelloEvent extends Envelope {
 
 /**
  * WS 認証応答(A-33, token ベース)。AuthRequest への返信。
- * ok=true で認証成立 → 以後 saved.list/session.open 可。
+ * ok=true で認証成立 → 以後 session.open(charId)可。
  */
 export interface AuthResponse extends Envelope, ResponseFields {
   type: 'auth';
@@ -339,26 +319,6 @@ export interface SessionOpenResponse extends Envelope, ResponseFields {
   session?: string;
   /** 管理者か(将来のアップロード等の管理UI出し分け)。 */
   isAdmin?: boolean;
-}
-
-/** 保存済みID 1件。ラベルで選択し ref で session.open。生IDは含めない。 */
-export interface SavedListItem {
-  /** session.open に渡す不透明参照(生IDの代理)。 */
-  ref: string;
-  /** ユーザ表示用ラベル。 */
-  label: string;
-  /** 管理者IDか。 */
-  isAdmin?: boolean;
-  /** 保存済み接続先ホスト/IP(A-32)。ピッカー選択時の初期値。 */
-  host?: string;
-  /** 保存済み接続先ポート(A-32)。ピッカー選択時の初期値。 */
-  port?: number;
-}
-
-/** 保存済みID一覧応答([07]§6.1, ID-only)。reqId相関。 */
-export interface SavedListEvent extends Envelope, ResponseFields {
-  type: 'saved.list';
-  items: SavedListItem[];
 }
 
 export interface ConnectionEvent extends Envelope {
@@ -605,7 +565,6 @@ export type ServerMessage =
   | HelloEvent
   | AuthResponse
   | SessionOpenResponse
-  | SavedListEvent
   | ConnectionEvent
   | SnapshotEvent
   | MapEvent

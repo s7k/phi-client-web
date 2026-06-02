@@ -4,7 +4,7 @@
  * 責務:
  * - WS イベント(hello/connection/snapshot/map/status/cond/message/userList/mode/list/edit)
  *   を受け取り対応 store へ反映。
- * - establishSession(REST) / saved.list / session.open / chat 等の送信ヘルパ。
+ * - login/register(REST) / characters CRUD(REST) / session.open(charId) / chat 等の送信ヘルパ。
  * - A-02: reqId は WsClient.request が採番、BE がエコー。
  * - A-03: S→C は常に session 付与。session 欠落時はアクティブ session で補完。
  *
@@ -18,9 +18,6 @@ import type {
   ListSelectRequest,
   MoveMode,
   TurnDir,
-  SavedListEvent,
-  SavedListItem,
-  SavedListRequest,
   ServerMessage,
   SessionOpenRequest,
   SessionOpenResponse,
@@ -31,12 +28,21 @@ import type {
   ViewSetRequest,
 } from '../types/protocol';
 import {
-  establishSession,
+  login as restLogin,
+  register as restRegister,
   logout as restLogout,
   getStoredToken,
   setStoredToken,
-  type SessionAuthResult,
+  clearStoredToken,
+  type LoginResult,
 } from '../api/auth';
+import {
+  listCharacters,
+  createCharacter,
+  deleteCharacter,
+  type Character,
+  type CreateCharacterBody,
+} from '../api/characters';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useMapStore } from '../stores/mapStore';
@@ -267,7 +273,7 @@ export class WsController {
       for (const info of sessions) {
         try {
           // openSession は応答 session を再登録(BEが同一 session を払い出す想定)。
-          await this.openSession(info.opener, info.label);
+          await this.openSession(info.opener.charId, info.label);
         } catch (err) {
           useUiStore.getState().pushError(
             {
@@ -301,21 +307,41 @@ export class WsController {
   // ---------- intent 送信ヘルパ ----------
 
   /**
-   * セッション確立(ログイン, A-33 token)。
-   * REST POST /api/auth/session {id} で token を発行させる。これがログインの実体。
-   * 成功で token を localStorage 保存 + client/メモリへ反映し、
-   * client が WS auth ゲートを駆動できるようにする。{ok,isAdmin,token,label?} を返す。
-   * 注: PHI ID / token は資格情報のためログ出力しない。
+   * アカウント新規登録(A-34)。POST /api/auth/register {accountId, password}。
+   * 成功で {ok:true}。409(既存)等は AuthError を throw。token は発行されない
+   * (登録後にログインする想定)。
    */
-  async establishSession(
-    id: string,
-    opts: { remember?: boolean; label?: string } = {},
-  ): Promise<SessionAuthResult> {
+  async register(accountId: string, password: string): Promise<{ ok: true }> {
+    return restRegister(accountId, password);
+  }
+
+  /**
+   * ログイン(A-34)。POST /api/auth/login {accountId, password} で token を発行。
+   * 成功で token を localStorage 保存 + client/メモリへ反映し、
+   * client が WS auth ゲートを駆動できるようにする。{ok,token,isAdmin} を返す。
+   * 注: password / token は資格情報のためログ出力しない。
+   */
+  async login(accountId: string, password: string): Promise<LoginResult> {
     useConnectionStore.getState().setSocketState('connecting');
-    const result = await establishSession(id, opts);
-    // token を保持・永続化し、WS auth ゲートを駆動(A-33)。
+    const result = await restLogin(accountId, password);
+    // token を保持・永続化し、WS auth ゲートを駆動(A-33/A-34)。
     this.applyToken(result.token);
     return result;
+  }
+
+  /** キャラ一覧取得(GET /api/characters, Bearer)。 */
+  async fetchCharacters(): Promise<Character[]> {
+    return listCharacters();
+  }
+
+  /** 既存キャラの登録(POST /api/characters, Bearer)。追加後の1件 or null。 */
+  async addCharacter(body: CreateCharacterBody): Promise<Character | null> {
+    return createCharacter(body);
+  }
+
+  /** キャラ削除(DELETE /api/characters/{charId}, Bearer)。 */
+  async removeCharacter(charId: string): Promise<void> {
+    return deleteCharacter(charId);
   }
 
   /** token を保持・永続化し client に渡す(WS auth ゲート駆動)。 */
@@ -325,10 +351,11 @@ export class WsController {
     this.client.setAuthToken(token);
   }
 
-  /** token を破棄(ログアウト/auth失効)。client のゲートも解除。 */
+  /** token を破棄(ログアウト/auth失効)。localStorage/client のゲートも解除。 */
   private clearAuth(): void {
     this.token = null;
     this.client.setAuthToken(null);
+    clearStoredToken();
   }
 
   /**
@@ -360,55 +387,21 @@ export class WsController {
   }
 
   /**
-   * 保存済みID一覧取得(WS saved.list, reqId相関)。
-   * ラベル選択用。生IDは来ず ref で隠蔽。sessionStore へも反映。
-   */
-  async fetchSavedList(): Promise<SavedListItem[]> {
-    const res = (await this.client.request<SavedListRequest>({
-      type: 'saved.list',
-    })) as ServerMessage;
-    if (res.type !== 'saved.list') {
-      throw new Error('予期しない応答: ' + res.type);
-    }
-    const ev = res as SavedListEvent;
-    if (ev.ok === false) {
-      throw new Error(ev.error?.message ?? '保存済みID取得失敗');
-    }
-    const items = ev.items ?? [];
-    useSessionStore.getState().setSaved(items);
-    return items;
-  }
-
-  /**
-   * セッション開始(ID-only)。新規入力は id、保存選択は ref を渡す。
+   * セッション開始(A-34, charId)。ログイン後のキャラ一覧から charId で接続。
+   * PHI uid / host / port は BE がアカウント+charId から解決(FE は送らない)。
    * BE は session を払い出し snapshot を送る。
    * 応答(reqIdエコー)から session を取得し、sessionStore に登録・アクティブ化。
-   * @param opener `{id}` か `{ref}`。
-   * @param label タブ表示用ラベル(省略時は応答 label or 既定)。
+   * @param charId 接続するキャラの charId。
+   * @param label タブ表示用ラベル(省略時は charId)。
    */
-  async openSession(
-    opener: {
-      id?: string;
-      ref?: string;
-      host?: string;
-      port?: number;
-      remember?: boolean;
-      label?: string;
-    },
-    label?: string,
-  ): Promise<string> {
-    if (!opener.id && !opener.ref) {
-      throw new Error('session.open には id か ref が必要');
+  async openSession(charId: string, label?: string): Promise<string> {
+    if (!charId) {
+      throw new Error('session.open には charId が必要');
     }
     const req: Omit<SessionOpenRequest, 'reqId'> & { reqId?: string } = {
       type: 'session.open',
+      charId,
     };
-    if (opener.id !== undefined) req.id = opener.id;
-    if (opener.ref !== undefined) req.ref = opener.ref;
-    if (opener.host !== undefined) req.host = opener.host;
-    if (opener.port !== undefined) req.port = opener.port;
-    if (opener.remember !== undefined) req.remember = opener.remember;
-    if (opener.label !== undefined) req.label = opener.label;
     const res = (await this.client.request<SessionOpenRequest>(
       req,
     )) as ServerMessage;
@@ -423,11 +416,9 @@ export class WsController {
         : undefined;
     useSessionStore.getState().addSession({
       session,
-      label: label ?? opener.label ?? opener.ref ?? opener.id ?? session,
-      opener,
+      label: label ?? charId,
+      opener: { charId },
       isAdmin,
-      host: opener.host,
-      port: opener.port,
     });
     useSessionStore.getState().setActive(session);
     return session;

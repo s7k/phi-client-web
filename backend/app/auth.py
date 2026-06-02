@@ -1,24 +1,24 @@
-"""B12 認証(ID-only 再設計)・ID 暗号・Web セッション([12]§1)。
+"""B12 認証(アカウント+複数キャラ 再設計, A-34)・PHI uid 暗号・Web セッション。
 
-ID-only 認証([12]§1.1/§1.2)
+認証構造(A-34, [12]§1.2)
 ------------------------------------------------------------------
-PHI プレイヤーは **ID のみで識別**され、`#open <uid>` の uid 自体に6字
-パスワードが埋め込まれた**資格情報**(レガシー .phirc 相当)。よって別 Web
-パスワードは二重で不要 → 廃止。ID=資格情報として扱い、SQLite には**暗号保存**。
+1アカウント(ログインID + Web パスワード)の下に複数キャラを保持する2層構造。
 
-- 保存IDテーブル `saved_ids`: id_key=sha256(id) を PK、id_enc=暗号文を保存。
-  管理者は saved_ids.is_admin で判定。
-- Web セッション: 入力 ID で不透明 token を発行(A-33: cookie 廃止、token は
-  REST=Bearer / WS=auth メッセージで送る。FE が localStorage 保持)。
-  sessions_web に token/id_key/id_enc(セッション内 #open 用)/expires を保持。
-- ID 暗号: `cryptography` Fernet(AES128-CBC + HMAC, AEAD相当)。鍵は env
+| 層 | 用途 | 資格 |
+|----|------|------|
+| **Web認証** | ブラウザ→BE のログイン | `accounts.password_hash`(argon2id) |
+| **レガシー資格** | BE→レガシーサーバ `#open` | `characters.phi_uid_enc`(暗号化保存) |
+
+- `POST /api/auth/login` でアカウント検証→不透明 token を発行(A-33: cookie 廃止、
+  token は REST=Bearer / WS=auth メッセージで送る。FE が localStorage 保持)。
+  sessions_web に token/account_id/expires を保持。
+- 各キャラの PHI uid は `#open <uid>` の uid 自体に6字パスワードが埋め込まれた
+  **資格情報**。SQLite には平文保存禁止 → PHI_SECRET_KEY で AEAD 暗号化(at-rest)。
+  `session.open {charId}` で BE が復号し `#open <uid>` を送る。
+- uid 暗号: `cryptography` Fernet(AES128-CBC + HMAC, AEAD相当)。鍵は env
   `PHI_SECRET_KEY`(Fernet.generate_key() 形式)。SQLite には暗号文のみ。
 
-重要: **IDは資格情報。ログ/エラーに出さない**。id_key/token のみ扱う。
-
-A-33: cookie 廃止。token は REST 層が JSON body で返し、保護 API は Bearer、
-WS は接続後の `auth` メッセージで token を受け取り検証する。CSRF 対策は
-アンビエント資格(cookie)が無いため不要(撤去)。
+重要: **PHI uid / Web パスワードは資格情報。ログ/エラーに出さない**。
 """
 from __future__ import annotations
 
@@ -27,10 +27,11 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.store import Store
-from app.store.db import id_key_of
 
 # ----------------------------------------------------------------------
 # 期限既定([12]§1.3)
@@ -40,9 +41,12 @@ ABSOLUTE_TIMEOUT_SEC = 24 * 3600  # absolute 24h
 
 _TOKEN_BYTES = 32    # 256bit 不透明 token
 
+# パスワード最小長(A-34: register で検証)。
+PASSWORD_MIN_LEN = 8
+
 
 # ======================================================================
-# ID 暗号(Fernet)
+# PHI uid 暗号(Fernet)
 # ======================================================================
 
 def _load_key() -> bytes:
@@ -50,15 +54,15 @@ def _load_key() -> bytes:
     key = os.environ.get("PHI_SECRET_KEY")
     if not key:
         raise RuntimeError(
-            "PHI_SECRET_KEY 未設定(ID 暗号鍵)。Fernet.generate_key() で生成し env 設定"
+            "PHI_SECRET_KEY 未設定(uid 暗号鍵)。Fernet.generate_key() で生成し env 設定"
         )
     return key.encode("utf-8") if isinstance(key, str) else key
 
 
 class UidCipher:
-    """PHI ID(資格情報)の AEAD 暗号化/復号([12]§1.2)。
+    """PHI uid(資格情報)の AEAD 暗号化/復号([12]§1.2)。
 
-    平文 ID を at-rest 暗号化し、復号して #open / セッション確立に使う。
+    平文 uid を at-rest 暗号化し、復号して #open / セッション確立に使う。
     """
 
     def __init__(self, key: bytes | None = None) -> None:
@@ -69,16 +73,16 @@ class UidCipher:
         """新規鍵生成(urlsafe-base64 32B)。env 設定用。"""
         return Fernet.generate_key()
 
-    def encrypt(self, plain_id: str) -> bytes:
-        """平文ID → 暗号文 BLOB。"""
-        return self._fernet.encrypt(plain_id.encode("utf-8"))
+    def encrypt(self, plain_uid: str) -> bytes:
+        """平文 uid → 暗号文 BLOB。"""
+        return self._fernet.encrypt(plain_uid.encode("utf-8"))
 
     def decrypt(self, token: bytes) -> str:
-        """暗号文 BLOB → 平文ID。改ざん/不正鍵は ValueError。"""
+        """暗号文 BLOB → 平文 uid。改ざん/不正鍵は ValueError。"""
         try:
             return self._fernet.decrypt(token).decode("utf-8")
         except InvalidToken as exc:
-            raise ValueError("ID 復号失敗(鍵不一致/改ざん)") from exc
+            raise ValueError("uid 復号失敗(鍵不一致/改ざん)") from exc
 
 
 # ======================================================================
@@ -95,23 +99,18 @@ def _fmt_iso(dt: datetime) -> str:
 
 @dataclass
 class SessionIdentity:
-    """検証済みセッションの ID 情報(生ID非保持)。
+    """検証済みセッションの ID 情報。
 
-    plain_id は **その場で復号した #open 用**。保持・ログ禁止。
+    account_id のみ保持(PHI uid はキャラ単位で session.open 時に復号)。
     """
-    id_key: str
-    id_enc: bytes
-
-    @property
-    def is_anonymous(self) -> bool:
-        return False
+    account_id: str
 
 
 class AuthService:
-    """ID-only 認証・セッション発行/検証([12]§1.3)。
+    """アカウント認証・セッション発行/検証(A-34, [12]§1.3)。
 
-    Store と UidCipher を束ね、establish_session/logout/validate を提供。
-    時刻は `now()` で注入可能(テスト容易性)。
+    Store と UidCipher を束ね、register/login/logout/validate を提供。
+    時刻は `now()` で注入可能(テスト容易性)。パスワード照合は argon2id。
     """
 
     def __init__(
@@ -121,11 +120,13 @@ class AuthService:
         *,
         idle_sec: int = IDLE_TIMEOUT_SEC,
         absolute_sec: int = ABSOLUTE_TIMEOUT_SEC,
+        password_hasher: PasswordHasher | None = None,
     ) -> None:
         self.store = store
         self._cipher = cipher
         self.idle_sec = idle_sec
         self.absolute_sec = absolute_sec
+        self._ph = password_hasher or PasswordHasher()
 
     @property
     def cipher(self) -> UidCipher:
@@ -133,57 +134,83 @@ class AuthService:
             self._cipher = UidCipher()
         return self._cipher
 
-    # ---- 保存ID(saved_ids)操作 ----
+    # ---- アカウント(accounts)操作 ----
 
-    def remember_id(
-        self, plain_id: str, *, label: str | None = None,
-        is_admin: bool | None = None,
-        host: str | None = None, port: int | None = None,
-    ) -> str:
-        """平文IDを saved_ids へ暗号 upsert し id_key を返す。
+    def hash_password(self, password: str) -> str:
+        """argon2id でハッシュ化。"""
+        return self._ph.hash(password)
 
-        既存の is_admin/label/host/port は引数 None なら維持(A-32)。
+    def register(
+        self, account_id: str, password: str, *, is_admin: bool = False
+    ) -> None:
+        """新規アカウント作成([12]§1)。
+
+        - account_id 空 → ValueError。
+        - password 最小長未満 → ValueError。
+        - 既存 account_id → ValueError("account exists")(REST 層で 409 化)。
+        password はログ/エラーへ出さない(資格情報)。
         """
-        key = id_key_of(plain_id)
-        enc = self.cipher.encrypt(plain_id)
-        self.store.upsert_saved_id(
-            key, enc, label=label, is_admin=is_admin, host=host, port=port
+        account_id = (account_id or "").strip()
+        if not account_id:
+            raise ValueError("accountId が必要")
+        if len(password or "") < PASSWORD_MIN_LEN:
+            raise ValueError(f"パスワードは{PASSWORD_MIN_LEN}文字以上")
+        if self.store.get_account(account_id) is not None:
+            raise ValueError("account exists")
+        self.store.create_account(
+            account_id, self.hash_password(password), is_admin=is_admin
         )
-        return key
 
-    # ---- セッション確立(ID のみ) ----
+    def verify_password(self, account_id: str, password: str) -> bool:
+        """アカウント+パスワードを照合。一致 True。
 
-    def establish_session(
-        self, plain_id: str, *, remember: bool = False,
-        label: str | None = None, now: datetime | None = None,
-    ) -> str:
-        """入力 ID でセッション token を発行(sessions_web)。
-
-        - id_key=sha256(id)、id_enc=暗号文(#open 用)を保持。
-        - remember=True で saved_ids へ upsert(任意のラベル付き)。
-        - 既存 saved_ids があれば last_used_at を更新する。
-        Returns 不透明 token(A-33: REST=Bearer / WS=auth で送る)。
+        argon2 のパラメータ更新時は rehash して保存し直す。失敗は False。
+        password はログ/エラーへ出さない。
         """
-        key = id_key_of(plain_id)
-        enc = self.cipher.encrypt(plain_id)
+        row = self.store.get_account(account_id)
+        if row is None:
+            return False
+        try:
+            self._ph.verify(row["password_hash"], password)
+        except (VerifyMismatchError, InvalidHashError):
+            return False
+        if self._ph.check_needs_rehash(row["password_hash"]):
+            self.store.update_password_hash(
+                account_id, self.hash_password(password)
+            )
+        return True
+
+    # ---- セッション確立(login) ----
+
+    def login(
+        self, account_id: str, password: str, *, now: datetime | None = None
+    ) -> str | None:
+        """アカウント検証→セッション token を発行(sessions_web)。
+
+        - 検証失敗(未登録/パスワード不一致)→ None(REST 層で 401)。
+        - 成功 → 不透明 token を返す(A-33: REST=Bearer / WS=auth で送る)。
+        """
+        if not self.verify_password(account_id, password):
+            return None
+        return self._issue_token(account_id, now=now)
+
+    def _issue_token(
+        self, account_id: str, *, now: datetime | None = None
+    ) -> str:
         now = now or datetime.now(timezone.utc)
         created = _fmt_iso(now)
         expires = _fmt_iso(now + timedelta(seconds=self.absolute_sec))
         token = secrets.token_urlsafe(_TOKEN_BYTES)
-        self.store.create_web_session(token, key, enc, created, created, expires)
-        if remember:
-            self.store.upsert_saved_id(key, enc, label=label)
-        if self.store.get_saved_id(key) is not None:
-            self.store.touch_saved_id(key, created)
+        self.store.create_web_session(token, account_id, created, created, expires)
         return token
 
     def logout(self, token: str) -> None:
         """セッション失効(削除)。"""
         self.store.delete_web_session(token)
 
-    def is_admin(self, id_key: str) -> bool:
-        """id_key が管理者か(saved_ids.is_admin)。未登録は False。"""
-        return self.store.is_saved_admin(id_key)
+    def is_admin(self, account_id: str) -> bool:
+        """アカウントが管理者か(accounts.is_admin)。未登録は False。"""
+        return self.store.is_account_admin(account_id)
 
     def validate(
         self, token: str, *, now: datetime | None = None
@@ -191,7 +218,7 @@ class AuthService:
         """セッション検証。有効なら SessionIdentity を返し idle を延長。
 
         - absolute 期限超過 / idle 超過 → 失効(削除)して None。
-        - 有効 → last_seen を now に更新し SessionIdentity(id_key, id_enc)。
+        - 有効 → last_seen を now に更新し SessionIdentity(account_id)。
         """
         row = self.store.get_web_session(token)
         if row is None:
@@ -206,15 +233,11 @@ class AuthService:
             self.store.delete_web_session(token)
             return None
         self.store.touch_web_session(token, _fmt_iso(now))
-        return SessionIdentity(id_key=row["id_key"], id_enc=row["id_enc"])
+        return SessionIdentity(account_id=row["account_id"])
 
-    def validate_id_key(
+    def validate_account(
         self, token: str, *, now: datetime | None = None
     ) -> str | None:
-        """検証して id_key のみ返す(admin 判定/設定所有者キー用)。"""
+        """検証して account_id のみ返す(admin 判定/設定所有者キー用)。"""
         ident = self.validate(token, now=now)
-        return ident.id_key if ident is not None else None
-
-    def open_id_for(self, ident: SessionIdentity) -> str:
-        """セッションの id_enc を復号し #open 用平文 ID を返す(その場限り)。"""
-        return self.cipher.decrypt(ident.id_enc)
+        return ident.account_id if ident is not None else None

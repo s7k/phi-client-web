@@ -8,7 +8,8 @@
 | `POST` | `/api/register`          | `{name, pass(6), imageIndex, mail?}` → 代行 → characters 登録 |
 
 - 代行は `LegacyRegistrar`(一時レガシー接続)。⛔ モックTCPのみ検証([タスク])。
-- 成功で uid 組立/捕捉 → `UidCipher` 暗号化 → `Store.upsert_character`。
+- 成功で uid 組立/捕捉 → `UidCipher` 暗号化 → `Store.create_character`
+  (A-34: account_id 配下のキャラとして phi_uid_enc 保存)。
 - レート制限: `POST /api/register` 5/h/IP(`RateLimiter`)→ 超過 429。
 """
 from __future__ import annotations
@@ -147,15 +148,15 @@ def build_register_router(
             raise HTTPException(502, f"登録代行失敗: {exc}") from exc
 
         # 内部 charId(レガシー char_id とは別の内部識別子)。
-        char_id = uuid.uuid4().hex[:12]
+        char_id = uuid.uuid4().hex
         # uid 捕捉時のみ暗号化保存(Q-R5-1: 無通知時 None)。
         uid_enc = cipher.encrypt(result.uid) if result.uid else None
         try:
-            store.upsert_character(
+            store.create_character(
                 char_id,
                 account_id or "",
-                display_name=result.name,
-                legacy_uid_enc=uid_enc,
+                label=result.name,
+                phi_uid_enc=uid_enc,
             )
         except Exception as exc:  # noqa: BLE001 - FK 等
             # L-4: 内部例外文字列はレスポンスに載せず、詳細はサーバログのみ。

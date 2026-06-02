@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { WsProvider } from '../src/ws/WsContext';
 import type { WsController } from '../src/ws/controller';
 import { Login } from '../src/components/Login';
+import { CharacterSelect } from '../src/components/CharacterSelect';
+import type { Character } from '../src/api/characters';
 import { StatusPanel } from '../src/components/StatusPanel';
 import { Chat } from '../src/components/Chat';
 import { ConfirmDialog } from '../src/components/ConfirmDialog';
@@ -21,9 +23,13 @@ import { useConnectionStore } from '../src/stores/connectionStore';
 /** controller の最小スタブ。 */
 function makeController(over: Partial<WsController> = {}): WsController {
   return {
-    establishSession: vi.fn(async () => ({ ok: true, isAdmin: false, token: 'tk-test' })),
-    fetchSavedList: vi.fn(async () => []),
+    login: vi.fn(async () => ({ ok: true, isAdmin: false, token: 'tk-test' })),
+    register: vi.fn(async () => ({ ok: true })),
+    fetchCharacters: vi.fn(async () => []),
+    addCharacter: vi.fn(async () => null),
+    removeCharacter: vi.fn(async () => undefined),
     openSession: vi.fn(async () => 's1'),
+    logout: vi.fn(async () => undefined),
     sendChat: vi.fn(),
     sendMove: vi.fn(),
     sendCommand: vi.fn(),
@@ -50,102 +56,175 @@ beforeEach(() => {
   localStorage.clear();  // ログインフォーム記憶等がテスト間で漏れないように
 });
 
-describe('Login (F3, ID-only)', () => {
-  it('PHI ID + host + port 入力→establishSession→openSession(id,host,port)→activeTab', async () => {
-    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
-    const openSession = vi.fn(async () => 's1');
-    const ctrl = makeController({ establishSession, openSession });
-    renderWith(ctrl, <Login />);
+describe('Login (A-34, アカウント+パスワード)', () => {
+  it('アカウントID+パスワード入力→login→onLoggedIn', async () => {
+    const login = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
+    const onLoggedIn = vi.fn();
+    const ctrl = makeController({ login });
+    renderWith(ctrl, <Login onLoggedIn={onLoggedIn} />);
 
-    // パスワード欄が無いこと
-    expect(screen.queryByText('パスワード')).toBeNull();
-
-    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
-    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
-    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '30000' } });
+    fireEvent.change(screen.getByLabelText('アカウントID'), { target: { value: 'acc-1' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByText('ログイン'));
 
-    await waitFor(() => expect(establishSession).toHaveBeenCalledWith('phi-1', { remember: false }));
-    await waitFor(() =>
-      expect(openSession).toHaveBeenCalledWith({
-        id: 'phi-1',
-        host: '10.0.0.5',
-        port: 30000,
-        remember: false,
-      }),
-    );
-    expect(useUiStore.getState().activeTab).toBe('s1');
+    await waitFor(() => expect(login).toHaveBeenCalledWith('acc-1', 'pw'));
+    await waitFor(() => expect(onLoggedIn).toHaveBeenCalled());
   });
 
-  it('host 未入力ではログイン不可(エラー表示, openSession未呼)', async () => {
-    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
-    const openSession = vi.fn(async () => 's1');
-    const ctrl = makeController({ establishSession, openSession });
-    renderWith(ctrl, <Login />);
-    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
-    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '30000' } });
+  it('アカウントID 未入力ではログイン不可(エラー表示)', async () => {
+    const login = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
+    renderWith(makeController({ login }), <Login onLoggedIn={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByText('ログイン'));
-    expect(await screen.findByRole('alert')).toHaveTextContent('host');
-    expect(openSession).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toHaveTextContent('アカウントID');
+    expect(login).not.toHaveBeenCalled();
   });
 
-  it('port 範囲外(65536)では送信不可(エラー表示, openSession未呼)', async () => {
-    const openSession = vi.fn(async () => 's1');
-    const ctrl = makeController({ openSession });
-    renderWith(ctrl, <Login />);
-    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
-    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
-    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '65536' } });
-    fireEvent.click(screen.getByText('ログイン'));
-    expect(await screen.findByRole('alert')).toHaveTextContent('ポート');
-    expect(openSession).not.toHaveBeenCalled();
-  });
-
-  it('保存する にチェック→establishSession に remember:true', async () => {
-    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
-    const ctrl = makeController({ establishSession });
-    renderWith(ctrl, <Login />);
-    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
-    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
-    fireEvent.click(screen.getByLabelText('このIDを保存する'));
-    fireEvent.click(screen.getByText('ログイン'));
-    await waitFor(() =>
-      expect(establishSession).toHaveBeenCalledWith('phi-1', { remember: true }),
-    );
-  });
-
-  it('保存済みラベルから選択→host/port初期化→openSession(ref,host,port)', async () => {
-    const openSession = vi.fn(async () => 's9');
-    const fetchSavedList = vi.fn(async () => {
-      const items = [{ ref: 'r1', label: 'Hero', host: '192.168.0.1', port: 21000 }];
-      useSessionStore.getState().setSaved(items);
-      return items;
-    });
-    const ctrl = makeController({ openSession, fetchSavedList });
-    renderWith(ctrl, <Login />);
-    const savedBtn = await screen.findByText('Hero');
-    fireEvent.click(savedBtn);
-    await waitFor(() =>
-      expect(openSession).toHaveBeenCalledWith(
-        { ref: 'r1', host: '192.168.0.1', port: 21000 },
-        'Hero',
-      ),
-    );
-    // 入力欄が保存値で初期化される
-    expect((screen.getByLabelText('サーバIP') as HTMLInputElement).value).toBe('192.168.0.1');
-    expect((screen.getByLabelText('ポート') as HTMLInputElement).value).toBe('21000');
-    expect(useUiStore.getState().activeTab).toBe('s9');
-  });
-
-  it('認証失敗でエラー表示', async () => {
-    const establishSession = vi.fn(async () => {
+  it('ログイン失敗でエラー表示', async () => {
+    const login = vi.fn(async () => {
       throw new Error('認証失敗');
     });
-    renderWith(makeController({ establishSession }), <Login />);
-    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-x' } });
-    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.5' } });
+    renderWith(makeController({ login }), <Login onLoggedIn={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('アカウントID'), { target: { value: 'acc-x' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByText('ログイン'));
     expect(await screen.findByRole('alert')).toHaveTextContent('認証失敗');
+  });
+
+  it('新規登録: ID+パスワード+確認→register→ログイン画面へ案内', async () => {
+    const register = vi.fn(async () => ({ ok: true as const }));
+    renderWith(makeController({ register }), <Login onLoggedIn={vi.fn()} />);
+    fireEvent.click(screen.getByText('新規登録'));
+    fireEvent.change(screen.getByLabelText('アカウントID'), { target: { value: 'new-acc' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'secret' } });
+    fireEvent.change(screen.getByLabelText('パスワード(確認)'), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByText('登録'));
+    await waitFor(() => expect(register).toHaveBeenCalledWith('new-acc', 'secret'));
+    // ログイン画面へ戻り案内表示
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('登録'));
+  });
+
+  it('新規登録: パスワード不一致でエラー(register未呼)', async () => {
+    const register = vi.fn(async () => ({ ok: true as const }));
+    renderWith(makeController({ register }), <Login onLoggedIn={vi.fn()} />);
+    fireEvent.click(screen.getByText('新規登録'));
+    fireEvent.change(screen.getByLabelText('アカウントID'), { target: { value: 'new-acc' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'secret' } });
+    fireEvent.change(screen.getByLabelText('パスワード(確認)'), { target: { value: 'other' } });
+    fireEvent.click(screen.getByText('登録'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('一致');
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('新規登録: 409(既存)でエラー表示', async () => {
+    const register = vi.fn(async () => {
+      throw new Error('このアカウントIDは既に使用されています');
+    });
+    renderWith(makeController({ register }), <Login onLoggedIn={vi.fn()} />);
+    fireEvent.click(screen.getByText('新規登録'));
+    fireEvent.change(screen.getByLabelText('アカウントID'), { target: { value: 'dup' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'secret' } });
+    fireEvent.change(screen.getByLabelText('パスワード(確認)'), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByText('登録'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('既に使用');
+  });
+});
+
+describe('CharacterSelect (A-34)', () => {
+  const chars: Character[] = [
+    { charId: 'c1', label: 'Hero', host: '10.0.0.1', port: 20000 },
+    { charId: 'c2', label: 'Mage', host: '10.0.0.2', port: 21000 },
+  ];
+
+  it('一覧をラベル+host:port で表示', async () => {
+    const fetchCharacters = vi.fn(async () => chars);
+    renderWith(makeController({ fetchCharacters }), <CharacterSelect onLoggedOut={vi.fn()} />);
+    expect(await screen.findByText('Hero')).toBeInTheDocument();
+    expect(screen.getByText('10.0.0.1:20000')).toBeInTheDocument();
+    expect(screen.getByText('Mage')).toBeInTheDocument();
+  });
+
+  it('キャラクリックで openSession(charId)→activeTab', async () => {
+    const fetchCharacters = vi.fn(async () => chars);
+    const openSession = vi.fn(async () => 's5');
+    renderWith(
+      makeController({ fetchCharacters, openSession }),
+      <CharacterSelect onLoggedOut={vi.fn()} />,
+    );
+    fireEvent.click(await screen.findByText('Hero'));
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith('c1', 'Hero'));
+    expect(useUiStore.getState().activeTab).toBe('s5');
+  });
+
+  it('追加フォーム: ラベル+PHI ID+IP+ポート→addCharacter→一覧再取得', async () => {
+    const fetchCharacters = vi.fn(async () => []);
+    const addCharacter = vi.fn(async () => null);
+    renderWith(
+      makeController({ fetchCharacters, addCharacter }),
+      <CharacterSelect onLoggedOut={vi.fn()} />,
+    );
+    await waitFor(() => expect(fetchCharacters).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText('ラベル'), { target: { value: 'Cleric' } });
+    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'PHI999' } });
+    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: '10.0.0.3' } });
+    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '22000' } });
+    fireEvent.click(screen.getByText('追加'));
+    await waitFor(() =>
+      expect(addCharacter).toHaveBeenCalledWith({
+        label: 'Cleric',
+        phiId: 'PHI999',
+        host: '10.0.0.3',
+        port: 22000,
+      }),
+    );
+    await waitFor(() => expect(fetchCharacters).toHaveBeenCalledTimes(2));
+  });
+
+  it('追加フォーム: ポート範囲外でエラー(addCharacter未呼)', async () => {
+    const addCharacter = vi.fn(async () => null);
+    renderWith(
+      makeController({ fetchCharacters: vi.fn(async () => []), addCharacter }),
+      <CharacterSelect onLoggedOut={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText('ラベル'), { target: { value: 'X' } });
+    fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'P' } });
+    fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: 'h' } });
+    fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '70000' } });
+    fireEvent.click(screen.getByText('追加'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('ポート');
+    expect(addCharacter).not.toHaveBeenCalled();
+  });
+
+  it('削除ボタンで removeCharacter→一覧再取得', async () => {
+    const fetchCharacters = vi.fn(async () => chars);
+    const removeCharacter = vi.fn(async () => undefined);
+    renderWith(
+      makeController({ fetchCharacters, removeCharacter }),
+      <CharacterSelect onLoggedOut={vi.fn()} />,
+    );
+    fireEvent.click(await screen.findByLabelText('Hero を削除'));
+    await waitFor(() => expect(removeCharacter).toHaveBeenCalledWith('c1'));
+    await waitFor(() => expect(fetchCharacters).toHaveBeenCalledTimes(2));
+  });
+
+  it('ログアウトボタンで logout→onLoggedOut', async () => {
+    const logout = vi.fn(async () => undefined);
+    const onLoggedOut = vi.fn();
+    renderWith(
+      makeController({ fetchCharacters: vi.fn(async () => []), logout }),
+      <CharacterSelect onLoggedOut={onLoggedOut} />,
+    );
+    fireEvent.click(screen.getByText('ログアウト'));
+    await waitFor(() => expect(logout).toHaveBeenCalled());
+    await waitFor(() => expect(onLoggedOut).toHaveBeenCalled());
+  });
+
+  it('一覧取得失敗でエラー表示', async () => {
+    const fetchCharacters = vi.fn(async () => {
+      throw new Error('取得失敗');
+    });
+    renderWith(makeController({ fetchCharacters }), <CharacterSelect onLoggedOut={vi.fn()} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('取得失敗');
   });
 });
 
@@ -354,8 +433,8 @@ describe('TabBar (F9)', () => {
   });
 
   it('複数session切替・接続マーク・未読バッジ', () => {
-    useSessionStore.getState().addSession({ session: 's1', label: 'Alice', opener: { id: 'phi-1' } });
-    useSessionStore.getState().addSession({ session: 's2', label: 'Bob', opener: { ref: 'r2' } });
+    useSessionStore.getState().addSession({ session: 's1', label: 'Alice', opener: { charId: 'c1' } });
+    useSessionStore.getState().addSession({ session: 's2', label: 'Bob', opener: { charId: 'c2' } });
     useConnectionStore.getState().setSessionConnection('s1', 'connected');
     useConnectionStore.getState().setSessionConnection('s2', 'closed');
     useChatStore.getState().addMessage('s2', {
@@ -383,16 +462,20 @@ describe('TabBar (F9)', () => {
   });
 });
 
-describe('Login form remembers id/host/port (localStorage)', () => {
-  it('prefills from localStorage and persists on login', async () => {
-    localStorage.setItem(
-      'phi_login_form',
-      JSON.stringify({ id: 'VOLABC', host: '10.0.0.5', port: '20037' }),
-    );
-    // 初期表示でプリフィルされること(値が読めること)
-    const raw = JSON.parse(localStorage.getItem('phi_login_form')!);
-    expect(raw.id).toBe('VOLABC');
-    expect(raw.host).toBe('10.0.0.5');
-    expect(raw.port).toBe('20037');
+describe('Login: アカウントID 記憶(localStorage, パスワードは保存しない)', () => {
+  it('保存済みアカウントID でプリフィルし、ログイン成功で保存', async () => {
+    localStorage.setItem('phi_login_account', 'SAVED_ACC');
+    const login = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
+    renderWith(makeController({ login }), <Login onLoggedIn={vi.fn()} />);
+    // プリフィル
+    expect((screen.getByLabelText('アカウントID') as HTMLInputElement).value).toBe('SAVED_ACC');
+
+    fireEvent.change(screen.getByLabelText('アカウントID'), { target: { value: 'NEW_ACC' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'pw' } });
+    fireEvent.click(screen.getByText('ログイン'));
+    await waitFor(() => expect(login).toHaveBeenCalledWith('NEW_ACC', 'pw'));
+    // accountId のみ保存、password は保存しない
+    expect(localStorage.getItem('phi_login_account')).toBe('NEW_ACC');
+    expect(localStorage.getItem('phi_login_form')).toBeNull();
   });
 });

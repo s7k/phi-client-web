@@ -1,13 +1,15 @@
 /**
- * ID-only ログイン REST クライアント([07]§5.1, A-33 token ベース)。
+ * アカウント認証 REST クライアント(A-34)。
  *
- * - POST /api/auth/session {id, remember?, label?} → {ok, isAdmin, token, label?}。
- *   成功で BE が認証トークンを発行(cookie 廃止)。
- *   FE は token を localStorage へ保存し、以後の REST(Authorization: Bearer)/
- *   WS 認証(`{type:"auth", token}`)に使う。
- *   これがログインの実体(別パスワードは廃止。PHI ID 自体が資格情報)。
+ * 1アカウント(accountId+password)の下に複数キャラ(charId)構造へ再設計。
+ * 旧 ID-only / establishSession は撤去。
  *
- * 注: PHI ID / token は資格情報。ここでログ出力しない(漏洩防止)。
+ * - POST /api/auth/register {accountId, password} → {ok}(409=既存)。
+ * - POST /api/auth/login {accountId, password} → {ok, token, isAdmin}。
+ *   成功で token を localStorage 保存し、以後 REST(Bearer)/WS auth(`{type:"auth",token}`)に使う。
+ * - POST /api/auth/logout(Bearer)。
+ *
+ * 注: password / token は資格情報。ここでログ出力しない(漏洩防止)。
  */
 
 /** localStorage に token を保存するキー。 */
@@ -46,24 +48,24 @@ export function clearStoredToken(): void {
   }
 }
 
-/** POST /api/auth/session 成功応答([07]§5.1, A-33)。 */
-export interface SessionAuthResult {
+/** POST /api/auth/login 成功応答(A-34)。 */
+export interface LoginResult {
   ok: true;
-  /** 管理者IDか(管理UI出し分け)。 */
-  isAdmin: boolean;
   /** 認証トークン(localStorage 保存 → REST Bearer / WS auth)。 */
   token: string;
-  /** 表示用ラベル(BEが付与する場合)。 */
-  label?: string;
+  /** 管理者アカウントか(管理UI出し分け)。 */
+  isAdmin: boolean;
 }
 
-/** REST 失敗を表す例外。 */
+/** REST 失敗を表す例外。code で 409(既存)等を区別。 */
 export class AuthError extends Error {
   readonly code: string;
-  constructor(message: string, code = 'AUTH_FAILED') {
+  readonly status: number;
+  constructor(message: string, code = 'AUTH_FAILED', status = 0) {
     super(message);
     this.name = 'AuthError';
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -76,45 +78,76 @@ function resolveFetch(f?: FetchLike): FetchLike {
 }
 
 /**
- * セッション確立(ログイン, A-33)。PHI ID を送り token を発行させる。
- * 成功で {ok, isAdmin, token, label?}。失敗は AuthError を throw。
- * cookie は使わない(token を localStorage 保存し以後 Bearer/WS auth に使う)。
- * @param opts.remember true で BE にこのIDの保存を依頼(saved.list に載る)。
- * @param opts.label remember 時の保存ラベル(任意)。
+ * アカウント新規登録(A-34)。POST /api/auth/register {accountId, password}。
+ * 成功で {ok:true}。409(既存アカウント)は AuthError(code='CONFLICT', status=409)。
  */
-export async function establishSession(
-  id: string,
-  opts: { remember?: boolean; label?: string } = {},
+export async function register(
+  accountId: string,
+  password: string,
   fetchImpl?: FetchLike,
-): Promise<SessionAuthResult> {
+): Promise<{ ok: true }> {
   const f = resolveFetch(fetchImpl);
-  const body: { id: string; remember?: boolean; label?: string } = { id };
-  if (opts.remember) body.remember = true;
-  if (opts.label !== undefined) body.label = opts.label;
-  const res = await f('/api/auth/session', {
+  const res = await f('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ accountId, password }),
+  });
+  const data = (await res.json().catch(() => null)) as
+    | { ok?: boolean; error?: { code?: string; message?: string } }
+    | null;
+  if (res.status === 409) {
+    throw new AuthError(
+      data?.error?.message ?? 'このアカウントIDは既に使用されています',
+      data?.error?.code ?? 'CONFLICT',
+      409,
+    );
+  }
+  if (!res.ok || !data || data.ok === false || data.error) {
+    throw new AuthError(
+      data?.error?.message ?? `登録に失敗しました (HTTP ${res.status})`,
+      data?.error?.code ?? 'AUTH_FAILED',
+      res.status,
+    );
+  }
+  return { ok: true };
+}
+
+/**
+ * ログイン(A-34)。POST /api/auth/login {accountId, password} → {ok, token, isAdmin}。
+ * 成功で {ok, token, isAdmin}。失敗は AuthError を throw。
+ * token は呼び出し側(controller)が localStorage 保存し WS auth に使う。
+ */
+export async function login(
+  accountId: string,
+  password: string,
+  fetchImpl?: FetchLike,
+): Promise<LoginResult> {
+  const f = resolveFetch(fetchImpl);
+  const res = await f('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ accountId, password }),
   });
   const data = (await res.json().catch(() => null)) as
     | {
         ok?: boolean;
         isAdmin?: boolean;
         token?: string;
-        label?: string;
         error?: { code?: string; message?: string };
       }
     | null;
-
   if (!res.ok || !data || data.ok === false || data.error || !data.token) {
-    const msg = data?.error?.message ?? `認証に失敗しました (HTTP ${res.status})`;
-    throw new AuthError(msg, data?.error?.code ?? 'AUTH_FAILED');
+    throw new AuthError(
+      data?.error?.message ?? `ログインに失敗しました (HTTP ${res.status})`,
+      data?.error?.code ?? 'AUTH_FAILED',
+      res.status,
+    );
   }
-  return { ok: true, isAdmin: !!data.isAdmin, token: data.token, label: data.label };
+  return { ok: true, token: data.token, isAdmin: !!data.isAdmin };
 }
 
 /**
- * ログアウト(A-33)。BE に Bearer 付きで通知し token を破棄。
+ * ログアウト(A-34)。BE に Bearer 付きで通知し token を破棄。
  * BE 失敗でも localStorage は必ずクリアする(ローカル状態優先)。
  */
 export async function logout(

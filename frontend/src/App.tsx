@@ -1,11 +1,15 @@
 /**
- * App ルート。
+ * App ルート(A-34, アカウント+複数キャラ構造)。
  * - WsProvider で controller を供給。
- * - activeTab(uiStore) 未設定ならログイン/キャラ選択、設定済なら game画面。
+ * - 画面遷移:
+ *   - 未ログイン(token 無し) → Login(アカウントID+パスワード)。
+ *   - ログイン済 + activeTab 無し → CharacterSelect(一覧/追加/削除)。
+ *   - ログイン済 + activeTab あり → Game画面。
+ * - 起動時 token あれば自動ログイン状態でキャラ選択画面へ。
  * - game画面: タブ(F9) + ステータス(F6) + マップ(F4) + チャット(F7)。
  *   リスト/編集ダイアログ(F9)とキーハンドラ(F8)を配線。
  */
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { WsProvider } from './ws/WsContext';
 import type { WsController } from './ws/controller';
 import { useUiStore } from './stores/uiStore';
@@ -13,7 +17,9 @@ import { useSettingsStore } from './stores/settingsStore';
 import type { DisplaySettings } from './stores/settingsStore';
 import { useKeyHandler } from './lib/useKeyHandler';
 import { captureCanvas } from './lib/screenshot';
+import { getStoredToken } from './api/auth';
 import { Login } from './components/Login';
+import { CharacterSelect } from './components/CharacterSelect';
 import { StatusPanel } from './components/StatusPanel';
 import { Chat } from './components/Chat';
 import { MapView } from './components/MapView';
@@ -32,9 +38,11 @@ import './App.css';
 function Game({
   controller,
   session,
+  onLogout,
 }: {
   controller: WsController;
   session: string;
+  onLogout: () => void;
 }) {
   // F8 キーハンドラ配線(アクティブ session 対象)
   useKeyHandler(controller, session);
@@ -58,7 +66,12 @@ function Game({
         <div className="game__actions">
           <button type="button" onClick={() => setSettingsOpen(true)}>設定</button>
           <button type="button" onClick={takeScreenshot}>SS</button>
-          <button type="button" onClick={() => void controller.logout()}>ログアウト</button>
+          <button
+            type="button"
+            onClick={() => void controller.logout().then(onLogout)}
+          >
+            ログアウト
+          </button>
         </div>
       </header>
       <WorldTransferIndicator />
@@ -83,18 +96,32 @@ function Game({
 
 export function App({ controller }: { controller: WsController }) {
   const activeTab = useUiStore((s) => s.activeTab);
+  // 起動時 token があればログイン済(自動復帰)→キャラ選択画面へ(A-34)。
+  const [loggedIn, setLoggedIn] = useState(() => getStoredToken() !== null);
+
+  let screen: React.ReactNode;
+  if (!loggedIn) {
+    screen = <Login onLoggedIn={() => setLoggedIn(true)} />;
+  } else if (activeTab) {
+    screen = (
+      <>
+        <TabBar />
+        <Game
+          controller={controller}
+          session={activeTab}
+          onLogout={() => setLoggedIn(false)}
+        />
+      </>
+    );
+  } else {
+    screen = <CharacterSelect onLoggedOut={() => setLoggedIn(false)} />;
+  }
+
   return (
     <WsProvider controller={controller}>
       <ConnectionBanner />
       <ErrorBanners />
-      {activeTab ? (
-        <>
-          <TabBar />
-          <Game controller={controller} session={activeTab} />
-        </>
-      ) : (
-        <Login />
-      )}
+      {screen}
       <ConfirmDialog />
       <Settings />
     </WsProvider>

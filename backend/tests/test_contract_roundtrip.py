@@ -52,19 +52,29 @@ _VALID_INTENTS: dict[str, dict] = {
 
 @pytest.fixture
 async def wired():
-    """cookie 認証済 + session.open 済の conn を返す(store/socket 配線済)。"""
+    """auth 認証済 + session.open 済の conn を返す(store/socket 配線済, A-34)。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+
     sock = FakeSocket()
     mgr = SessionManager(socket_factory=lambda: sock)
     store = FakeStore()
+    # 認証用 AuthService(acc1 アカウント + 所有キャラ char1)。
+    auth_store = Store.open(":memory:")
+    auth = AuthService(auth_store, UidCipher(UidCipher.generate_key()))
+    auth.register("acc1", "password1")
+    auth_store.create_character("char1", "acc1",
+                                phi_uid_enc=auth.cipher.encrypt("uid1"))
     ws = FakeWebSocket()
-    _, task = await _auth_conn(ws, mgr, store=store)
-    ws.feed({"type": "session.open", "reqId": "o", "id": "char1"})
+    _, task = await _auth_conn(ws, mgr, plain_id="acc1", auth=auth, store=store)
+    ws.feed({"type": "session.open", "reqId": "o", "charId": "char1"})
     await _wait(lambda: any(m["type"] == "session.open" for m in ws.sent))
     sid = next(m for m in ws.sent if m["type"] == "session.open")["session"]
     yield ws, sid, task
     ws.disconnect()
     await task
     await mgr.close_all()
+    auth_store.close()
 
 
 @pytest.mark.parametrize("name", list(_VALID_INTENTS))
@@ -133,12 +143,12 @@ def test_all_sc_event_types_reachable():
     assert not missing, f"parser から到達不能な S→C 型: {missing}"
 
     # ws_server 由来(ハンドシェイク/応答/ハートビート)。コードに分岐が
-    # 存在することをソース走査で担保(片側配線の検出)。
+    # 存在することをソース走査で担保(片側配線の検出)。A-34 で saved.list は撤去。
     import inspect
 
     import app.ws_server as wsmod
     src = inspect.getsource(wsmod)
-    for t in ("hello", "saved", "settings", "pong", "error"):
+    for t in ("hello", "auth", "session.open", "settings", "pong", "error"):
         assert f'"{t}"' in src or f"'{t}'" in src, f"ws_server に {t} emit が無い"
     # snapshot は session.build_snapshot 由来
     import app.session as smod

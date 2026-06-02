@@ -103,7 +103,7 @@ describe('WsController.sendViewSet (A-24)', () => {
     const controller = setup();
     await Promise.resolve();
     const ws = MockWebSocket.last!;
-    useSessionStore.getState().addSession({ session: 's1', label: 'A', opener: { id: 'phi-1' } });
+    useSessionStore.getState().addSession({ session: 's1', label: 'A', opener: { charId: 'c1' } });
     useSessionStore.getState().setActive('s1');
     ws.sent = [];
     controller.sendViewSet({ eagleEye: true });
@@ -175,7 +175,7 @@ describe('Settings display 変更で view.set 連動送信', () => {
 // ============================================================
 
 describe('統合フロー(mock WS)', () => {
-  it('establishSession → session.open → snapshot で各 store に反映', async () => {
+  it('login → session.open → snapshot で各 store に反映', async () => {
     const controller = setup();
     await Promise.resolve(); // open フラッシュ
     const ws = MockWebSocket.last!;
@@ -184,14 +184,14 @@ describe('統合フロー(mock WS)', () => {
     ws.emit({ type: 'hello', protocolVersion: 1, serverTime: 0 } as ServerMessage);
     expect(useConnectionStore.getState().protocolVersion).toBe(1);
 
-    // ログイン(ID-only, REST 確立 → token 保存 → WS auth 送信)
-    const res = await controller.establishSession('phi-1');
+    // ログイン(A-34, アカウント+パスワード → token 保存 → WS auth 送信)
+    const res = await controller.login('acc-1', 'pw');
     expect(res.ok).toBe(true);
     // A-33: WS auth ok でゲート解除(以後 session.open が送れる)
     ws.emit({ type: 'auth', ok: true } as ServerMessage);
 
-    // session.open(id 指定)
-    const openP = controller.openSession({ id: 'phi-1' }, 'Hero');
+    // session.open(charId 指定)
+    const openP = controller.openSession('c1', 'Hero');
     await Promise.resolve();
     const openReqId = ws.lastSent().reqId as string;
     ws.emit({

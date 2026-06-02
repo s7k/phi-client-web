@@ -21,7 +21,7 @@ uid 供給(Q-2.4)
 ------------------------------------------------------------------
 uid = `<addw><5桁 s_id><6字 pass>` をサーバが組む。BE は addw/s_id を持たない
 ため、登録成功時にサーバが返す uid 通知(`#ex-put UID <uid>` 等)を捕捉する。
-通知が無い実装では uid 不明 → `legacy_uid_enc=None` 保存(後続 #open は要手当)。
+通知が無い実装では uid 不明 → `phi_uid_enc=None` 保存(後続 #open は要手当)。
 本ラウンドはモック前提でこの捕捉経路を実装し、実機の供給元確認は Q-R5-1 として残す。
 """
 from __future__ import annotations

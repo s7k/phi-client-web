@@ -39,19 +39,17 @@ describe('connectionStore', () => {
 });
 
 describe('sessionStore', () => {
-  it('保存済みID一覧・アクティブsession', () => {
+  it('キャラタブ(charId)・アクティブsession', () => {
     const s = useSessionStore.getState();
-    s.setSaved([
-      { ref: 'r1', label: 'A' },
-      { ref: 'r2', label: 'B', isAdmin: true },
-    ]);
-    expect(useSessionStore.getState().saved).toHaveLength(2);
-
-    s.addSession({ session: S, label: 'A', opener: { id: 'phi-1' } });
+    s.addSession({ session: S, label: 'A', opener: { charId: 'c1' } });
     s.setActive(S);
     expect(useSessionStore.getState().active).toBe(S);
     expect(useSessionStore.getState().sessions[S].label).toBe('A');
-    expect(useSessionStore.getState().sessions[S].opener.id).toBe('phi-1');
+    expect(useSessionStore.getState().sessions[S].opener.charId).toBe('c1');
+
+    s.removeSession(S);
+    expect(useSessionStore.getState().sessions[S]).toBeUndefined();
+    expect(useSessionStore.getState().active).toBeNull();
   });
 });
 

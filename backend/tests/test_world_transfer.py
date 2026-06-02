@@ -65,7 +65,8 @@ async def _wait(cond, timeout=2.0):
 
 async def test_world_transfer_success():
     store = Store.open(":memory:")
-    store.upsert_character("char1", "acc", display_name="Hero")
+    store.create_account("acc", "h")
+    store.create_character("char1", "acc", label="Hero")
 
     src = FakeSocket("src")
     dst = FakeSocket("dst")
@@ -92,9 +93,9 @@ async def test_world_transfer_success():
     # swap: 旧 socket close、宛先で再ログイン(#open char1)
     assert src.closed
     assert "#open char1" in dst.sent_text()
-    # Store.last_server 更新
+    # Store: 接続先 host/port を新サーバへ更新(A-34)
     row = store.get_character("char1")
-    assert row["last_server"] == "10.0.0.2:7777"
+    assert row["host"] == "10.0.0.2" and row["port"] == 7777
     # FE 通知: start と success の両方
     states = [e["state"] for e in out if e.get("type") == "worldTransfer"]
     assert "start" in states and "success" in states

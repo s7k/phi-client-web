@@ -1,8 +1,8 @@
 """REST 統合テスト(create_app)。
 
-TestClient で 認証フロー(未認証401 → session 確立 → Bearer 認証成功)、登録
-エンドポイント、レート制限(429)を検証(ID-only, A-33 token/Bearer)。
-A-33: cookie 廃止で CSRF Origin 検査も撤去 → 任意 Origin で通る。
+TestClient で 認証フロー(register → login → Bearer 認証成功)、キャラ CRUD、
+登録エンドポイント、レート制限(429)を検証(A-34 アカウント+複数キャラ,
+A-33 token/Bearer)。A-33: cookie 廃止で CSRF Origin 検査も撤去 → 任意 Origin で通る。
 ⛔ 登録はモックTCP代行(実サーバ未接続)。
 """
 from __future__ import annotations
@@ -18,7 +18,6 @@ from app.auth import AuthService, UidCipher
 from app.gfx import CL_TEAL
 from app.ratelimit import ConcurrencyLimiter, RateLimiter
 from app.store import Store
-from app.store.db import id_key_of
 from app.ws_server import create_app
 
 
@@ -65,8 +64,11 @@ def env(tmp_path, monkeypatch):
     store = Store.open(":memory:")
     cipher = UidCipher(UidCipher.generate_key())
     auth = AuthService(store, cipher)
-    # alice を保存ID登録し管理者化(キャラグラ変更系は管理者限定 [08]§10)。
-    auth.remember_id("alice", is_admin=True)
+    # alice を管理者アカウントで作成(キャラグラ変更系は管理者限定 [08]§10)。
+    auth.register("alice", "password1", is_admin=True)
+    # bob/carol は一般アカウント。
+    auth.register("bob", "password1")
+    auth.register("carol", "password1")
 
     def on_send(text):
         if text == "#ex-get REGINFO IMG":
@@ -105,20 +107,21 @@ def env(tmp_path, monkeypatch):
 HDR = {"Origin": "http://192.168.1.28:8080"}
 
 
-def _session(env, plain_id, **body):
-    """`/api/auth/session` でセッション確立し token を取得。"""
-    return env.post("/api/auth/session",
-                    json={"id": plain_id, **body}, headers=HDR)
+def _login_resp(env, account_id, password="password1"):
+    """`/api/auth/login` で token を取得(レスポンス)。"""
+    return env.post("/api/auth/login",
+                    json={"accountId": account_id, "password": password},
+                    headers=HDR)
 
 
-def _login(env, plain_id, **body):
-    """セッション確立し `Authorization: Bearer <token>` ヘッダ dict を返す。"""
-    r = _session(env, plain_id, **body)
+def _login(env, account_id, password="password1"):
+    """ログインし `Authorization: Bearer <token>` ヘッダ dict を返す。"""
+    r = _login_resp(env, account_id, password)
     assert r.status_code == 200, r.text
     return {**HDR, "Authorization": f"Bearer {r.json()['token']}"}
 
 
-# --- 認証フロー(ID-only セッション確立) ---------------------------------
+# --- 認証フロー(アカウント register/login, A-34) ------------------------
 
 def test_upload_requires_auth(env):
     # 未認証 → 401
@@ -131,9 +134,32 @@ def test_upload_requires_auth(env):
     assert r.status_code == 401
 
 
-def test_session_returns_is_admin_and_token(env):
+def test_register_account(env):
+    r = env.post("/api/auth/register",
+                 json={"accountId": "newuser", "password": "password1"},
+                 headers=HDR)
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    assert env._store.get_account("newuser") is not None
+
+
+def test_register_duplicate_409(env):
+    r = env.post("/api/auth/register",
+                 json={"accountId": "alice", "password": "password1"},
+                 headers=HDR)
+    assert r.status_code == 409
+
+
+def test_register_short_password_400(env):
+    r = env.post("/api/auth/register",
+                 json={"accountId": "shorty", "password": "x"},
+                 headers=HDR)
+    assert r.status_code == 400
+
+
+def test_login_returns_is_admin_and_token(env):
     # 管理者 alice → isAdmin True、token を JSON body で返す(Set-Cookie しない)。
-    r = _session(env, "alice")
+    r = _login_resp(env, "alice")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
@@ -143,16 +169,20 @@ def test_session_returns_is_admin_and_token(env):
     assert "set-cookie" not in {k.lower() for k in r.headers}
 
 
-def test_session_no_id_400(env):
-    r = env.post("/api/auth/session", json={}, headers=HDR)
-    assert r.status_code == 400
+def test_login_wrong_password_401(env):
+    r = _login_resp(env, "alice", "wrongpw")
+    assert r.status_code == 401
 
 
-def test_session_non_admin_is_admin_false_and_upload_403(env):
-    # 未登録 ID bob でセッション確立 → isAdmin False、upload(Bearer)は 403。
+def test_login_unknown_account_401(env):
+    r = _login_resp(env, "nobody")
+    assert r.status_code == 401
+
+
+def test_login_non_admin_is_admin_false_and_upload_403(env):
+    # 一般 bob → isAdmin False、upload(Bearer)は 403。
     hdr = _login(env, "bob")
-    assert env.post("/api/auth/session", json={"id": "bob"},
-                    headers=HDR).json()["isAdmin"] is False
+    assert _login_resp(env, "bob").json()["isAdmin"] is False
     r2 = env.post(
         "/api/chara/graphics",
         files={"file": ("g.bmp", _bmp(), "image/bmp")},
@@ -162,7 +192,7 @@ def test_session_non_admin_is_admin_false_and_upload_403(env):
     assert r2.status_code == 403
 
 
-def test_session_then_upload(env):
+def test_login_then_upload(env):
     # A-33: Bearer token で認証して upload。
     hdr = _login(env, "alice")
     r2 = env.post(
@@ -175,13 +205,66 @@ def test_session_then_upload(env):
     assert r2.json()["graName"] == "g"
 
 
-def test_session_remember_persists_label(env):
-    # remember=True で saved_ids に upsert され label が返る。
-    r = _session(env, "carol", remember=True, label="サブ")
+# --- キャラ CRUD(A-34) ---------------------------------------------------
+
+def test_characters_crud_flow(env):
+    hdr = _login(env, "bob")
+    # 初期は空。
+    r = env.get("/api/characters", headers=hdr)
     assert r.status_code == 200
-    assert r.json().get("label") == "サブ"
-    row = env._store.get_saved_id(id_key_of("carol"))
-    assert row is not None and row["label"] == "サブ"
+    assert r.json() == {"characters": []}
+    # 作成(uid 非公開)。
+    r = env.post("/api/characters",
+                 json={"label": "Ransaia Wilt", "phiId": "uid_a",
+                       "host": "ip_a", "port": 5000},
+                 headers=hdr)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    char_id = body["charId"]
+    assert body["label"] == "Ransaia Wilt"
+    assert body["host"] == "ip_a" and body["port"] == 5000
+    assert "phiId" not in body and "uid" not in str(body)
+    # uid は暗号保存(復号で往復)。
+    row = env._store.get_character(char_id)
+    assert env._store.conn is not None
+    # 一覧に出る。
+    r = env.get("/api/characters", headers=hdr)
+    chars = r.json()["characters"]
+    assert len(chars) == 1 and chars[0]["charId"] == char_id
+    # 更新。
+    r = env.put(f"/api/characters/{char_id}",
+                json={"label": "旧世界 Wilt", "port": 6000}, headers=hdr)
+    assert r.status_code == 200
+    assert r.json()["label"] == "旧世界 Wilt" and r.json()["port"] == 6000
+    # 削除。
+    r = env.delete(f"/api/characters/{char_id}", headers=hdr)
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert env.get("/api/characters", headers=hdr).json() == {"characters": []}
+
+
+def test_characters_require_auth(env):
+    assert env.get("/api/characters", headers=HDR).status_code == 401
+
+
+def test_characters_ownership_isolation(env):
+    bob = _login(env, "bob")
+    carol = _login(env, "carol")
+    r = env.post("/api/characters",
+                 json={"label": "BobChar", "phiId": "uid_b"}, headers=bob)
+    char_id = r.json()["charId"]
+    # carol からは見えない/操作できない(404)。
+    assert env.get("/api/characters", headers=carol).json() == {"characters": []}
+    assert env.put(f"/api/characters/{char_id}",
+                   json={"label": "x"}, headers=carol).status_code == 404
+    assert env.delete(f"/api/characters/{char_id}",
+                      headers=carol).status_code == 404
+
+
+def test_characters_port_out_of_range_400(env):
+    hdr = _login(env, "bob")
+    r = env.post("/api/characters",
+                 json={"label": "X", "phiId": "u", "port": 99999}, headers=hdr)
+    assert r.status_code == 400
 
 
 def test_lifespan_shutdown_invokes_manager(tmp_path):
@@ -228,12 +311,13 @@ def test_logout(env):
 # --- CSRF 撤去(A-33): cookie 廃止で任意 Origin 不問 ----------------------
 
 def test_any_origin_allowed_after_csrf_removed(env):
-    # LAN-IP 等の任意 Origin でも session 確立が通る(CSRF 403 が出ない)。
-    r = env.post("/api/auth/session", json={"id": "alice"},
+    # LAN-IP 等の任意 Origin でも login が通る(CSRF 403 が出ない)。
+    body = {"accountId": "alice", "password": "password1"}
+    r = env.post("/api/auth/login", json=body,
                  headers={"Origin": "http://192.168.1.28:8080"})
     assert r.status_code == 200
     # 別 Origin でも 403 にならない(CSRF 検査撤去)。
-    r2 = env.post("/api/auth/session", json={"id": "alice"},
+    r2 = env.post("/api/auth/login", json=body,
                   headers={"Origin": "https://other.test"})
     assert r2.status_code == 200
 
@@ -262,11 +346,11 @@ def test_register_success(env):
     body = r.json()
     assert body["name"] == "Hero"
     char_id = body["charId"]
-    # characters に uid 暗号化保存済(account_id=id_key, 生ID非保持)
+    # characters に uid 暗号化保存済(account_id=alice, 生 uid 非保持)
     row = env._store.get_character(char_id)
     assert row is not None
-    assert row["legacy_uid_enc"] is not None
-    assert row["account_id"] == id_key_of("alice")
+    assert row["phi_uid_enc"] is not None
+    assert row["account_id"] == "alice"
 
 
 def test_register_local_reject(env):

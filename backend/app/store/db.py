@@ -28,7 +28,7 @@ def utc_now() -> str:
 
 
 def id_key_of(plain_id: str) -> str:
-    """平文 PHI ID → 検索キー sha256(16進)。生ID非保持の照合用([12]§1)。"""
+    """平文文字列 → sha256(16進)。汎用ハッシュ(後方互換, 一部内部キー用)。"""
     return hashlib.sha256(plain_id.encode("utf-8")).hexdigest()
 
 
@@ -103,164 +103,120 @@ class Store:
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         self.conn.executescript(sql)
         self.conn.commit()
-        self._migrate_columns()
-
-    def _migrate_columns(self) -> None:
-        """既存DBへの列追加(冪等)。CREATE IF NOT EXISTS では追えない後付け列。
-
-        ALTER TABLE ADD COLUMN は IF NOT EXISTS 非対応のため、PRAGMA で
-        既存列を確認してから不足分のみ追加する(A-32: saved_ids.host/port)。
-        """
-        added = False
-        cols = {
-            r["name"]
-            for r in self.conn.execute("PRAGMA table_info(saved_ids)").fetchall()
-        }
-        if "host" not in cols:
-            self.conn.execute("ALTER TABLE saved_ids ADD COLUMN host TEXT")
-            added = True
-        if "port" not in cols:
-            self.conn.execute("ALTER TABLE saved_ids ADD COLUMN port INTEGER")
-            added = True
-        if added:
-            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
 
     # ------------------------------------------------------------------
-    # saved_ids(ID-only 認証, 暗号保存 [12]§1)
+    # accounts(Web 認証, A-34, [12]§1.2)
     # ------------------------------------------------------------------
-    # 生 PHI ID は保持せず、id_key=sha256(id) を PK、id_enc=暗号文を保存する。
-    # IDは資格情報のためログ/エラーへ出さない。引数の id_key/id_enc は呼出側
-    # (auth/admin_cli)で算出・暗号化済みのものを受け取る。
+    # ログインID + argon2id パスワードハッシュ。is_admin で管理者限定([08]§10)。
+    # password_hash は呼出側(auth)で算出済のものを受け取る。
+    # password 平文/PHI uid はログ/エラーへ出さない。
 
-    def upsert_saved_id(
-        self,
-        id_key: str,
-        id_enc: bytes,
-        *,
-        label: str | None = None,
-        is_admin: bool | None = None,
-        host: str | None = None,
-        port: int | None = None,
+    def create_account(
+        self, account_id: str, password_hash: str, *, is_admin: bool = False
     ) -> None:
-        """保存IDを upsert。is_admin/label/host/port は None なら既存値を維持。
-
-        A-32: 接続先 host/port も保存(FE 接続先ピッカーの初期値用)。
-        """
-        existing = self.get_saved_id(id_key)
-        if existing is None:
-            self.conn.execute(
-                "INSERT INTO saved_ids "
-                "(id_key, id_enc, label, is_admin, host, port, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (id_key, id_enc, label,
-                 1 if is_admin else 0, host, port, utc_now()),
-            )
-        else:
-            new_label = existing["label"] if label is None else label
-            new_admin = (
-                existing["is_admin"] if is_admin is None else (1 if is_admin else 0)
-            )
-            new_host = existing["host"] if host is None else host
-            new_port = existing["port"] if port is None else port
-            self.conn.execute(
-                "UPDATE saved_ids SET id_enc = ?, label = ?, is_admin = ?, "
-                "host = ?, port = ? WHERE id_key = ?",
-                (id_enc, new_label, new_admin, new_host, new_port, id_key),
-            )
+        """アカウント新規作成。既存(account_id 衝突)は IntegrityError。"""
+        self.conn.execute(
+            "INSERT INTO accounts (account_id, password_hash, is_admin, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (account_id, password_hash, 1 if is_admin else 0, utc_now()),
+        )
         self.conn.commit()
 
-    def get_saved_id(self, id_key: str) -> sqlite3.Row | None:
+    def get_account(self, account_id: str) -> sqlite3.Row | None:
         cur = self.conn.execute(
-            "SELECT id_key, id_enc, label, is_admin, host, port, "
-            "created_at, last_used_at "
-            "FROM saved_ids WHERE id_key = ?",
-            (id_key,),
+            "SELECT account_id, password_hash, is_admin, created_at "
+            "FROM accounts WHERE account_id = ?",
+            (account_id,),
         )
         return cur.fetchone()
 
-    def list_saved_ids(self) -> list[sqlite3.Row]:
-        """保存ID一覧(id_key 昇順)。生IDは含まない(id_key/label/is_admin/host/port)。"""
-        cur = self.conn.execute(
-            "SELECT id_key, id_enc, label, is_admin, host, port, "
-            "created_at, last_used_at "
-            "FROM saved_ids ORDER BY id_key"
-        )
-        return cur.fetchall()
-
-    def touch_saved_id(self, id_key: str, when: str | None = None) -> None:
-        """last_used_at を更新(存在時のみ)。"""
+    def update_password_hash(self, account_id: str, password_hash: str) -> None:
+        """パスワードハッシュ更新(argon2 rehash 等)。"""
         self.conn.execute(
-            "UPDATE saved_ids SET last_used_at = ? WHERE id_key = ?",
-            (when or utc_now(), id_key),
+            "UPDATE accounts SET password_hash = ? WHERE account_id = ?",
+            (password_hash, account_id),
         )
         self.conn.commit()
 
-    def delete_saved_id(self, id_key: str) -> bool:
-        """保存IDを削除。削除行があれば True。"""
+    def is_account_admin(self, account_id: str) -> bool:
+        """アカウントが管理者か。未登録は False。"""
         cur = self.conn.execute(
-            "DELETE FROM saved_ids WHERE id_key = ?", (id_key,)
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
-
-    # ---- 管理者フラグ(is_admin) ----
-
-    def is_saved_admin(self, id_key: str) -> bool:
-        """保存ID(id_key)が管理者か。未登録は False。"""
-        cur = self.conn.execute(
-            "SELECT is_admin FROM saved_ids WHERE id_key = ?", (id_key,)
+            "SELECT is_admin FROM accounts WHERE account_id = ?", (account_id,)
         )
         row = cur.fetchone()
         return bool(row["is_admin"]) if row is not None else False
 
-    def set_saved_admin(self, id_key: str, value: bool) -> None:
-        """保存IDの is_admin を設定(grant/revoke 共用)。"""
+    def set_account_admin(self, account_id: str, value: bool) -> None:
+        """アカウントの is_admin を設定(grant/revoke 共用)。"""
         self.conn.execute(
-            "UPDATE saved_ids SET is_admin = ? WHERE id_key = ?",
-            (1 if value else 0, id_key),
+            "UPDATE accounts SET is_admin = ? WHERE account_id = ?",
+            (1 if value else 0, account_id),
         )
         self.conn.commit()
 
-    def list_admin_keys(self) -> list[str]:
-        """管理者の id_key 一覧(昇順)。生IDは出さない。"""
+    def list_accounts(self) -> list[sqlite3.Row]:
+        """アカウント一覧(account_id 昇順)。password_hash は含むが CLI 側で非表示。"""
         cur = self.conn.execute(
-            "SELECT id_key FROM saved_ids WHERE is_admin = 1 ORDER BY id_key"
+            "SELECT account_id, password_hash, is_admin, created_at "
+            "FROM accounts ORDER BY account_id"
         )
-        return [r["id_key"] for r in cur.fetchall()]
+        return cur.fetchall()
 
     # ------------------------------------------------------------------
-    # characters
+    # characters(アカウント配下の複数キャラ, A-34)
     # ------------------------------------------------------------------
+    # 各キャラ = label + phi_uid_enc(暗号化 PHI uid, #open 用) + host/port。
+    # phi_uid_enc は呼出側(auth/rest)で暗号化済のものを受け取る。生 uid 非保持。
 
-    def upsert_character(
+    def create_character(
         self,
         char_id: str,
         account_id: str,
         *,
-        display_name: str | None = None,
-        last_server: str | None = None,
-        legacy_uid_enc: bytes | None = None,
-        legacy_host: str | None = None,
+        label: str | None = None,
+        phi_uid_enc: bytes | None = None,
+        host: str | None = None,
+        port: int | None = None,
     ) -> None:
+        """キャラ新規作成。"""
+        now = utc_now()
         self.conn.execute(
-            """
-            INSERT INTO characters
-              (char_id, account_id, display_name, last_server,
-               legacy_uid_enc, legacy_host, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(char_id) DO UPDATE SET
-              account_id     = excluded.account_id,
-              display_name   = excluded.display_name,
-              last_server    = excluded.last_server,
-              legacy_uid_enc = excluded.legacy_uid_enc,
-              legacy_host    = excluded.legacy_host,
-              updated_at     = excluded.updated_at
-            """,
-            (char_id, account_id, display_name, last_server,
-             legacy_uid_enc, legacy_host, utc_now()),
+            "INSERT INTO characters "
+            "(char_id, account_id, label, phi_uid_enc, host, port, "
+            " created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (char_id, account_id, label, phi_uid_enc, host, port, now, now),
+        )
+        self.conn.commit()
+
+    def update_character(
+        self,
+        char_id: str,
+        *,
+        label: str | None = None,
+        phi_uid_enc: bytes | None = None,
+        host: str | None = None,
+        port: int | None = None,
+    ) -> None:
+        """キャラ更新。None 指定の項目は既存値を維持(host/port は明示更新のみ)。
+
+        host/port を None のまま据え置きたい一方で「明示的に既定へ戻す」ニーズは
+        現契約に無いため、None=維持とする(REST 層で必要項目のみ渡す)。
+        """
+        existing = self.get_character(char_id)
+        if existing is None:
+            return
+        new_label = existing["label"] if label is None else label
+        new_enc = existing["phi_uid_enc"] if phi_uid_enc is None else phi_uid_enc
+        new_host = existing["host"] if host is None else host
+        new_port = existing["port"] if port is None else port
+        self.conn.execute(
+            "UPDATE characters SET label = ?, phi_uid_enc = ?, host = ?, "
+            "port = ?, updated_at = ? WHERE char_id = ?",
+            (new_label, new_enc, new_host, new_port, utc_now(), char_id),
         )
         self.conn.commit()
 
@@ -271,11 +227,21 @@ class Store:
         return cur.fetchone()
 
     def list_characters(self, account_id: str) -> list[sqlite3.Row]:
+        """アカウント配下のキャラ一覧(created_at 昇順)。"""
         cur = self.conn.execute(
-            "SELECT * FROM characters WHERE account_id = ? ORDER BY char_id",
+            "SELECT * FROM characters WHERE account_id = ? "
+            "ORDER BY created_at, char_id",
             (account_id,),
         )
         return cur.fetchall()
+
+    def delete_character(self, char_id: str) -> bool:
+        """キャラ削除。削除行があれば True。"""
+        cur = self.conn.execute(
+            "DELETE FROM characters WHERE char_id = ?", (char_id,)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     # ------------------------------------------------------------------
     # sessions(ゲーム)
@@ -320,8 +286,7 @@ class Store:
     def create_web_session(
         self,
         token: str,
-        id_key: str,
-        id_enc: bytes,
+        account_id: str,
         created_at: str,
         last_seen_at: str,
         expires_at: str,
@@ -329,10 +294,10 @@ class Store:
         self.conn.execute(
             """
             INSERT INTO sessions_web
-              (token, id_key, id_enc, created_at, last_seen_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+              (token, account_id, created_at, last_seen_at, expires_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (token, id_key, id_enc, created_at, last_seen_at, expires_at),
+            (token, account_id, created_at, last_seen_at, expires_at),
         )
         self.conn.commit()
 

@@ -1,21 +1,15 @@
 /**
- * sessionStore — アクティブ session・保存済みID一覧・タブ([12]§5)。
- * 更新元: saved.list(items) / session.open。
+ * sessionStore — アクティブ session・開いているキャラタブ([12]§5)。
+ * 更新元: session.open。
  *
- * ID-only ログインへ再設計: アカウント+キャラ一覧概念を廃止。
- * PHI ID 自体が資格情報。保存済みは ref+label で識別(生ID非保持)。
+ * A-34: アカウント+複数キャラ構造へ再設計。
+ * キャラは charId で参照(PHI uid は FE 非保持)。保存済みID一覧概念は撤去。
  */
 import { create } from 'zustand';
-import type { SavedListItem } from '../types/protocol';
 
-/** session.open に渡した識別子(再アタッチ用)。id か ref のどちらか。 */
+/** session.open に渡した識別子(再アタッチ用)。charId で参照。 */
 export interface SessionOpener {
-  id?: string;
-  ref?: string;
-  /** 接続先ホスト/IP(A-32, 再アタッチ用)。 */
-  host?: string;
-  /** 接続先ポート(A-32, 再アタッチ用)。 */
-  port?: number;
+  charId: string;
 }
 
 /** 開いている session(キャラタブ)の情報。 */
@@ -23,25 +17,18 @@ export interface SessionInfo {
   session: string;
   /** タブ表示用ラベル。 */
   label: string;
-  /** 再接続時の再 open に使う識別子(host/port含む)。 */
+  /** 再接続時の再 open に使う識別子(charId)。 */
   opener: SessionOpener;
   /** 管理者セッションか(管理UI出し分け)。 */
   isAdmin?: boolean;
-  /** 接続先ホスト/IP(A-32, タブ表示等任意)。 */
-  host?: string;
-  /** 接続先ポート(A-32, タブ表示等任意)。 */
-  port?: number;
 }
 
 interface SessionStoreState {
-  /** saved.list で得た保存済みID一覧(ラベル選択用)。生IDは含まない。 */
-  saved: SavedListItem[];
   /** session別 タブ情報。 */
   sessions: Record<string, SessionInfo>;
   /** フォーカス中の session。 */
   active: string | null;
 
-  setSaved: (items: SavedListItem[]) => void;
   addSession: (info: SessionInfo) => void;
   removeSession: (session: string) => void;
   setActive: (session: string | null) => void;
@@ -49,14 +36,12 @@ interface SessionStoreState {
 }
 
 const initial = {
-  saved: [] as SavedListItem[],
   sessions: {} as Record<string, SessionInfo>,
   active: null as string | null,
 };
 
 export const useSessionStore = create<SessionStoreState>((set) => ({
   ...initial,
-  setSaved: (saved) => set({ saved }),
   addSession: (info) =>
     set((s) => ({ sessions: { ...s.sessions, [info.session]: info } })),
   removeSession: (session) =>
@@ -69,5 +54,5 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
       };
     }),
   setActive: (active) => set({ active }),
-  reset: () => set({ ...initial, saved: [], sessions: {} }),
+  reset: () => set({ ...initial, sessions: {} }),
 }));

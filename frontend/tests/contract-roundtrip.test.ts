@@ -16,7 +16,6 @@ import type { ServerMessageType } from '../src/types/protocol';
 const CONTRACT_SERVER_TYPES: ServerMessageType[] = [
   'hello',
   'session.open',
-  'saved.list',
   'connection',
   'snapshot',
   'map',
@@ -38,14 +37,13 @@ const CONTRACT_SERVER_TYPES: ServerMessageType[] = [
 /**
  * on(type) 以外の経路で消費される型 → 理由付き。
  * - snapshot: onSnapshot フック経由。
- * - session.open/saved.list/settings: reqId 相関(request)で resolve。controller も
- *   on('settings') を持つが、session.open/saved.list は応答専用のため on 登録不要。
+ * - session.open/settings: reqId 相関(request)で resolve。controller も
+ *   on('settings') を持つが、session.open は応答専用のため on 登録不要。
  * - pong: 任意ハートビート。現状アプリ層 ping 未送出のため無視(将来 on 追加可)。
  */
 const KNOWN_OTHER: Partial<Record<ServerMessageType, string>> = {
   snapshot: 'onSnapshot フックで消費',
   'session.open': 'reqId相関(request)で resolve',
-  'saved.list': 'reqId相関(request)で resolve',
   pong: '任意ハートビート(未使用, 前方互換で無視)',
 };
 

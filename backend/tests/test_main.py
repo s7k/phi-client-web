@@ -140,10 +140,11 @@ def test_protected_rest_requires_auth(client):
     assert r.status_code == 401
 
 
-def test_session_requires_id(client):
-    # ID-only: id 無しの session 確立は 400。
-    r = client.post("/api/auth/session", json={})
-    assert r.status_code == 400
+def test_login_invalid_credentials(client):
+    # A-34: 未登録アカウントの login は 401。
+    r = client.post("/api/auth/login",
+                    json={"accountId": "nobody", "password": "password1"})
+    assert r.status_code == 401
 
 
 def test_assets_mount_when_dir_exists(tmp_path):

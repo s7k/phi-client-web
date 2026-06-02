@@ -4,21 +4,21 @@
 ------------------------------------------------------------------
 - WS 接続ごとに 1 つの `WsConnection` を生成し、エンベロープ([07]§2)を解析。
 - `hello`(§4) を接続直後に送出。
-- C→S: `saved.list`/`session.open`(A-10 応答)/その他 intent を SessionManager へ。
+- C→S: `session.open {charId}`(A-10 応答)/その他 intent を SessionManager へ。
 - S→C: SessionManager から来たイベントを outbound キュー経由で WS へ送出
   (受信ループと送信ループを分離し、イベント順序を保つ)。
 - session 省略時はアクティブ(直近 open)セッションへ解決(A-03)。
 
-認証(ID-only / token 再設計, [07]§4.1, [12]§1, B12, A-33):
-  - Web パスワード廃止。cookie 廃止(非HTTPS LAN-IP で Secure cookie がブラウザに
-    拒否される問題 + CSRF Origin 問題の解消)。token を FE が localStorage 保持。
+認証(アカウント+複数キャラ 再設計, A-34, [07]§4.1, [12]§1, B12, A-33):
+  - 1アカウント(ログインID + パスワード)の下に複数キャラ。token は FE が
+    localStorage 保持(A-33: cookie 廃止)。
   - **WS 接続直後は未認証**。FE が最初に `{type:"auth", token}` を送る →
-    BE が `AuthService.validate` → id_key 設定 → `{type:"auth", ok:true, isAdmin}`
+    BE が `AuthService.validate` → account_id 設定 → `{type:"auth", ok:true, isAdmin}`
     応答。token 無効は `{type:"auth", ok:false}`。
-  - `saved.list`/`settings`/`session.open(ref)` は認証後に有効。
-  - `session.open {id?|ref?}`: id=入力 PHI ID / ref=保存 id_key。BE が平文 ID を
-    得て(入力はそのまま/ref は復号)接続+`#open <平文ID>`。
-  - REST `POST /api/auth/session {id}` で token を JSON body で返却(Set-Cookie しない)。
+  - `settings`/`session.open` は認証後に有効。
+  - `session.open {charId}`: token の account が所有する char を取得(他人の char は
+    エラー)、phi_uid を復号 → 接続 + `#open <phi_uid>`。
+  - REST `POST /api/auth/login {accountId,password}` で token を JSON body で返却。
     保護 REST は `Authorization: Bearer <token>` で認証。`/api/auth/logout`(Bearer)。
 """
 from __future__ import annotations
@@ -85,11 +85,8 @@ class WsConnection:
         self._outbound: asyncio.Queue[dict] = asyncio.Queue()
         # この接続が開いた session 群(切断時に detach)。
         self._sessions: list[str] = []
-        # 認証済み所有者キー(cookie token 検証で設定。生IDは持たない)。
-        self._id_key: str | None = None
-        # 検証済みセッション identity(id_enc 保持。session.open の入力IDが
-        # 無い場合に保存ID復号で #open する用)。
-        self._identity = None  # SessionIdentity | None
+        # 認証済みアカウント(token 検証で設定。A-34)。
+        self._account_id: str | None = None
         # 同時接続カウンタ確保済みか(release 二重防止)。
         self._conn_acquired = False
 
@@ -114,14 +111,14 @@ class WsConnection:
             sender.cancel()
             for sid in self._sessions:
                 self._mgr.detach(sid)
-            if self._conn_acquired and self._cl is not None and self._id_key:
-                self._cl.release(self._id_key)
+            if self._conn_acquired and self._cl is not None and self._account_id:
+                self._cl.release(self._account_id)
                 self._conn_acquired = False
 
     async def _handle_auth(self, msg: dict) -> None:
-        """WS auth メッセージ `{type:"auth", token}` を処理(A-33)。
+        """WS auth メッセージ `{type:"auth", token}` を処理(A-33/A-34)。
 
-        token を `AuthService.validate` で検証し id_key/identity を設定。
+        token を `AuthService.validate` で検証し account_id を設定。
         成功: `{type:"auth", ok:true, isAdmin}`。失敗/欠落: `{type:"auth", ok:false}`。
         auth 未設定(テスト/開発)時は token 無しでも ok:true で通す(未認証許可)。
         token はログ/応答に出さない(資格情報)。
@@ -134,16 +131,15 @@ class WsConnection:
             })
             return
         ident = self._auth.validate(token) if token else None
-        if ident is None or not self._acquire_conn(ident.id_key):
+        if ident is None or not self._acquire_conn(ident.account_id):
             await self._ws.send_json({
                 "type": "auth", "reqId": msg.get("reqId"), "ok": False,
             })
             return
-        self._id_key = ident.id_key
-        self._identity = ident
+        self._account_id = ident.account_id
         await self._ws.send_json({
             "type": "auth", "reqId": msg.get("reqId"),
-            "ok": True, "isAdmin": self._auth.is_admin(ident.id_key),
+            "ok": True, "isAdmin": self._auth.is_admin(ident.account_id),
         })
 
     # ------------------------------------------------------------------
@@ -198,9 +194,6 @@ class WsConnection:
         if t == "auth":
             await self._handle_auth(msg)
             return
-        if t == "saved.list":
-            await self._handle_saved_list(msg)
-            return
         if t == "session.open":
             await self._handle_session_open(msg)
             return
@@ -223,30 +216,6 @@ class WsConnection:
         # それ以外は intent。session 解決して SessionManager へ。
         await self._handle_intent(msg)
 
-    # ------------------------------------------------------------------
-    # saved.list(保存ID一覧, 生ID非公開 [12]§1)
-    # ------------------------------------------------------------------
-
-    async def _handle_saved_list(self, msg: dict) -> None:
-        """保存ID一覧を返す。items は ref(id_key)/label/isAdmin/host/port(生ID非公開)。
-
-        host/port は利用者自身の保存した接続先(A-32, FE ピッカー初期値)。
-        """
-        items: list[dict] = []
-        if self._auth is not None:
-            for r in self._auth.store.list_saved_ids():
-                items.append({
-                    "ref": r["id_key"],
-                    "label": r["label"],
-                    "isAdmin": bool(r["is_admin"]),
-                    # A-32: FE 接続先ピッカー初期値用(利用者自身の保存設定)。
-                    "host": r["host"],
-                    "port": r["port"],
-                })
-        await self._ws.send_json({
-            "type": "saved", "reqId": msg.get("reqId"), "items": items,
-        })
-
     def _acquire_conn(self, key: str) -> bool:
         """WS同時接続数を確保(5/identity, [12]§4)。確保済なら True 維持。"""
         if self._cl is None or self._conn_acquired:
@@ -257,28 +226,71 @@ class WsConnection:
         return False
 
     # ------------------------------------------------------------------
-    # session.open(A-10, ID-only)
+    # session.open(A-10 / A-34: charId → 復号 → open)
     # ------------------------------------------------------------------
 
     async def _handle_session_open(self, msg: dict) -> None:
-        """`session.open {id?|ref?}`。
+        """`session.open {charId}`(A-34)。
 
-        - id  : 入力 PHI ID(平文)。任意で saved_ids へ remember(upsert)。
-        - ref : 保存 id_key。auth で復号し平文 ID を得る。
-        BE は平文 ID で接続+`#open <平文ID>`。応答に isAdmin を含める。
-        IDはログ/エラーに出さない(資格情報)。
+        token の account が所有する char を取得(他人/不在の char はエラー)、
+        phi_uid を復号 → `open_session(open_id=phi_uid, host=char.host, port=char.port)`
+        → `#open <phi_uid>`。応答 `{ok, session, isAdmin, label}`。
+        phi_uid はログ/エラーに出さない(資格情報)。
+
+        開発/テスト用に auth 未設定時は charId をそのまま open_id として使う
+        (従来 FakeSocket テスト互換)。
         """
-        try:
-            open_id, reattach_key, is_admin, host, port = (
-                self._resolve_open_target(msg)
+        char_id = msg.get("charId") or msg.get("id")
+        if not char_id:
+            await self._error(msg, "BAD_REQUEST", "charId が必要")
+            return
+        char_id = str(char_id)
+
+        if self._auth is None:
+            # 未配線(テスト): charId をそのまま open_id 扱い。host/port は msg から。
+            try:
+                host = self._coerce_host(msg.get("host"))
+                port = self._coerce_port(msg.get("port"))
+            except ValueError as exc:
+                await self._error(msg, "BAD_REQUEST", str(exc))
+                return
+            await self._open_and_respond(
+                msg, open_id=char_id, key=char_id,
+                host=host, port=port, is_admin=False, label=None,
             )
-        except ValueError as exc:
-            await self._error(msg, "BAD_REQUEST", str(exc))
             return
 
+        if self._account_id is None:
+            await self._error(msg, "SESSION_NOT_FOUND", "未認証")
+            return
+        row = self._auth.store.get_character(char_id)
+        if row is None or row["account_id"] != self._account_id:
+            # 他人の char / 不在は所有エラー(生 uid は出さない)。
+            await self._ws.send_json({
+                "type": "session.open", "reqId": msg.get("reqId"),
+                "ok": False,
+                "error": {"code": "FORBIDDEN", "message": "キャラが見つからない"},
+            })
+            return
+        if row["phi_uid_enc"] is None:
+            await self._error(msg, "BAD_REQUEST", "キャラに PHI uid 未登録")
+            return
+        open_id = self._auth.cipher.decrypt(row["phi_uid_enc"])
+        await self._open_and_respond(
+            msg, open_id=open_id, key=char_id,
+            host=row["host"], port=row["port"],
+            is_admin=self._auth.is_admin(self._account_id),
+            label=row["label"],
+        )
+
+    async def _open_and_respond(
+        self, msg: dict, *, open_id: str, key: str,
+        host: str | None, port: int | None, is_admin: bool, label: str | None,
+    ) -> None:
+        """open_session 実行 + session.open 応答。phi_uid はログ/エラー非出力。"""
         try:
             sid = await self._mgr.open_session(
-                open_id, on_event=self._enqueue, key=reattach_key,
+                open_id, on_event=self._enqueue, key=key,
                 host=host, port=port,
             )
         except OSError as exc:
@@ -294,63 +306,8 @@ class WsConnection:
         # open_session 内で on_event(=_enqueue)経由で続く。
         await self._ws.send_json({
             "type": "session.open", "reqId": msg.get("reqId"),
-            "ok": True, "session": sid, "isAdmin": is_admin,
+            "ok": True, "session": sid, "isAdmin": is_admin, "label": label,
         })
-
-    def _resolve_open_target(
-        self, msg: dict
-    ) -> tuple[str, str, bool, str | None, int | None]:
-        """msg から (#open 用平文ID, 再アタッチキー=id_key, isAdmin, host, port) を解決。
-
-        id 優先。無ければ ref(保存ID復号)。auth 未設定時は id をそのまま使う。
-        不正/不在は ValueError(エラー文言に生ID/平文は載せない)。
-
-        接続先(A-32)の解決順:
-          (a) msg の host/port を明示指定 →
-          (b) ref の場合は saved_ids 保存値 →
-          (c) host/port が None なら open_session 側でサーバ既定へフォールバック。
-        port は int 検証(不正→ValueError=BAD_REQUEST)。
-        """
-        from app.store.db import id_key_of
-
-        raw_id = msg.get("id")
-        ref = msg.get("ref")
-        host = self._coerce_host(msg.get("host"))
-        port = self._coerce_port(msg.get("port"))
-
-        if raw_id:
-            plain = str(raw_id)
-            key = id_key_of(plain)
-            if self._auth is not None and msg.get("remember"):
-                # remember 時は接続先も保存(明示指定があれば)。
-                self._auth.remember_id(
-                    plain, label=msg.get("label"), host=host, port=port
-                )
-            is_admin = self._auth.is_admin(key) if self._auth is not None else False
-            return plain, key, is_admin, host, port
-
-        if ref:
-            if self._auth is None:
-                raise ValueError("ref 未対応(auth 未設定)")
-            row = self._auth.store.get_saved_id(str(ref))
-            if row is None:
-                raise ValueError("保存IDが見つからない")
-            plain = self._auth.cipher.decrypt(row["id_enc"])
-            # host/port 明示が無ければ保存値を採用(A-32 (b))。
-            if host is None:
-                host = row["host"]
-            if port is None:
-                port = row["port"]
-            # ref open 時に明示 host/port があれば保存値を更新。
-            if msg.get("host") is not None or msg.get("port") is not None:
-                self._auth.store.upsert_saved_id(
-                    str(ref), row["id_enc"],
-                    host=self._coerce_host(msg.get("host")),
-                    port=self._coerce_port(msg.get("port")),
-                )
-            return plain, str(ref), bool(row["is_admin"]), host, port
-
-        raise ValueError("id または ref が必要")
 
     @staticmethod
     def _coerce_host(value) -> str | None:
@@ -395,13 +352,13 @@ class WsConnection:
         if scope not in _SETTINGS_SCOPES:
             await self._error(msg, "BAD_REQUEST", f"invalid scope: {scope!r}")
             return
-        if self._store is None or self._id_key is None:
+        if self._store is None or self._account_id is None:
             # 未認証 or ストア未設定。get は空を返し、set は失敗扱い。
             await self._error(msg, "SESSION_NOT_FOUND", "未認証(設定には要セッション)")
             return
 
         if t == "settings.get":
-            raw = self._store.get_account_setting(self._id_key, scope)
+            raw = self._store.get_account_setting(self._account_id, scope)
             value = json.loads(raw) if raw is not None else None
             await self._ws.send_json({
                 "type": "settings", "reqId": msg.get("reqId"),
@@ -412,7 +369,7 @@ class WsConnection:
         # settings.set: value を JSON 文字列で永続化し ok 応答。
         value = msg.get("value")
         self._store.set_account_setting(
-            self._id_key, scope, json.dumps(value)
+            self._account_id, scope, json.dumps(value)
         )
         await self._ws.send_json({
             "type": "settings", "reqId": msg.get("reqId"),
@@ -512,17 +469,17 @@ def _bearer_token(request: Request) -> str | None:
 
 
 def make_require_account(auth):
-    """`require_account` 依存を生成([12]§1.3, ID-only, A-33 Bearer)。
+    """`require_account` 依存を生成([12]§1.3, A-34, A-33 Bearer)。
 
     `Authorization: Bearer <token>` の token を `AuthService.validate` で検証し
-    id_key を返す。無効/欠落は 401。REST 保護エンドポイントに注入。
+    account_id を返す。無効/欠落は 401。REST 保護エンドポイントに注入。
     """
     async def _require_account(request: Request) -> str:
         token = _bearer_token(request)
-        id_key = auth.validate_id_key(token) if token else None
-        if id_key is None:
+        account_id = auth.validate_account(token) if token else None
+        if account_id is None:
             raise HTTPException(401, "未認証")
-        return id_key
+        return account_id
 
     return _require_account
 
@@ -530,18 +487,18 @@ def make_require_account(auth):
 def make_require_admin(auth):
     """`require_admin` 依存を生成([08]§10, 管理者限定の変更系, A-33 Bearer)。
 
-    `require_account` と同経路で Bearer token 検証し id_key を解決後、
-    `saved_ids.is_admin` を確認。未認証は 401、非管理者は 403。
+    `require_account` と同経路で Bearer token 検証し account_id を解決後、
+    `accounts.is_admin` を確認。未認証は 401、非管理者は 403。
     キャラグラの変更系(upload/delete/index 編集/import)に注入。
     """
     async def _require_admin(request: Request) -> str:
         token = _bearer_token(request)
-        id_key = auth.validate_id_key(token) if token else None
-        if id_key is None:
+        account_id = auth.validate_account(token) if token else None
+        if account_id is None:
             raise HTTPException(401, "未認証")
-        if not auth.is_admin(id_key):
+        if not auth.is_admin(account_id):
             raise HTTPException(403, "管理者権限が必要")
-        return id_key
+        return account_id
 
     return _require_admin
 
@@ -562,7 +519,8 @@ def create_app(
 
     マウント:
     - `/ws`                          : WebSocket([07])。auth は接続後 `{type:"auth",token}`。
-    - `/api/auth/session` `/logout`  : ID-only 認証([12]§1.3, A-33)。token を JSON 返却。
+    - `/api/auth/register|login|logout` : アカウント認証([12]§1, A-34)。token を JSON 返却。
+    - `/api/characters/*`            : キャラ CRUD([12]§1, A-34)。要認証 + 所有検証。
     - `/api/chara/*`                 : キャラグラ([08], B10)。変更系は管理者限定 + レート。
     - `/api/register/*`              : 新規登録([12]§2, B15)。register は要認証 + レート/IP。
 
@@ -623,33 +581,51 @@ def create_app(
     # CSRF も Secure cookie の非HTTPS拒否問題も発生しない。
 
     # ------------------------------------------------------------------
-    # 認証(ID-only セッション確立 [12]§1.3, A-33: token を JSON body 返却)
+    # 認証(アカウント+複数キャラ, A-34, A-33: token を JSON body 返却)
     # ------------------------------------------------------------------
-    @app.post("/api/auth/session")
-    async def establish_session(request: Request):
-        """入力 PHI ID でセッション確立し token を JSON body で返す(Set-Cookie しない)。
+    @app.post("/api/auth/register")
+    async def register_account(request: Request):
+        """新規アカウント作成。body `{accountId, password}`。
 
-        body `{id, remember?, label?}`。ID=資格情報のためログ/エラーへ出さない。
-        レスポンス `{ok:true, isAdmin:bool, token, label?}`。FE は token を
-        localStorage 保持し、REST は `Authorization: Bearer`、WS は `auth` メッセージで送る。
+        - 成功 `{ok:true}`。
+        - 既存 accountId → 409。
+        - accountId 空 / パスワード最小長未満 → 400。
+        password はログ/エラーへ出さない(資格情報)。
         """
-        from app.store.db import id_key_of
+        body = await request.json()
+        account_id = str(body.get("accountId", "") or "")
+        password = str(body.get("password", "") or "")
+        try:
+            auth.register(account_id, password)
+        except ValueError as exc:
+            if str(exc) == "account exists":
+                raise HTTPException(409, "アカウントは既に存在します") from exc
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True}
+
+    @app.post("/api/auth/login")
+    async def login_account(request: Request):
+        """アカウント検証→token 発行。body `{accountId, password}`。
+
+        - 成功 `{ok:true, token, isAdmin}`(Set-Cookie しない)。
+        - 失敗(未登録/パスワード不一致)→ 401。
+        - 総当たり抑止(account+IP レート, LoginThrottle)。
+        password/token はログ/エラーへ出さない。
+        """
+        from app.rest.register import client_ip
 
         body = await request.json()
-        plain_id = str(body.get("id", "") or "")
-        if not plain_id:
-            return Response(status_code=400, content="id 必須")
-        token = auth.establish_session(
-            plain_id,
-            remember=bool(body.get("remember")),
-            label=body.get("label"),
-        )
-        key = id_key_of(plain_id)
-        saved = auth.store.get_saved_id(key)
-        out = {"ok": True, "isAdmin": auth.is_admin(key), "token": token}
-        if saved is not None and saved["label"]:
-            out["label"] = saved["label"]
-        return out
+        account_id = str(body.get("accountId", "") or "")
+        password = str(body.get("password", "") or "")
+        ip = client_ip(request)
+        if not login_throttle.check(account_id, ip):
+            raise HTTPException(429, "ログイン試行が多すぎます")
+        token = auth.login(account_id, password)
+        if token is None:
+            login_throttle.record_failure(account_id, ip)
+            raise HTTPException(401, "認証失敗")
+        login_throttle.reset_key(account_id, ip)
+        return {"ok": True, "token": token, "isAdmin": auth.is_admin(account_id)}
 
     @app.post("/api/auth/logout")
     async def logout(request: Request):
@@ -667,6 +643,7 @@ def create_app(
     # REST ルータ(chara / register)
     # ------------------------------------------------------------------
     from app.rest.chara import build_chara_router
+    from app.rest.characters import build_characters_router
     from app.rest.register import build_register_router
 
     assets = assets_dir or os.environ.get("PHI_ASSETS_DIR") or "./assets"
@@ -674,6 +651,9 @@ def create_app(
     app.include_router(build_chara_router(
         store, assets,
         require_admin=require_admin, rate_limiter=rate_limiter,
+    ))
+    app.include_router(build_characters_router(
+        store, auth.cipher, require_account,
     ))
 
     if registrar_factory is None:  # pragma: no cover - 統合層(本番起動)

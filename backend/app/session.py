@@ -488,21 +488,23 @@ class SessionManager:
                         "server": server})
 
     def _update_last_server(self, st: _SessionState, server: str) -> None:
+        """世界移動成功時に characters.host/port を新サーバへ更新(A-34)。
+
+        st.key は char_id(WS 層が渡す)。該当キャラが無ければ skip。
+        永続化失敗は移動自体の成功を損なわないよう握り潰す。
+        """
         if self._store is None:
             return
         try:
             row = self._store.get_character(st.key)
-            account_id = row["account_id"] if row is not None else None
-            display_name = row["display_name"] if row is not None else None
-            if account_id is None:
-                # 既存キャラ行が無い場合は last_server だけ更新できないため skip。
+            if row is None:
                 return
-            self._store.upsert_character(
-                st.key, account_id,
-                display_name=display_name, last_server=server,
-                legacy_uid_enc=row["legacy_uid_enc"] if row is not None else None,
-                legacy_host=server,
-            )
+            ip, _, port_s = server.partition(":")
+            try:
+                port = int(port_s)
+            except ValueError:
+                port = None
+            self._store.update_character(st.key, host=ip or None, port=port)
         except Exception:  # noqa: BLE001 - 永続化失敗で移動自体は成功扱い
             pass
 
