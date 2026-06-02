@@ -165,16 +165,20 @@ body {
     padding: 0.5rem;
     overflow: hidden;          /* スクロールさせず各領域の配分で収める */
   }
-  .game__chat   { order: 1; flex: 1 1 auto; min-height: 40vh; }  /* 主役 */
+  /* 配分(viewport基準): chrome(tabbar+topbar)≈14vh + map24 + status≤28 →
+     chat は残り(growで主役)。min-height:0 で over時は chat が縮み 100dvh 内に収める。
+     旧 chat min-height:40vh は合計が 100dvh を超え status 下部(MP/EXP/属性)が
+     clip され「HPバーしか見えない」状態を招いていた。 */
+  .game__chat   { order: 1; flex: 1 1 auto; min-height: 0; }  /* 主役(残りを占有) */
   .game__map    {
     order: 2; flex: 0 0 auto;
-    height: 27vh; max-height: 27vh;  /* 控えめ固定。大きいマップは内部スクロール */
+    height: 24vh; max-height: 24vh;  /* 控えめ固定。大きいマップは内部スクロール */
     align-items: flex-start;         /* 縦は詰める(中央寄せの黒余白を排除) */
     padding: 0;
   }
   .game__status {
     order: 3; flex: 0 0 auto;
-    max-height: 22vh;          /* 圧縮: 副次情報は内部スクロール */
+    max-height: 28vh;          /* HP/MP/EXP/GP は見せる。属性/cond 溢れは内部スクロール */
     overflow: auto;
   }
 }

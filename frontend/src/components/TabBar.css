@@ -5,6 +5,12 @@
   background: var(--bg);
   border-bottom: 1px solid var(--border-faint);
   overflow-x: auto;
+  flex: 0 0 auto;        /* .app(flex列)内で潰れない(高さ確保)。横溢れは横スクロール */
+  flex-wrap: nowrap;     /* タブを折り返さず1行(崩れ防止)。多数時は overflow-x で対応 */
+}
+
+.tabbar__tab {
+  flex: 0 0 auto;        /* タブ自体も縮めない(ラベルが潰れない) */
 }
 
 .tabbar__tab {
