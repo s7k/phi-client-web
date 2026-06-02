@@ -67,3 +67,37 @@ def is_origin_allowed(
     if origin is None:
         return False
     return origin in allowed
+
+
+class CsrfOriginMiddleware:
+    """CSRF Origin 検査の**純 ASGI ミドルウェア**。
+
+    重要: Starlette の `BaseHTTPMiddleware`(`@app.middleware("http")`)は
+    **WebSocket を壊す**(ハンドシェイクが 403 で拒否される既知問題)。
+    本ミドルウェアは `scope["type"] == "http"` のみ検査し、websocket /
+    lifespan は素通しするため WS が正常に確立できる。
+    """
+
+    def __init__(self, app, allowed: set[str] | None, *, production: bool = False):
+        self.app = app
+        self.allowed = allowed
+        self.production = production
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            # websocket / lifespan はそのまま通す(WS認証は接続後にcookieで実施)。
+            await self.app(scope, receive, send)
+            return
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                   for k, v in scope.get("headers", [])}
+        method = scope.get("method", "GET")
+        if not is_origin_allowed(
+            method, headers.get("origin"), headers.get("referer"),
+            self.allowed, fail_closed=self.production,
+        ):
+            from starlette.responses import PlainTextResponse
+            await PlainTextResponse("CSRF: origin 不許可", status_code=403)(
+                scope, receive, send
+            )
+            return
+        await self.app(scope, receive, send)

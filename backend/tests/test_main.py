@@ -164,3 +164,22 @@ def test_assets_mount_when_dir_exists(tmp_path):
     r = client.get("/assets/hello.txt")
     assert r.status_code == 200
     assert r.text == "hi"
+
+
+def test_ws_route_handshake_real_asgi():
+    """回帰: 実ASGI WebSocketルートでハンドシェイクが成立し hello を受信。
+
+    `from __future__ import annotations` 下で `websocket: WebSocket` 注釈が
+    モジュールレベル未importだと FastAPI がクエリ扱いし 1008 で全WSを拒否する
+    (Fake ws のユニットテストでは迂回され検出できなかった)。本テストは実ルート
+    経由(TestClient.websocket_connect)で接続を検証し再発を防ぐ。
+    """
+    import os
+    os.environ["PHI_ENV"] = "development"
+    from starlette.testclient import TestClient
+    from app.main import build_app
+
+    with TestClient(build_app()).websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        assert hello["type"] == "hello"
+        assert hello["protocolVersion"] == 1

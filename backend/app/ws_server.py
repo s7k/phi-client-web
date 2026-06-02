@@ -28,7 +28,7 @@ import time
 # FastAPI ハンドラの型注釈解決のため module グローバルに置く
 # (`from __future__ import annotations` で注釈が文字列化されるため、
 #  関数ローカル import だと FastAPI の get_type_hints が解決できない)。
-from fastapi import HTTPException, Request, Response  # noqa: E402
+from fastapi import HTTPException, Request, Response, WebSocket  # noqa: E402
 
 from app.session import SessionManager
 
@@ -558,7 +558,7 @@ def create_app(
     import contextlib
     import os
 
-    from fastapi import FastAPI, WebSocket
+    from fastapi import FastAPI  # WebSocket はモジュールレベルでimport(注釈解決のため)
 
     from app.csrf import is_origin_allowed, load_allowed_origins
     from app.ratelimit import ConcurrencyLimiter, LoginThrottle, RateLimiter
@@ -599,18 +599,14 @@ def create_app(
 
     # ------------------------------------------------------------------
     # CSRF: 変更系の Origin/Referer 検査([12]§1.3 / §7.3)。
+    # 純ASGIミドルウェアで実装。BaseHTTPMiddleware(@app.middleware("http"))は
+    # WebSocket ハンドシェイクを 403 で壊す既知問題があるため使わない。
+    # http のみ検査し、websocket/lifespan は素通し(WS認証は接続後cookieで実施)。
     # ------------------------------------------------------------------
-    @app.middleware("http")
-    async def csrf_guard(request: Request, call_next):
-        if not is_origin_allowed(
-            request.method,
-            request.headers.get("origin"),
-            request.headers.get("referer"),
-            allowed_origins,
-            fail_closed=production,
-        ):
-            return Response(status_code=403, content="CSRF: origin 不許可")
-        return await call_next(request)
+    from app.csrf import CsrfOriginMiddleware
+    app.add_middleware(
+        CsrfOriginMiddleware, allowed=allowed_origins, production=production
+    )
 
     # ------------------------------------------------------------------
     # 認証(ID-only セッション確立 [12]§1.3)

@@ -183,6 +183,15 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - FE Login に **サーバIP/ポート入力欄**追加。新規=id+host+port、保存選択=ref+保存host/port初期化。
 - BE 341 / FE 292 tests緑。実接続検証はユーザー(§0)。
 
+## 6.9 重大バグ修正: WS接続が常に失敗(「応答せず」)
+
+- **症状**: ログインしても応答せず。WSハンドシェイクが拒否(uvicorn 403 / close 1008)。
+- **根本原因**: `ws_server.py` の WS ルート `async def ws_endpoint(websocket: WebSocket)` で、`from __future__ import annotations` により注釈が文字列化。`WebSocket` が**関数ローカルimport**でモジュール未公開のため FastAPI の `get_type_hints` が解決できず、`websocket` を**クエリパラメータ扱い**→必須欠落で全WSを 1008 クローズ。Request/Response は F2 で module-level 化済みだが **WebSocket だけ漏れていた**。
+- **検出漏れ理由**: ユニットテスト(341)は Fake ws で `WsConnection.run` を直接呼び、**実ASGIルートのDI解決を迂回**していた(契約往復の盲点)。
+- **修正**: `WebSocket` を module-level import に。回帰テスト `test_ws_route_handshake_real_asgi`(TestClient.websocket_connect で hello 受信)追加。
+- **検証**: 実サーバ経由フルパス成功 → session.open→connection→snapshot→notice→message(74)→map(2)→status→cond。CSRFミドルウェアも BaseHTTPMiddleware→純ASGIに置換(WS素通し)。
+- 342 tests緑。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。
