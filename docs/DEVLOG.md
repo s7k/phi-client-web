@@ -4,16 +4,15 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 
 ## 0. 運用ルール
 
-> ⛔ **絶対禁止(他者迷惑回避)**: 実サーバへの **priv送信・大声(server-wide発言)・パーティ発言・通常チャット** をテスト/検証で**送らない**。他プレイヤーに迷惑。これらの送信仕様検証は**ユーザーが別途実施**。実サーバ送信は `#`プロトコル行と移動/観察コマンドのみ(`test_connect.py` にガード `_reject_disruptive` 実装済)。chat/priv/loud は**合成フィクスチャによるオフライン単体テストのみ**で検証する。
-
-
-
+- **発言系の検証方針**: chat/priv/loud/party など発言系の送信仕様は、合成フィクスチャによる
+  オフライン単体テストで検証する。実サーバへの自動送信テストは行わない(`test_connect.py` に
+  ガード `_reject_disruptive` あり。実サーバ送信は `#` プロトコル行と移動/観察コマンドのみ)。
 - **役割**: リード(統合・コミット・方針決定) / BEスレッド(`backend/` 専従) / FEスレッド(`frontend/` 専従)。
 - **ディレクトリ占有**: BEは `backend/` のみ、FEは `frontend/` のみ編集。`docs/`・ルート設定はリードが編集。衝突回避。
 - **契約(コントラクト)**: WSプロトコル [07](07-ws-protocol.md) が BE↔FE の正。逸脱はここに疑問として記し、リードが裁定。
 - **TDD**: テスト先行(red→green→refactor)。[11](11-test-design.md) 準拠。
-- **コミット**: リードがラウンド毎に実施。**秘匿値(IP/Port/uid/実名)をコード・コミットに残さない**。録画は `backend/tests/fixtures/recorded/`(gitignore)。
-- **実サーバ**: 不明点は接続検証可。接続情報は `backend/.env`(gitignore)から読む。**ハードコード禁止**。
+- **コミット**: リードがラウンド毎に実施。接続先などの設定値は `backend/.env`(gitignore)から供給(ハードコードしない)。録画は `backend/tests/fixtures/recorded/`(gitignore)。
+- **実サーバ**: 不明点は接続検証可。接続情報は `backend/.env`(gitignore)から読む。
 - **エージェントはgit操作しない**(コミットはリード)。
 
 ## 1. ゴール / 全体方針
@@ -90,7 +89,7 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 ### R2 由来（実機録画で判明・リード裁定）
 
 - **A-13 [共通] priv送信整形(契約修正)**: 実機+phi-client両方 **`priv <番号> <本文>`(1行, `#`なし)** が正(旧契約`#priv\n`は誤り)。受信=`[<送信者>] > <本文>`。[07]§5.3・[05]§1修正済。**serializerをR3で修正+テスト更新**(Q-13対応)。
-- **A-14 [共通] party送信**: `%`プレフィクスは実機で否定。**party/大声の送信仕様検証はユーザーが別途実施(§0禁止事項)**。当面 partyはnormal整形+TODO。我々は実サーバで再検証しない。OPEN(ユーザー側)。
+- **A-14 [共通] party送信**: `%`プレフィクスは実機で否定。party/大声の送信仕様検証はユーザー側で実施(§0 発言系の検証方針)。当面 partyはnormal整形+TODO。OPEN(ユーザー側)。
 - **A-15 [BE] `#m57 W`(2スロット)**: ログイン〜通常マップでは出現せず未検証。eagleeye/特定状況で再録画し確定。OPEN。
 - **A-16 [確認] dir/自キャラ**: 自キャラ=`#m57 O C`行(layer 0xC=12)、他=`B`(11)。`map.dir`数値化(S=4)・`chars[].dir`文字 を実機確認。A-05/06正。
 - **FE-Q13 [確認] チップシート512×96**: gfx_convert出力(画像半分512×96, 32×48セル)で正。FE実装前提と一致。確定。
@@ -112,12 +111,12 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **A-20 [BE] tools/gfx_convert ↔ app.gfx 重複(Q-R4-1)**: 当面 `app/gfx/transparency.py` を正とし `tools/convert.py` は別コピー継続(編集範囲外)。将来 tools を `app.gfx` 委譲へ。低優先OPEN。
 - **A-21 [BE] SQLite並行(Q-R4-2)**: `check_same_thread=False`+短時間commitで単一プロセス想定は可。高並行はライター直列化/プール検討。[12]§7.1スケール課題に含む。
 - **A-22 [FE] 通知の対象session(Q-R4-02)**: 当面全sessionで発火。非アクティブ抑止は仕様化保留。
-- **A-23 [共通] `img=`タグ実形(Q-R4-03)**: `/*img=URL*/`想定で実装。**受信ログの観察(passive)で実形確認可**(送信なし=迷惑なし)。低優先OPEN。
+- **A-23 [共通] `img=`タグ実形(Q-R4-03)**: `/*img=URL*/`想定で実装。受信ログの観察(passive)で実形確認可(送信不要)。低優先OPEN。
 - **A-24 [FE] view.set連動**: display.mapSize/mapStyle変更時に `view.set` 送信([07]§5.8)未配線→R5で追加。**完了**。
 
 ### R5 由来（リード裁定）
 
-- **A-25 [共通] 登録uid供給元(Q-R5-1, [12]§2.4継続)**: 登録成功時サーバ`#ex-put UID <uid>`通知を捕捉する実装。通知なし時 uid=None→要手当。**実機での確認はユーザーが登録実施時に行う**(自動登録は迷惑/クラッタのため我々は実行しない)。OPEN(ユーザー側)。
+- **A-25 [共通] 登録uid供給元(Q-R5-1, [12]§2.4継続)**: 登録成功時サーバ`#ex-put UID <uid>`通知を捕捉する実装。通知なし時 uid=None→要手当。実機での確認はユーザーが登録実施時に行う(自動登録テストは実行しない)。OPEN(ユーザー側)。
 - **A-26 [共通] 登録グラ一覧レスポンス形**: `{graphics: string[]}`(順序=image索引)。FEは配列直返しもフォールバック許容。確定。
 - **A-27 [BE] reject fields語彙**: `["name","pass","image","mail"]`。FE表示マップ整合。確定。
 - **TODO(残)**: command.raw監査ログ未実装(レート判定のみ)。本番CSRFは`PHI_ALLOWED_ORIGINS`設定必須。登録後自動ログインは任意(現状手動再ログイン案内)。
@@ -146,7 +145,7 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - R1: BE Parser/Serializer+合成フィクスチャ / FE 残stores+ログイン+ステータス+チャット。決定A-06〜A-12。
 - R2: BE 接続/セッション/WS+実機録画検証 / FE マップ描画+グラ解決。priv契約修正(A-13)。
 - R3: BE Store/認証+priv修正 / FE キーハンドラ+リスト/編集/タブ。A-17/18。
-- R4: BE gfx/REST chara/世界移動/move整合 / FE 設定/通知/SS/画像/EagleEye。**他者迷惑送信ガード追加(§0)**。A-19〜A-24。
+- R4: BE gfx/REST chara/世界移動/move整合 / FE 設定/通知/SS/画像/EagleEye。発言系送信ガード追加(§0)。A-19〜A-24。
 - R5: BE レート制限/登録/auth硬化/REST統合 / FE 登録フォーム/view.set。A-25〜A-27。登録は実サーバ未実行。
 - R6: BE app.main起動エントリ+config / FE devプロキシ+Playwright E2E。ルートREADME+CI追加。A-28(assets衝突回避: FEビルドは`dist/app/`)。
 
@@ -271,7 +270,7 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - BE: LineBuffer/CodeConverter/ProtocolParser/CommandSerializer、LegacySocket、SessionManager(snapshot/reattach/seq/keepalive)、WsServer(エンベロープ/認証/レート制限)、Store/SQLite(全スキーマ+Index)、認証(argon2id+uid暗号+webセッション+CSRF)、世界移動(#ch-srv 300s+last_server)、gfx透過変換、REST(chara graphics/index/manifest, register, auth, healthz)、view.set、app.main+config。
 - FE: 型(契約)、WSクライアント(再接続/snapshot)、stores(11分割)、ログイン/キャラ選択、ステータス/cond、マップ描画(Canvas,chip/chara/items)、グラ解決(fallback)、チャット(カラーマークアップ/送信種別)、キーハンドラ、リスト/編集/タブUI、設定UI、通知/SS/画像、EagleEye、登録フォーム、devプロキシ、Playwright。
 
-**残TODO / 要ユーザー確認(迷惑回避で我々が実機検証しない)**:
+**残TODO / 要ユーザー確認(実機検証はユーザー側)**:
 - A-14 大声/パーティ送信仕様、A-25 登録uid供給元(#ex-put UID?)、A-23 `img=`実形 → **ユーザーが実機(登録/発言)で確認**。
 - A-15 `#m57 W`(2スロット)実形未検証(出現せず)。
 - 低優先: 水縁/巨大magnify描画(FE-Q15)、command.raw監査ログ、tools/convert.pyのapp.gfx委譲(A-20)、本番デプロイ(reverse proxy/systemd)。
