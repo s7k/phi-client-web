@@ -8,6 +8,16 @@
                                     SQLite / 透過PNGアセット
 ```
 
+## スクリーンショット
+
+**デスクトップ**(左=マップ+ステータス / 右=チャット のサイドバイサイド):
+
+![デスクトップ画面](docs/images/screen-desktop.png)
+
+**モバイル**(チャット主体 + マップ上のタッチ操作パッド):
+
+<img src="docs/images/screen-mobile.png" alt="モバイル画面" width="320">
+
 ## 主な機能
 
 - **認証(A-34/A-33)**: Webアカウント(ID+パスワード, argon2id)でログイン → Bearer token(localStorage)。1アカウントに複数キャラ(ラベル+PHI ID+IP+ポート)を登録し、タブで同時接続。
