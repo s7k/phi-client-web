@@ -200,6 +200,15 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **本番運用**: `PHI_ENV=production` 時は `PHI_ALLOWED_ORIGINS` に実公開URLを設定すること(LAN-IPなら `http://<IP>:8080`)。
 - テスト: test_rest_integration の CSRF テストを production app で検査するよう修正。342 tests緑。docker実機で LAN-IP Origin→200 確認。
 
+## 6.11 認証を cookie → localStorageトークン(Bearer)に変更(A-33)
+
+- **背景**: 非HTTPS(LAN-IP)で `Secure` cookie がブラウザに拒否され認証不能(ユーザー報告)。cookie廃止を提案・採用。
+- **A-33**: `POST /api/auth/session {id}` → **token を JSON body 返却**(Set-Cookieしない)。REST保護API=`Authorization: Bearer`、WS=接続後 `{type:"auth", token}` メッセージで認証(ブラウザWSはヘッダ不可)。FEは token を localStorage(`phi_token`)保持・起動時自動復帰・logoutでクリア。
+- **CSRF撤去**: cookie(アンビエント資格)廃止によりCSRF不要 → `CsrfOriginMiddleware` を create_app から外す → **Origin 403 完全解消**(任意Origin/LAN-IP可)。`PHI_ALLOWED_ORIGINS` 本番必須も撤廃(PHI_SECRET_KEY本番必須は維持)。
+- **副次修正**: 「入力」(EditDialog)が閉じない件 → submit/cancel/Escで `editStore.close()` 即ローカルクローズ(BEの edit end 待ちをやめる)。
+- BE 343 / FE 312 tests緑。docker実機で LAN-IP Origin→token返却200・cookie無し確認。
+- 留意: localStorage token はXSS可読(markdownサニタイズ+非dangerouslySetInnerHTMLで緩和)。ref選択ログインのtoken取得は残課題(通常のid入力ログインは動作)。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

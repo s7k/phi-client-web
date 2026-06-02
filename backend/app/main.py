@@ -7,8 +7,8 @@ SessionManager)を構築して `create_app(...)` で ASGI app を組み立てる
 ------------------------------------------------------------------
     uvicorn app.main:app
 
-本番では `PHI_SECRET_KEY` / `PHI_ALLOWED_ORIGINS` を必ず設定し、TLS 終端
-(wss/https)経由で公開する(詳細 README)。
+本番では `PHI_SECRET_KEY` を必ず設定し、TLS 終端(wss/https)経由で公開する
+(詳細 README)。A-33: cookie 廃止で CSRF 撤去 → `PHI_ALLOWED_ORIGINS` は不要。
 
 注意: SessionManager は遅延接続(session.open 時のみレガシーへ TCP)。
 import 時/起動時に実サーバへは接続しない(DEVLOG §0)。
@@ -64,10 +64,7 @@ def build_app(config: Config | None = None):
 
     _mount_assets(app, cfg.assets_dir)
 
-    if cfg.allowed_origins is None:
-        logger.warning(
-            "PHI_ALLOWED_ORIGINS 未設定 → CSRF origin 検査無効。本番では必ず設定すること。"
-        )
+    # A-33: cookie 廃止で CSRF(Origin 検査)撤去 → allowed_origins 警告は不要。
     return app
 
 

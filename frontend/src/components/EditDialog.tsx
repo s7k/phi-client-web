@@ -12,6 +12,7 @@ import './EditDialog.css';
 export function EditDialog({ session }: { session: string }) {
   const ws = useWs();
   const edit = useEditStore((s) => s.bySession[session]);
+  const closeEdit = useEditStore((s) => s.close);
   const [value, setValue] = useState('');
 
   if (!edit?.active || !edit.mode) return null;
@@ -24,10 +25,13 @@ export function EditDialog({ session }: { session: string }) {
       : [value];
     ws.submitEdit(session, edit!.mode as 'single' | 'multi', lines);
     setValue('');
+    // BE の edit end 応答を待たずローカルで即クローズ(後続 edit end は無害)。
+    closeEdit(session);
   }
   function cancel() {
     ws.cancelEdit(session);
     setValue('');
+    closeEdit(session);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {

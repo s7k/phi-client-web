@@ -9,15 +9,17 @@
   (受信ループと送信ループを分離し、イベント順序を保つ)。
 - session 省略時はアクティブ(直近 open)セッションへ解決(A-03)。
 
-認証(ID-only 再設計, [07]§4.1, [12]§1, B12):
-  - Web パスワード廃止。WS `auth{id,password}` は撤去。
-  - **WS 接続時に cookie `phi_session` token を検証**(`AuthService.validate`)。
-    無効/欠落は未認証(saved.list/settings 等は使えない)。
-  - `saved.list` → 保存ID一覧(生ID非公開, ref=id_key/label/isAdmin)。
+認証(ID-only / token 再設計, [07]§4.1, [12]§1, B12, A-33):
+  - Web パスワード廃止。cookie 廃止(非HTTPS LAN-IP で Secure cookie がブラウザに
+    拒否される問題 + CSRF Origin 問題の解消)。token を FE が localStorage 保持。
+  - **WS 接続直後は未認証**。FE が最初に `{type:"auth", token}` を送る →
+    BE が `AuthService.validate` → id_key 設定 → `{type:"auth", ok:true, isAdmin}`
+    応答。token 無効は `{type:"auth", ok:false}`。
+  - `saved.list`/`settings`/`session.open(ref)` は認証後に有効。
   - `session.open {id?|ref?}`: id=入力 PHI ID / ref=保存 id_key。BE が平文 ID を
     得て(入力はそのまま/ref は復号)接続+`#open <平文ID>`。
-  - REST `POST /api/auth/session {id}` でセッション確立(httpOnly cookie)。
-    `/api/auth/logout` 据置。
+  - REST `POST /api/auth/session {id}` で token を JSON body で返却(Set-Cookie しない)。
+    保護 REST は `Authorization: Bearer <token>` で認証。`/api/auth/logout`(Bearer)。
 """
 from __future__ import annotations
 
@@ -97,18 +99,13 @@ class WsConnection:
 
     async def run(self) -> None:
         await self._ws.accept()
-        # 接続時 cookie token を検証([12]§1.3, ID-only)。無ければ未認証のまま。
-        self._authenticate_from_cookie()
+        # 接続直後は未認証(A-33)。FE が `{type:"auth", token}` を送るまで未認証。
         await self._ws.send_json({
             "type": "hello",
             "protocolVersion": PROTOCOL_VERSION,
             "serverTime": int(time.time() * 1000),
-            "authenticated": self._id_key is not None,
-            "isAdmin": (
-                self._auth.is_admin(self._id_key)
-                if (self._auth is not None and self._id_key is not None)
-                else False
-            ),
+            "authenticated": False,
+            "isAdmin": False,
         })
         sender = asyncio.create_task(self._sender_loop())
         try:
@@ -121,24 +118,33 @@ class WsConnection:
                 self._cl.release(self._id_key)
                 self._conn_acquired = False
 
-    def _authenticate_from_cookie(self) -> None:
-        """WS 接続の cookie `phi_session` token を検証し id_key/identity を設定。
+    async def _handle_auth(self, msg: dict) -> None:
+        """WS auth メッセージ `{type:"auth", token}` を処理(A-33)。
 
-        auth 未設定(テスト/開発)時は未認証のまま通す。同時接続上限も確保。
+        token を `AuthService.validate` で検証し id_key/identity を設定。
+        成功: `{type:"auth", ok:true, isAdmin}`。失敗/欠落: `{type:"auth", ok:false}`。
+        auth 未設定(テスト/開発)時は token 無しでも ok:true で通す(未認証許可)。
+        token はログ/応答に出さない(資格情報)。
         """
+        token = msg.get("token")
         if self._auth is None:
+            await self._ws.send_json({
+                "type": "auth", "reqId": msg.get("reqId"),
+                "ok": True, "isAdmin": False,
+            })
             return
-        cookies = getattr(self._ws, "cookies", None) or {}
-        token = cookies.get(COOKIE_NAME)
-        if not token:
-            return
-        ident = self._auth.validate(token)
-        if ident is None:
-            return
-        if not self._acquire_conn(ident.id_key):
+        ident = self._auth.validate(token) if token else None
+        if ident is None or not self._acquire_conn(ident.id_key):
+            await self._ws.send_json({
+                "type": "auth", "reqId": msg.get("reqId"), "ok": False,
+            })
             return
         self._id_key = ident.id_key
         self._identity = ident
+        await self._ws.send_json({
+            "type": "auth", "reqId": msg.get("reqId"),
+            "ok": True, "isAdmin": self._auth.is_admin(ident.id_key),
+        })
 
     # ------------------------------------------------------------------
     # 送信ループ(SessionManager → WS)
@@ -189,6 +195,9 @@ class WsConnection:
 
     async def _dispatch_inner(self, msg: dict) -> None:
         t = msg.get("type")
+        if t == "auth":
+            await self._handle_auth(msg)
+            return
         if t == "saved.list":
             await self._handle_saved_list(msg)
             return
@@ -488,17 +497,28 @@ class WsConnection:
 # FastAPI アプリ(本番エンドポイント)
 # ----------------------------------------------------------------------
 
-COOKIE_NAME = "phi_session"
+def _bearer_token(request: Request) -> str | None:
+    """`Authorization: Bearer <token>` ヘッダから token を取り出す(A-33)。
+
+    無し/スキーム不一致は None。token はログに出さない(資格情報)。
+    """
+    header = request.headers.get("authorization")
+    if not header:
+        return None
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() != "bearer" or not value.strip():
+        return None
+    return value.strip()
 
 
-def make_require_account(auth, cookie_name: str = COOKIE_NAME):
-    """`require_account` 依存を生成([12]§1.3, ID-only)。
+def make_require_account(auth):
+    """`require_account` 依存を生成([12]§1.3, ID-only, A-33 Bearer)。
 
-    cookie `phi_session` の token を `AuthService.validate` で検証し id_key を
-    返す。無効/欠落は 401。REST 保護エンドポイントに注入。
+    `Authorization: Bearer <token>` の token を `AuthService.validate` で検証し
+    id_key を返す。無効/欠落は 401。REST 保護エンドポイントに注入。
     """
     async def _require_account(request: Request) -> str:
-        token = request.cookies.get(cookie_name)
+        token = _bearer_token(request)
         id_key = auth.validate_id_key(token) if token else None
         if id_key is None:
             raise HTTPException(401, "未認証")
@@ -507,15 +527,15 @@ def make_require_account(auth, cookie_name: str = COOKIE_NAME):
     return _require_account
 
 
-def make_require_admin(auth, cookie_name: str = COOKIE_NAME):
-    """`require_admin` 依存を生成([08]§10, 管理者限定の変更系)。
+def make_require_admin(auth):
+    """`require_admin` 依存を生成([08]§10, 管理者限定の変更系, A-33 Bearer)。
 
-    `require_account` と同経路で token 検証し id_key を解決後、
+    `require_account` と同経路で Bearer token 検証し id_key を解決後、
     `saved_ids.is_admin` を確認。未認証は 401、非管理者は 403。
     キャラグラの変更系(upload/delete/index 編集/import)に注入。
     """
     async def _require_admin(request: Request) -> str:
-        token = request.cookies.get(cookie_name)
+        token = _bearer_token(request)
         id_key = auth.validate_id_key(token) if token else None
         if id_key is None:
             raise HTTPException(401, "未認証")
@@ -541,8 +561,8 @@ def create_app(
     """FastAPI アプリを生成(REST 統合 + WS)。
 
     マウント:
-    - `/ws`                          : WebSocket([07])。
-    - `/api/auth/session` `/logout`  : ID-only 認証([12]§1.3)。cookie `phi_session`。
+    - `/ws`                          : WebSocket([07])。auth は接続後 `{type:"auth",token}`。
+    - `/api/auth/session` `/logout`  : ID-only 認証([12]§1.3, A-33)。token を JSON 返却。
     - `/api/chara/*`                 : キャラグラ([08], B10)。変更系は管理者限定 + レート。
     - `/api/register/*`              : 新規登録([12]§2, B15)。register は要認証 + レート/IP。
 
@@ -551,16 +571,18 @@ def create_app(
     - registrar_factory: () -> LegacyRegistrar(既定は env のレガシー接続情報)。
     - rate_limiter     : RateLimiter(既定で生成)。
     - conn_limiter     : ConcurrencyLimiter(既定で生成)。
-    - allowed_origins  : CSRF 許可 origin set(既定 env `PHI_ALLOWED_ORIGINS`)。
+    - allowed_origins  : 後方互換で受けるが未使用(A-33: cookie 廃止で CSRF 不要)。
 
     *auth* 省略時は `PHI_DB_PATH` から Store を開き AuthService を構築。
+
+    A-33: token 認証(Bearer/WS-auth)へ移行し cookie を廃止。アンビエント資格
+    (cookie)が無いため CSRF 対策(Origin 検査)は不要 → ミドルウェア未装着。
     """
     import contextlib
     import os
 
     from fastapi import FastAPI  # WebSocket はモジュールレベルでimport(注釈解決のため)
 
-    from app.csrf import is_origin_allowed, load_allowed_origins
     from app.ratelimit import ConcurrencyLimiter, LoginThrottle, RateLimiter
 
     mgr = manager or SessionManager(
@@ -588,8 +610,7 @@ def create_app(
     rate_limiter = rate_limiter if rate_limiter is not None else RateLimiter()
     conn_limiter = conn_limiter if conn_limiter is not None else ConcurrencyLimiter()
     login_throttle = login_throttle if login_throttle is not None else LoginThrottle()
-    if allowed_origins is None:
-        allowed_origins = load_allowed_origins()
+    # allowed_origins/production は後方互換で受けるが A-33(cookie 廃止)で CSRF 不要。
     app.state.rate_limiter = rate_limiter
     app.state.conn_limiter = conn_limiter
     app.state.login_throttle = login_throttle
@@ -597,26 +618,20 @@ def create_app(
     require_account = make_require_account(auth)
     require_admin = make_require_admin(auth)
 
-    # ------------------------------------------------------------------
-    # CSRF: 変更系の Origin/Referer 検査([12]§1.3 / §7.3)。
-    # 純ASGIミドルウェアで実装。BaseHTTPMiddleware(@app.middleware("http"))は
-    # WebSocket ハンドシェイクを 403 で壊す既知問題があるため使わない。
-    # http のみ検査し、websocket/lifespan は素通し(WS認証は接続後cookieで実施)。
-    # ------------------------------------------------------------------
-    from app.csrf import CsrfOriginMiddleware
-    app.add_middleware(
-        CsrfOriginMiddleware, allowed=allowed_origins, production=production
-    )
+    # A-33: cookie 廃止で CSRF(Origin 検査)ミドルウェアは撤去。
+    # token を localStorage 保持 + Bearer/WS-auth で送るためアンビエント資格が無く、
+    # CSRF も Secure cookie の非HTTPS拒否問題も発生しない。
 
     # ------------------------------------------------------------------
-    # 認証(ID-only セッション確立 [12]§1.3)
+    # 認証(ID-only セッション確立 [12]§1.3, A-33: token を JSON body 返却)
     # ------------------------------------------------------------------
     @app.post("/api/auth/session")
-    async def establish_session(request: Request, response: Response):
-        """入力 PHI ID でセッション確立し cookie `phi_session` を発行。
+    async def establish_session(request: Request):
+        """入力 PHI ID でセッション確立し token を JSON body で返す(Set-Cookie しない)。
 
         body `{id, remember?, label?}`。ID=資格情報のためログ/エラーへ出さない。
-        レスポンス `{ok:true, isAdmin:bool, label?}`。
+        レスポンス `{ok:true, isAdmin:bool, token, label?}`。FE は token を
+        localStorage 保持し、REST は `Authorization: Bearer`、WS は `auth` メッセージで送る。
         """
         from app.store.db import id_key_of
 
@@ -629,22 +644,18 @@ def create_app(
             remember=bool(body.get("remember")),
             label=body.get("label"),
         )
-        response.set_cookie(
-            COOKIE_NAME, token, httponly=True, secure=True, samesite="strict"
-        )
         key = id_key_of(plain_id)
         saved = auth.store.get_saved_id(key)
-        out = {"ok": True, "isAdmin": auth.is_admin(key)}
+        out = {"ok": True, "isAdmin": auth.is_admin(key), "token": token}
         if saved is not None and saved["label"]:
             out["label"] = saved["label"]
         return out
 
     @app.post("/api/auth/logout")
-    async def logout(request: Request, response: Response):
-        token = request.cookies.get(COOKIE_NAME)
+    async def logout(request: Request):
+        token = _bearer_token(request)
         if token:
             auth.logout(token)
-        response.delete_cookie(COOKIE_NAME)
         return {"ok": True}
 
     @app.get("/healthz")

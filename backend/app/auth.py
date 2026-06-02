@@ -8,14 +8,17 @@ PHI プレイヤーは **ID のみで識別**され、`#open <uid>` の uid 自�
 
 - 保存IDテーブル `saved_ids`: id_key=sha256(id) を PK、id_enc=暗号文を保存。
   管理者は saved_ids.is_admin で判定。
-- Web セッション: 入力 ID で cookie `phi_session` token を発行。
+- Web セッション: 入力 ID で不透明 token を発行(A-33: cookie 廃止、token は
+  REST=Bearer / WS=auth メッセージで送る。FE が localStorage 保持)。
   sessions_web に token/id_key/id_enc(セッション内 #open 用)/expires を保持。
 - ID 暗号: `cryptography` Fernet(AES128-CBC + HMAC, AEAD相当)。鍵は env
   `PHI_SECRET_KEY`(Fernet.generate_key() 形式)。SQLite には暗号文のみ。
 
 重要: **IDは資格情報。ログ/エラーに出さない**。id_key/token のみ扱う。
 
-CSRF/cookie 属性([12]§1.3: httpOnly/Secure/SameSite=Strict)は REST 層で付与。
+A-33: cookie 廃止。token は REST 層が JSON body で返し、保護 API は Bearer、
+WS は接続後の `auth` メッセージで token を受け取り検証する。CSRF 対策は
+アンビエント資格(cookie)が無いため不要(撤去)。
 """
 from __future__ import annotations
 
@@ -159,7 +162,7 @@ class AuthService:
         - id_key=sha256(id)、id_enc=暗号文(#open 用)を保持。
         - remember=True で saved_ids へ upsert(任意のラベル付き)。
         - 既存 saved_ids があれば last_used_at を更新する。
-        Returns 不透明 token(cookie 値)。
+        Returns 不透明 token(A-33: REST=Bearer / WS=auth で送る)。
         """
         key = id_key_of(plain_id)
         enc = self.cipher.encrypt(plain_id)

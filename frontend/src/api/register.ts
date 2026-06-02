@@ -6,7 +6,9 @@
  *   成功: {charId, name} / 失敗: {error:{code:"REGISTER_REJECT", fields:[...]}}。
  *
  * fetch ベース。テストでは fetch を差し替え可。
+ * 保護APIは Authorization: Bearer <token>(localStorage)を付与(A-33)。
  */
+import { getStoredToken } from './auth';
 
 /** 初期グラ1件。BEは順序付きで返す(索引=配列位置 = `#ex-register image=`)。 */
 export interface RegisterGraphic {
@@ -61,6 +63,12 @@ function resolveFetch(f?: FetchLike): FetchLike {
   return fn;
 }
 
+/** 保護 REST 用の Authorization ヘッダ(token あれば Bearer 付与, A-33)。 */
+function authHeaders(base: Record<string, string>): Record<string, string> {
+  const token = getStoredToken();
+  return token ? { ...base, Authorization: `Bearer ${token}` } : base;
+}
+
 /**
  * 初期グラ一覧取得。
  * BE応答は `{graphics: string[]}`(順序付き名前配列)想定。配列直返しも許容。
@@ -71,7 +79,7 @@ export async function fetchRegisterGraphics(
   const f = resolveFetch(fetchImpl);
   const res = await f('/api/register/graphics', {
     method: 'GET',
-    headers: { Accept: 'application/json' },
+    headers: authHeaders({ Accept: 'application/json' }),
   });
   if (!res.ok) {
     throw new Error(`グラ一覧取得に失敗しました (HTTP ${res.status})`);
@@ -92,7 +100,10 @@ export async function postRegister(
   const f = resolveFetch(fetchImpl);
   const res = await f('/api/register', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: authHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }),
     body: JSON.stringify(body),
   });
   const data = (await res.json().catch(() => null)) as

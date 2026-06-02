@@ -10,6 +10,9 @@ import { resolveWsUrl } from './ws/wsUrl';
 const wsUrl = resolveWsUrl(import.meta.env.VITE_WS_URL);
 const client = new WsClient(wsUrl);
 const controller = new WsController(client);
+// A-33: 起動時 localStorage に token があれば WS auth ゲートを有効化(自動復帰)。
+// connect 前に呼ぶことで、最初の open で auth が送られる。
+controller.restore();
 client.connect();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

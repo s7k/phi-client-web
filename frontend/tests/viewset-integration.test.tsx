@@ -67,9 +67,10 @@ beforeEach(() => {
   useUserStore.getState().reset();
   useConnectionStore.getState().reset();
   MockWebSocket.last = null;
-  // establishSession の REST を成功スタブ化(cookie 発行を模す)。
+  globalThis.localStorage?.clear();
+  // establishSession の REST を成功スタブ化(A-33: token 発行を模す)。
   globalThis.fetch = vi.fn(async () =>
-    new Response(JSON.stringify({ ok: true, isAdmin: false }), {
+    new Response(JSON.stringify({ ok: true, isAdmin: false, token: 'tk-vs' }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }),
@@ -183,12 +184,15 @@ describe('統合フロー(mock WS)', () => {
     ws.emit({ type: 'hello', protocolVersion: 1, serverTime: 0 } as ServerMessage);
     expect(useConnectionStore.getState().protocolVersion).toBe(1);
 
-    // ログイン(ID-only, REST 確立)
+    // ログイン(ID-only, REST 確立 → token 保存 → WS auth 送信)
     const res = await controller.establishSession('phi-1');
     expect(res.ok).toBe(true);
+    // A-33: WS auth ok でゲート解除(以後 session.open が送れる)
+    ws.emit({ type: 'auth', ok: true } as ServerMessage);
 
     // session.open(id 指定)
     const openP = controller.openSession({ id: 'phi-1' }, 'Hero');
+    await Promise.resolve();
     const openReqId = ws.lastSent().reqId as string;
     ws.emit({
       type: 'snapshot',

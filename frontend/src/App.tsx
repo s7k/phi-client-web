@@ -65,6 +65,9 @@ function Game({
           <button type="button" onClick={takeScreenshot}>
             スクリーンショット
           </button>
+          <button type="button" onClick={() => void controller.logout()}>
+            ログアウト
+          </button>
         </div>
         <WorldTransferIndicator />
         {eagleEye ? <EagleEyeView session={session} /> : <MapView session={session} />}

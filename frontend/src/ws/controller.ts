@@ -30,7 +30,13 @@ import type {
   SettingsSetRequest,
   ViewSetRequest,
 } from '../types/protocol';
-import { establishSession, type SessionAuthResult } from '../api/auth';
+import {
+  establishSession,
+  logout as restLogout,
+  getStoredToken,
+  setStoredToken,
+  type SessionAuthResult,
+} from '../api/auth';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useMapStore } from '../stores/mapStore';
@@ -90,12 +96,12 @@ export class WsController {
   readonly client: WsClient;
 
   /**
-   * 再アタッチ用に保持するログイン情報(ID-only)。
-   * cookie による再確立を基本とするが、cookie 失効に備え PHI ID を保持。
-   * 注: メモリ常駐のみ。永続化はせずブラウザリロードで消える。
-   *     PHI ID は資格情報のためログ出力しない。
+   * 認証トークン(A-33)。WS auth / REST Bearer に使う。
+   * localStorage(`phi_token`)へ永続化し、起動時 restore() で復帰。
+   * client にも setAuthToken で渡し、接続時の WS auth ゲートを駆動する。
+   * 注: token は資格情報のためログ出力しない。
    */
-  private auth: { id: string } | null = null;
+  private token: string | null = null;
   /** 初回 open を消費済か(2回目以降の open=再接続とみなし reattach)。 */
   private hadFirstOpen = false;
   /** 再接続フロー多重起動防止。 */
@@ -125,6 +131,20 @@ export class WsController {
 
     c.on('hello', (msg) => {
       useConnectionStore.getState().setProtocolVersion(msg.protocolVersion);
+    });
+
+    // A-33: WS 認証応答。ok の場合 client がゲートを解除済み(保留送信フラッシュ)。
+    // 失敗(ok:false)は token 失効等 → ログアウト相当でログイン画面へ戻す。
+    c.on('auth', (msg) => {
+      if (msg.ok === false) {
+        this.clearAuth();
+        useUiStore
+          .getState()
+          .pushError(
+            msg.error ?? { code: 'AUTH_FAILED', message: 'WS 認証に失敗しました' },
+          );
+        useUiStore.getState().setActiveTab(null);
+      }
     });
 
     c.on('connection', (msg) => {
@@ -232,18 +252,17 @@ export class WsController {
   }
 
   /**
-   * 再接続(open)時の自動再確立+各アクティブセッション reattach(CR-5, ID-only)。
-   * 1. 保持 PHI ID でセッション再確立(REST。BE は基本 cookie で照合、
-   *    cookie 失効時のため ID を再送し cookie を再発行)。
-   * 2. 開いている各 session を元の opener(id|ref)で再 open(reattach)。
-   *    → BE が connection + snapshot を返し、各 store が復元される。
+   * 再接続(open)時の各アクティブセッション reattach(CR-5, A-33 token)。
+   * WS auth は client が token で自動再送(open 時)するため、ここでは行わない。
+   * auth ゲート中の session.open は client が保留 → auth ok 後にフラッシュされる。
+   * 開いている各 session を元の opener(id|ref)で再 open(reattach)し、
+   * BE が connection + snapshot を返して各 store を復元する。
    */
   private async reattach(): Promise<void> {
     if (this.reattaching) return;
-    if (!this.auth) return; // 未ログイン(再接続対象なし)。
+    if (!this.token) return; // 未ログイン(再接続対象なし)。
     this.reattaching = true;
     try {
-      await this.establishSession(this.auth.id);
       const sessions = Object.values(useSessionStore.getState().sessions);
       for (const info of sessions) {
         try {
@@ -282,20 +301,62 @@ export class WsController {
   // ---------- intent 送信ヘルパ ----------
 
   /**
-   * セッション確立(ログイン, ID-only)。
-   * REST POST /api/auth/session {id} で cookie を発行させる。これがログインの実体。
-   * 成功で再アタッチ用に PHI ID を保持し {ok,isAdmin,label?} を返す。
-   * 注: PHI ID は資格情報のためログ出力しない。
+   * セッション確立(ログイン, A-33 token)。
+   * REST POST /api/auth/session {id} で token を発行させる。これがログインの実体。
+   * 成功で token を localStorage 保存 + client/メモリへ反映し、
+   * client が WS auth ゲートを駆動できるようにする。{ok,isAdmin,token,label?} を返す。
+   * 注: PHI ID / token は資格情報のためログ出力しない。
    */
   async establishSession(
     id: string,
-    opts: { remember?: boolean } = {},
+    opts: { remember?: boolean; label?: string } = {},
   ): Promise<SessionAuthResult> {
     useConnectionStore.getState().setSocketState('connecting');
     const result = await establishSession(id, opts);
-    // 再接続時の自動再確立用に保持(CR-5)。
-    this.auth = { id };
+    // token を保持・永続化し、WS auth ゲートを駆動(A-33)。
+    this.applyToken(result.token);
     return result;
+  }
+
+  /** token を保持・永続化し client に渡す(WS auth ゲート駆動)。 */
+  private applyToken(token: string): void {
+    this.token = token;
+    setStoredToken(token);
+    this.client.setAuthToken(token);
+  }
+
+  /** token を破棄(ログアウト/auth失効)。client のゲートも解除。 */
+  private clearAuth(): void {
+    this.token = null;
+    this.client.setAuthToken(null);
+  }
+
+  /**
+   * 起動時の自動復帰(A-33)。localStorage に token があれば保持し、
+   * client に渡して WS auth ゲートを有効化する。
+   * 戻り値: 復帰可能(token あり)なら true。
+   * 注: session.open(reattach)は WS open 後に行われる(reattach)。
+   */
+  restore(): boolean {
+    const token = getStoredToken();
+    if (!token) return false;
+    this.token = token;
+    this.client.setAuthToken(token);
+    return true;
+  }
+
+  /**
+   * ログアウト(A-33)。REST /api/auth/logout(Bearer)通知 + token クリア +
+   * ローカル状態リセット → ログイン画面へ戻す。
+   * WS は切断しない(再ログイン時にそのまま再 auth できるよう接続維持)。
+   * client の auth ゲートは解除(setAuthToken(null))。
+   */
+  async logout(): Promise<void> {
+    const token = this.token;
+    this.clearAuth();
+    useSessionStore.getState().reset();
+    useUiStore.getState().setActiveTab(null);
+    await restLogout(token);
   }
 
   /**

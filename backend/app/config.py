@@ -11,15 +11,16 @@ env 一覧
 - `PHI_SECRET_KEY`      : uid 暗号鍵(Fernet, urlsafe-base64 32B)。未設定時は
                           開発用に一時鍵を生成し警告(再起動で復号不能)。
                           **本番(CR-9)では未設定=起動失敗**(揮発鍵禁止)。
-- `PHI_ALLOWED_ORIGINS` : CSRF 許可 origin(カンマ区切り)。未設定は開発のみ
-                          検査無効+警告。**本番(CR-8)では未設定=起動失敗**。
+- `PHI_ALLOWED_ORIGINS` : (A-33 で廃止予定)CSRF 許可 origin。cookie 廃止で
+                          CSRF 検査を撤去したため未使用。後方互換で読むのみ。
 - `PHI_ASSETS_DIR`      : キャラグラ保存/配信ディレクトリ。既定 `./assets`。
 - `PHI_HOST`/`PHI_PORT` : レガシー既定接続先(session.open/register の既定)。
 
-本番判定(CR-8/CR-9)
+本番判定(CR-9 / A-33)
 ------------------------------------------------------------------
-`PHI_ENV=production` を本番の明示フラグとする。本番では fail-open を禁止し、
-秘密鍵/CSRF 許可 origin の未設定を起動失敗(`ConfigError`)で弾く。
+`PHI_ENV=production` を本番の明示フラグとする。本番では `PHI_SECRET_KEY` 未設定
+(揮発鍵フォールバック)を起動失敗(`ConfigError`)で弾く(CR-9)。CSRF 許可
+origin の必須チェックは A-33(cookie 廃止→CSRF 撤去)で撤廃。
 """
 from __future__ import annotations
 
@@ -60,9 +61,9 @@ class Config:
     def from_env(cls, env: dict[str, str] | None = None) -> "Config":
         """env(既定 `os.environ`)から Config を構築。
 
-        本番(`PHI_ENV=production`)では fail-open を禁止(CR-8/CR-9):
-        - `PHI_SECRET_KEY` 未設定 → `ConfigError`(揮発鍵は開発のみ)。
-        - `PHI_ALLOWED_ORIGINS` 未設定 → `ConfigError`(CSRF 検査必須)。
+        本番(`PHI_ENV=production`)では `PHI_SECRET_KEY` 未設定(揮発鍵
+        フォールバック)を `ConfigError` で弾く(CR-9)。CSRF 許可 origin の
+        必須チェックは A-33(cookie 廃止→CSRF 撤去)で撤廃。
         """
         env = os.environ if env is None else env
         production = is_production(env)
@@ -87,15 +88,12 @@ class Config:
                 "再起動で legacy_uid 復号不能。本番では必ず設定すること。"
             )
 
+        # A-33: cookie 廃止で CSRF(Origin 検査)撤去。PHI_ALLOWED_ORIGINS は
+        # 任意(後方互換で読むのみ)。本番必須チェックも撤廃(token=Bearer/WS-auth
+        # はアンビエント資格でないため CSRF 不要)。
         allowed_raw = env.get("PHI_ALLOWED_ORIGINS")
         if allowed_raw:
             allowed = {o.strip() for o in allowed_raw.split(",") if o.strip()}
-        elif production:
-            # CR-8: 本番で CSRF 許可 origin 未設定 = fail-open 禁止 → 起動失敗。
-            raise ConfigError(
-                "PHI_ALLOWED_ORIGINS 未設定(本番)。CSRF origin 検査が無効化され "
-                "fail-open になるため本番では禁止。許可 origin をカンマ区切りで設定すること。"
-            )
         else:
             allowed = None
 

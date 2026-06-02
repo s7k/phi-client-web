@@ -21,7 +21,7 @@ import { useConnectionStore } from '../src/stores/connectionStore';
 /** controller の最小スタブ。 */
 function makeController(over: Partial<WsController> = {}): WsController {
   return {
-    establishSession: vi.fn(async () => ({ ok: true, isAdmin: false })),
+    establishSession: vi.fn(async () => ({ ok: true, isAdmin: false, token: 'tk-test' })),
     fetchSavedList: vi.fn(async () => []),
     openSession: vi.fn(async () => 's1'),
     sendChat: vi.fn(),
@@ -51,7 +51,7 @@ beforeEach(() => {
 
 describe('Login (F3, ID-only)', () => {
   it('PHI ID + host + port 入力→establishSession→openSession(id,host,port)→activeTab', async () => {
-    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false }));
+    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
     const openSession = vi.fn(async () => 's1');
     const ctrl = makeController({ establishSession, openSession });
     renderWith(ctrl, <Login />);
@@ -77,7 +77,7 @@ describe('Login (F3, ID-only)', () => {
   });
 
   it('host 未入力ではログイン不可(エラー表示, openSession未呼)', async () => {
-    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false }));
+    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
     const openSession = vi.fn(async () => 's1');
     const ctrl = makeController({ establishSession, openSession });
     renderWith(ctrl, <Login />);
@@ -101,7 +101,7 @@ describe('Login (F3, ID-only)', () => {
   });
 
   it('保存する にチェック→establishSession に remember:true', async () => {
-    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false }));
+    const establishSession = vi.fn(async () => ({ ok: true as const, isAdmin: false, token: 'tk-test' }));
     const ctrl = makeController({ establishSession });
     renderWith(ctrl, <Login />);
     fireEvent.change(screen.getByLabelText('PHI ID'), { target: { value: 'phi-1' } });
@@ -310,6 +310,39 @@ describe('EditDialog (F9)', () => {
     renderWith(makeController({ cancelEdit }), <EditDialog session="s1" />);
     fireEvent.click(screen.getByText('キャンセル'));
     expect(cancelEdit).toHaveBeenCalledWith('s1');
+  });
+
+  it('キャンセルで BE 応答を待たず即クローズ(editStore 非アクティブ化)', () => {
+    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    const { container } = renderWith(
+      makeController({ cancelEdit: vi.fn() }),
+      <EditDialog session="s1" />,
+    );
+    // 表示中
+    expect(container.querySelector('.editdialog')).not.toBeNull();
+    fireEvent.click(screen.getByText('キャンセル'));
+    // edit end を待たず即座に閉じる
+    expect(useEditStore.getState().bySession['s1'].active).toBe(false);
+    expect(container.querySelector('.editdialog')).toBeNull();
+  });
+
+  it('Esc で即クローズ', () => {
+    const cancelEdit = vi.fn();
+    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    renderWith(makeController({ cancelEdit }), <EditDialog session="s1" />);
+    fireEvent.keyDown(screen.getByLabelText('入力本文'), { key: 'Escape' });
+    expect(cancelEdit).toHaveBeenCalledWith('s1');
+    expect(useEditStore.getState().bySession['s1'].active).toBe(false);
+  });
+
+  it('確定で即クローズ', () => {
+    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    renderWith(makeController({ submitEdit: vi.fn() }), <EditDialog session="s1" />);
+    fireEvent.change(screen.getByLabelText('入力本文'), {
+      target: { value: 'hi' },
+    });
+    fireEvent.click(screen.getByText('確定'));
+    expect(useEditStore.getState().bySession['s1'].active).toBe(false);
   });
 });
 

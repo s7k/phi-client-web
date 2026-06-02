@@ -7,6 +7,7 @@ import { useChatStore } from '../src/stores/chatStore';
 import { useConnectionStore } from '../src/stores/connectionStore';
 import { useNoticeStore } from '../src/stores/noticeStore';
 import { useUiStore } from '../src/stores/uiStore';
+import { clearStoredToken, getStoredToken, setStoredToken } from '../src/api/auth';
 import type { ServerMessage } from '../src/types/protocol';
 
 /** open即時・reqId応答を制御可能な mock WS。 */
@@ -55,10 +56,10 @@ function setup() {
   return { client, controller };
 }
 
-/** establishSession の REST 呼び出しを成功スタブ化(cookie 発行を模す)。 */
-function stubAuthFetch(isAdmin = false, label?: string) {
+/** establishSession の REST 呼び出しを成功スタブ化(A-33: token 発行を模す)。 */
+function stubAuthFetch(isAdmin = false, label?: string, token = 'tk-test') {
   globalThis.fetch = vi.fn(async () =>
-    new Response(JSON.stringify({ ok: true, isAdmin, label }), {
+    new Response(JSON.stringify({ ok: true, isAdmin, token, label }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }),
@@ -73,6 +74,7 @@ beforeEach(() => {
   useNoticeStore.getState().reset();
   useUiStore.getState().reset();
   MockWebSocket.last = null;
+  clearStoredToken();
   stubAuthFetch();
 });
 
@@ -80,15 +82,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('WsController.establishSession (ID-only, REST)', () => {
-  it('POST /api/auth/session で cookie 確立し isAdmin を返す', async () => {
-    stubAuthFetch(true, 'Admin');
-    const { controller } = setup();
+describe('WsController.establishSession (ID-only, REST, A-33 token)', () => {
+  it('POST /api/auth/session で token 取得・localStorage保存し isAdmin を返す', async () => {
+    stubAuthFetch(true, 'Admin', 'tk-1');
+    const { controller, client } = setup();
     await Promise.resolve();
     const res = await controller.establishSession('phi-1');
     expect(res.ok).toBe(true);
     expect(res.isAdmin).toBe(true);
     expect(res.label).toBe('Admin');
+    expect(res.token).toBe('tk-1');
+    // token を localStorage 保存
+    expect(getStoredToken()).toBe('tk-1');
+    // client の WS auth ゲートが有効化(open 済なら auth 送信)
+    expect(client.isOpen()).toBe(true);
+    const sent = MockWebSocket.last!.sent.map((d) => JSON.parse(d));
+    const authMsg = sent.find((m) => m.type === 'auth');
+    expect(authMsg).toBeDefined();
+    expect(authMsg.token).toBe('tk-1');
     // REST に id が送られる(password なし)
     const call = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } })
       .mock.calls[0];
@@ -410,39 +421,56 @@ describe('L4 自己通知抑止(isSelfEcho / selfNameOf)', () => {
   });
 });
 
-describe('CR-5 再接続時の自動再確立+reattach (ID-only)', () => {
-  it('再接続(open)で REST 再確立 → 各セッション reattach(同 opener)', async () => {
+/** auth 応答を emit して WS auth ゲートを解除(保留送信をフラッシュ)。 */
+function emitAuthOk(ws: MockWebSocket, isAdmin = false) {
+  ws.emit({ type: 'auth', ok: true, isAdmin } as ServerMessage);
+}
+
+describe('CR-5 再接続時の token 自動再auth+reattach (A-33)', () => {
+  it('再接続(open)で WS auth(token)自動再送 → 各セッション reattach(同 opener)', async () => {
     const { controller } = setup();
     await Promise.resolve(); // 初回 open
     let ws = MockWebSocket.last!;
 
-    // 初回ログイン(REST 確立 → ID 保持)
+    // 初回ログイン(REST 確立 → token 保持 → WS auth 送信)
     await controller.establishSession('phi-1');
+    // auth ok でゲート解除
+    emitAuthOk(ws);
 
     // セッションを開く(id 指定)
     const openP = controller.openSession({ id: 'phi-1' }, 'Hero');
+    await Promise.resolve();
     ws.emit({ type: 'snapshot', session: 's1', reqId: ws.lastSent().reqId as string } as ServerMessage);
     await openP;
     expect(useSessionStore.getState().sessions['s1']).toBeDefined();
 
+    const restCallsBefore = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls.length;
+
     // 切断 → 再接続
     ws.close();
-    // autoReconnect=false なので手動で再接続
     controller.client.connect();
-    await Promise.resolve(); // 2回目 open → reattach 起動
+    await Promise.resolve(); // 2回目 open → token で auth 自動再送 + reattach 起動
     ws = MockWebSocket.last!;
 
-    // reattach: REST 再確立(WS には流れない) → session.open(reattach)
+    // 再接続直後に auth(token)が最初に送られる
+    const firstSent = JSON.parse(ws.sent[0]);
+    expect(firstSent.type).toBe('auth');
+    expect(firstSent.token).toBe('tk-test');
+
+    // auth ok でゲート解除 → 保留の session.open がフラッシュ
+    emitAuthOk(ws);
     await new Promise((r) => setTimeout(r, 0));
-    const reopen = JSON.parse(ws.sent[0]);
-    expect(reopen.type).toBe('session.open');
+    const reopen = ws.sent.map((d) => JSON.parse(d)).find((m) => m.type === 'session.open');
+    expect(reopen).toBeDefined();
     expect(reopen.id).toBe('phi-1');
-    // REST が再度呼ばれている(establishSession)
+
+    // REST(establishSession)は再接続では呼ばれない(token 再利用)
     expect((globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.length)
-      .toBeGreaterThanOrEqual(2);
+      .toBe(restCallsBefore);
   });
 
-  it('未ログイン(ID 未保持)で再接続しても何も送らない', async () => {
+  it('未ログイン(token 未保持)で再接続しても何も送らない', async () => {
     const { controller } = setup();
     await Promise.resolve(); // 初回 open
     const ws = MockWebSocket.last!;
@@ -452,5 +480,81 @@ describe('CR-5 再接続時の自動再確立+reattach (ID-only)', () => {
     await Promise.resolve();
     const ws2 = MockWebSocket.last!;
     expect(ws2.sent).toHaveLength(0);
+  });
+});
+
+describe('WsController WS auth ゲート (A-33)', () => {
+  it('establishSession 前(token なし)は session.open がそのまま送られる', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    // token 無しなら従来動作(ゲート無し)
+    const p = controller.openSession({ id: 'phi-1' }, 'Hero');
+    await Promise.resolve();
+    expect(ws.lastSent().type).toBe('session.open');
+    ws.emit({ type: 'session.open', session: 's1', reqId: ws.lastSent().reqId as string, ok: true } as ServerMessage);
+    await p;
+  });
+
+  it('token あり: auth ok 前は session.open を保留、ok 後にフラッシュ', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    await controller.establishSession('phi-1');
+    ws.sent = []; // auth 送信分をクリア
+    // auth ok 前に openSession
+    const p = controller.openSession({ id: 'phi-1' }, 'Hero');
+    await Promise.resolve();
+    // まだ session.open は送られていない(保留)
+    expect(ws.sent.find((d) => JSON.parse(d).type === 'session.open')).toBeUndefined();
+    // auth ok → フラッシュ
+    emitAuthOk(ws);
+    await Promise.resolve();
+    const reqId = ws.sent.map((d) => JSON.parse(d)).find((m) => m.type === 'session.open')!.reqId;
+    ws.emit({ type: 'session.open', session: 's1', reqId, ok: true } as ServerMessage);
+    const session = await p;
+    expect(session).toBe('s1');
+  });
+
+  it('auth ok:false でログイン画面へ戻す(activeTab=null)', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    useUiStore.getState().setActiveTab('s1');
+    await controller.establishSession('phi-1');
+    ws.emit({ type: 'auth', ok: false, error: { code: 'AUTH_FAILED', message: 'token失効' } } as ServerMessage);
+    expect(useUiStore.getState().activeTab).toBeNull();
+    expect(useUiStore.getState().errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe('WsController.restore / logout (A-33)', () => {
+  it('restore: localStorage に token あれば WS auth ゲート有効化', async () => {
+    // 事前に token 保存(別ログイン相当)
+    setStoredToken('tk-saved');
+    const { controller } = setup();
+    expect(controller.restore()).toBe(true);
+    await Promise.resolve(); // open → auth 自動送信
+    const ws = MockWebSocket.last!;
+    const firstSent = JSON.parse(ws.sent[0]);
+    expect(firstSent.type).toBe('auth');
+    expect(firstSent.token).toBe('tk-saved');
+  });
+
+  it('restore: token 無ければ false', () => {
+    const { controller } = setup();
+    expect(controller.restore()).toBe(false);
+  });
+
+  it('logout: token クリア + session reset + activeTab=null', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    await controller.establishSession('phi-1');
+    useUiStore.getState().setActiveTab('s1');
+    useSessionStore.getState().addSession({ session: 's1', label: 'A', opener: { id: 'phi-1' } });
+    await controller.logout();
+    expect(getStoredToken()).toBeNull();
+    expect(useUiStore.getState().activeTab).toBeNull();
+    expect(Object.keys(useSessionStore.getState().sessions)).toHaveLength(0);
   });
 });

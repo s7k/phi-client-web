@@ -80,6 +80,15 @@ export class WsClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
 
+  /**
+   * WS 認証トークン(A-33)。設定されると open 後に最初に
+   * `{type:"auth", token}` を送り、auth ok 応答まで他送信を保留する。
+   * null の場合は認証ゲート無し(従来動作)。
+   */
+  private authToken: string | null = null;
+  /** auth ok 応答待ち(true の間、auth以外の send は outbox に保留)。 */
+  private awaitingAuth = false;
+
   /** open 前に積まれた送信(接続確立でフラッシュ)。 */
   private outbox: string[] = [];
 
@@ -107,6 +116,19 @@ export class WsClient {
   }
 
   // ---------- 接続制御 ----------
+
+  /**
+   * WS 認証トークンを設定/更新(A-33)。
+   * 以後の接続(open)時に最初に `{type:"auth", token}` を送り、
+   * auth ok 応答まで他の送信を保留する。null でゲート解除。
+   * すでに open 済みで token が新規設定された場合は即座に auth を送る。
+   */
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+    if (token && this.isOpen() && !this.awaitingAuth) {
+      this.startAuth();
+    }
+  }
 
   connect(): void {
     this.closedByUser = false;
@@ -143,7 +165,13 @@ export class WsClient {
 
     ws.onopen = (ev) => {
       this.attempt = 0; // 成功でリセット
-      this.flushOutbox();
+      if (this.authToken) {
+        // A-33: 認証ゲート。最初に auth を送り、ok 応答まで他送信を保留。
+        // この時点で outbox(再接続前の保留)はフラッシュせず auth ok まで待つ。
+        this.startAuth();
+      } else {
+        this.flushOutbox();
+      }
       this.emitLifecycle('open', ev);
     };
 
@@ -158,6 +186,8 @@ export class WsClient {
     ws.onclose = (ev) => {
       // 切断時、応答が来ない pending を全 reject(CR-14: 永久pending防止)。
       this.rejectAllPending('closed', 'WS切断により応答未達');
+      // 認証ゲートは再接続で再度 auth からやり直す。
+      this.awaitingAuth = false;
       this.emitLifecycle('close', ev);
       this.ws = null;
       if (!this.closedByUser && this.autoReconnect) {
@@ -187,15 +217,27 @@ export class WsClient {
 
   // ---------- 送信 ----------
 
-  /** エンベロープを送信。open前なら outbox に積む。 */
+  /**
+   * エンベロープを送信。open前/認証ゲート中(auth以外)は outbox に積む。
+   * auth メッセージ自体は認証ゲートを素通りする(A-33)。
+   */
   send(msg: ClientMessage): void {
     const withTs = { ts: Date.now(), ...msg };
     const data = JSON.stringify(withTs);
-    if (this.isOpen()) {
+    const isAuthMsg = msg.type === 'auth';
+    if (this.isOpen() && (!this.awaitingAuth || isAuthMsg)) {
       this.ws!.send(data);
     } else {
       this.outbox.push(data);
     }
+  }
+
+  /** auth ゲート開始: `{type:"auth", token}` を即送信し ok 応答を待つ。 */
+  private startAuth(): void {
+    if (!this.authToken) return;
+    this.awaitingAuth = true;
+    // send() は auth を素通しさせる(awaitingAuth=true でも type==='auth' は送る)。
+    this.send({ type: 'auth', token: this.authToken });
   }
 
   /**
@@ -239,6 +281,7 @@ export class WsClient {
   }
 
   private flushOutbox(): void {
+    if (this.awaitingAuth) return; // 認証ゲート中はフラッシュしない(A-33)。
     if (this.outbox.length === 0) return;
     const pending = this.outbox;
     this.outbox = [];
@@ -266,6 +309,15 @@ export class WsClient {
       if (p.timer !== null) clearTimeout(p.timer);
       p.resolve(msg);
       // 応答も通常 dispatch へ流す(購読者がいれば)
+    }
+
+    // A-33: WS 認証応答。ok で認証ゲート解除 → 保留送信をフラッシュ。
+    // 失敗(ok:false)はゲートを開けず、購読者(controller)がエラー処理する。
+    if (msg.type === 'auth' && this.awaitingAuth) {
+      if (msg.ok !== false) {
+        this.awaitingAuth = false;
+        this.flushOutbox();
+      }
     }
 
     // 接続状態の追跡

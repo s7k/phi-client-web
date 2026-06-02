@@ -79,15 +79,16 @@ def test_prod_missing_secret_key_fails():
         Config.from_env(env)
 
 
-def test_prod_missing_allowed_origins_fails():
-    """CR-8: 本番で PHI_ALLOWED_ORIGINS 未設定 → ConfigError(fail-open 禁止)。"""
+def test_prod_missing_allowed_origins_ok():
+    """A-33: cookie 廃止で CSRF 撤去 → 本番でも PHI_ALLOWED_ORIGINS 未設定で起動可。"""
     from app.auth import UidCipher
     env = {
         "PHI_ENV": "production",
         "PHI_SECRET_KEY": UidCipher.generate_key().decode(),
     }
-    with pytest.raises(ConfigError):
-        Config.from_env(env)
+    cfg = Config.from_env(env)
+    assert cfg.production is True
+    assert cfg.allowed_origins is None
 
 
 def test_prod_full_config_ok():

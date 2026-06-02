@@ -77,6 +77,8 @@ export function Login() {
     setBusy(true);
     try {
       await ws.establishSession(id, { remember });
+      // establishSession 成功で token 保存済。WS auth ゲートが有効化され、
+      // 以後の session.open は auth ok 後に送信される(A-33)。
       const session = await ws.openSession({
         id,
         host: h,

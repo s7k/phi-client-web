@@ -104,6 +104,18 @@ export interface SessionCloseRequest extends Envelope {
   type: 'session.close';
 }
 
+/**
+ * WS 認証(A-33, token ベース)。
+ * ブラウザ WS はヘッダを送れないため、接続確立後に最初のメッセージとして送る。
+ * token は REST `POST /api/auth/session` 応答の token(localStorage 保存)。
+ * 応答: `{type:"auth", ok, isAdmin}`(AuthResponse)。ok 受領後に saved.list/session.open。
+ */
+export interface AuthRequest extends Envelope {
+  type: 'auth';
+  /** REST で得た認証トークン。 */
+  token: string;
+}
+
 // --- 5.2 移動 ---
 
 export type MoveMode = 'step' | 'turn' | 'strafe';
@@ -279,6 +291,7 @@ export interface PingRequest extends Envelope {
 
 /** 全 C→S メッセージの discriminated union。 */
 export type ClientMessage =
+  | AuthRequest
   | SavedListRequest
   | SessionOpenRequest
   | SessionCloseRequest
@@ -304,6 +317,16 @@ export interface HelloEvent extends Envelope {
   type: 'hello';
   protocolVersion: number;
   serverTime: number;
+}
+
+/**
+ * WS 認証応答(A-33, token ベース)。AuthRequest への返信。
+ * ok=true で認証成立 → 以後 saved.list/session.open 可。
+ */
+export interface AuthResponse extends Envelope, ResponseFields {
+  type: 'auth';
+  /** 管理者IDか(管理UI出し分け)。 */
+  isAdmin?: boolean;
 }
 
 /**
@@ -580,6 +603,7 @@ export interface ErrorEvent extends Envelope {
 /** 全 S→C メッセージの discriminated union。 */
 export type ServerMessage =
   | HelloEvent
+  | AuthResponse
   | SessionOpenResponse
   | SavedListEvent
   | ConnectionEvent

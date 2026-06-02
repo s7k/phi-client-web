@@ -338,4 +338,56 @@ describe('WsClient', () => {
     } as ServerMessage);
     expect(onMap).not.toHaveBeenCalled();
   });
+
+  describe('WS auth ゲート (A-33)', () => {
+    it('open 時に token があれば最初に auth を送信', () => {
+      const client = makeClient();
+      client.setAuthToken('tk-1');
+      client.connect();
+      MockWebSocket.last()._open();
+      const first = JSON.parse(MockWebSocket.last().sent[0]);
+      expect(first.type).toBe('auth');
+      expect(first.token).toBe('tk-1');
+    });
+
+    it('auth ok 前の send(auth以外)は保留、ok 後にフラッシュ', () => {
+      const client = makeClient();
+      client.setAuthToken('tk-1');
+      client.connect();
+      MockWebSocket.last()._open();
+      // auth のみ送信済
+      expect(MockWebSocket.last().sent).toHaveLength(1);
+      // auth 以外は保留
+      client.send({ type: 'ping', nonce: 'a' });
+      expect(MockWebSocket.last().sent).toHaveLength(1);
+      // auth ok でフラッシュ
+      MockWebSocket.last()._emit({ type: 'auth', ok: true } as ServerMessage);
+      const types = MockWebSocket.last().sent.map((d) => JSON.parse(d).type);
+      expect(types).toContain('ping');
+    });
+
+    it('token なし(従来動作): auth を送らず即フラッシュ', () => {
+      const client = makeClient();
+      client.connect();
+      client.send({ type: 'ping', nonce: 'a' });
+      MockWebSocket.last()._open();
+      const types = MockWebSocket.last().sent.map((d) => JSON.parse(d).type);
+      expect(types).toEqual(['ping']);
+    });
+
+    it('再接続時も token で auth を自動再送', () => {
+      const client = makeClient({ autoReconnect: true, backoffBaseMs: 1 });
+      client.setAuthToken('tk-1');
+      client.connect();
+      MockWebSocket.last()._open();
+      MockWebSocket.last()._emit({ type: 'auth', ok: true } as ServerMessage);
+      // 切断 → 自動再接続
+      MockWebSocket.last().close();
+      vi.advanceTimersByTime(5);
+      MockWebSocket.last()._open();
+      const first = JSON.parse(MockWebSocket.last().sent[0]);
+      expect(first.type).toBe('auth');
+      expect(first.token).toBe('tk-1');
+    });
+  });
 });

@@ -61,6 +61,19 @@ describe('editStore', () => {
       mode: null,
     });
   });
+
+  it('close で即座に非アクティブ化(BE edit end 応答を待たない)', () => {
+    useEditStore.getState().setEdit(S, { mode: 'multi' });
+    expect(useEditStore.getState().bySession[S].active).toBe(true);
+    useEditStore.getState().close(S);
+    expect(useEditStore.getState().bySession[S]).toEqual({
+      active: false,
+      mode: null,
+    });
+    // 後から edit end が来ても無害(同じ非アクティブ状態)
+    useEditStore.getState().setEdit(S, { mode: 'end' });
+    expect(useEditStore.getState().bySession[S].active).toBe(false);
+  });
 });
 
 describe('userStore', () => {

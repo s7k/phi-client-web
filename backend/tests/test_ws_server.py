@@ -116,8 +116,8 @@ async def test_hello_sent_on_connect(server):
     await task
 
 
-async def test_hello_reports_unauthenticated_without_cookie(server):
-    # auth 未設定/cookie 無しでは hello.authenticated=False。
+async def test_hello_reports_unauthenticated_on_connect(server):
+    # A-33: 接続直後は常に未認証(hello.authenticated=False)。
     ws = FakeWebSocket()
     _, task = await _run_conn(ws, server)
     await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
@@ -128,25 +128,51 @@ async def test_hello_reports_unauthenticated_without_cookie(server):
     await task
 
 
-async def test_cookie_auth_sets_authenticated_and_admin(server):
-    """cookie token 検証で hello.authenticated=True / isAdmin 反映。"""
+async def test_ws_auth_message_sets_authenticated_and_admin(server):
+    """A-33: WS `{type:auth, token}` 検証で `{auth, ok:true, isAdmin}` 応答。"""
     from app.auth import AuthService, UidCipher
     from app.store import Store
-    from app.store.db import id_key_of
-    from app.ws_server import COOKIE_NAME
 
     store = Store.open(":memory:")
     auth = AuthService(store, UidCipher(UidCipher.generate_key()))
     auth.remember_id("ADM_ID", is_admin=True)
     tok = auth.establish_session("ADM_ID")
 
-    ws = FakeWebSocket(cookies={COOKIE_NAME: tok})
+    ws = FakeWebSocket()
     conn = WsConnection(ws, server, auth=auth)
     task = asyncio.create_task(conn.run())
     await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
-    hello = next(m for m in ws.sent if m["type"] == "hello")
-    assert hello["authenticated"] is True
-    assert hello["isAdmin"] is True
+    ws.feed({"type": "auth", "reqId": "a1", "token": tok})
+    await _wait(lambda: any(m["type"] == "auth" for m in ws.sent))
+    resp = next(m for m in ws.sent if m["type"] == "auth")
+    assert resp["ok"] is True
+    assert resp["isAdmin"] is True
+    assert resp["reqId"] == "a1"
+    # token は応答に含めない(資格情報)。
+    assert "token" not in resp
+    assert conn._id_key is not None
+    ws.disconnect()
+    await task
+    store.close()
+
+
+async def test_ws_auth_invalid_token_returns_not_ok(server):
+    """A-33: 無効 token は `{type:auth, ok:false}`。未認証のまま。"""
+    from app.auth import AuthService, UidCipher
+    from app.store import Store
+
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+
+    ws = FakeWebSocket()
+    conn = WsConnection(ws, server, auth=auth)
+    task = asyncio.create_task(conn.run())
+    await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
+    ws.feed({"type": "auth", "reqId": "a2", "token": "bogus-token"})
+    await _wait(lambda: any(m["type"] == "auth" for m in ws.sent))
+    resp = next(m for m in ws.sent if m["type"] == "auth")
+    assert resp["ok"] is False
+    assert conn._id_key is None
     ws.disconnect()
     await task
     store.close()
@@ -501,27 +527,34 @@ def _make_auth(*ids):
     return auth
 
 
+async def _ws_auth(ws, tok):
+    """WS auth メッセージを送り `{type:auth}` 応答を待って返す。"""
+    ws.feed({"type": "auth", "token": tok})
+    await _wait(lambda: any(m["type"] == "auth" for m in ws.sent))
+    return next(m for m in reversed(ws.sent) if m["type"] == "auth")
+
+
 async def test_ws_conn_limit_rejects_authenticated(server):
-    # cookie 認証時、同時接続上限超過で未認証扱い(hello.authenticated=False)。
-    from app.ws_server import COOKIE_NAME
+    # A-33: WS auth 時、同時接続上限超過で auth ok:false。
     cl = ConcurrencyLimiter(limit=2)
     auth = _make_auth("acc")
     tok = auth.establish_session("acc")  # 同一 id_key で複数接続
     conns = []
     for i in range(2):
-        ws = FakeWebSocket(cookies={COOKIE_NAME: tok})
+        ws = FakeWebSocket()
         conn = WsConnection(ws, server, auth=auth, conn_limiter=cl)
         t = asyncio.create_task(conn.run())
-        await _wait(lambda w=ws: any(
-            m["type"] == "hello" and m.get("authenticated") for m in w.sent))
+        await _wait(lambda w=ws: any(m["type"] == "hello" for m in w.sent))
+        resp = await _ws_auth(ws, tok)
+        assert resp["ok"] is True
         conns.append((ws, t))
-    # 3本目(limit=2): 同時接続確保できず未認証(authenticated=False)。
-    ws3 = FakeWebSocket(cookies={COOKIE_NAME: tok})
+    # 3本目(limit=2): 同時接続確保できず auth ok:false。
+    ws3 = FakeWebSocket()
     conn3 = WsConnection(ws3, server, auth=auth, conn_limiter=cl)
     t3 = asyncio.create_task(conn3.run())
     await _wait(lambda: any(m["type"] == "hello" for m in ws3.sent))
-    hello3 = next(m for m in ws3.sent if m["type"] == "hello")
-    assert hello3["authenticated"] is False
+    resp3 = await _ws_auth(ws3, tok)
+    assert resp3["ok"] is False
     ws3.disconnect()
     await t3
     # 1本切断 → 解放され新規接続が認証可。
@@ -529,11 +562,12 @@ async def test_ws_conn_limit_rejects_authenticated(server):
     ws0.disconnect()
     await t0
     await _wait(lambda: cl.count(__import__("app.store.db", fromlist=["id_key_of"]).id_key_of("acc")) == 1)
-    ws4 = FakeWebSocket(cookies={COOKIE_NAME: tok})
+    ws4 = FakeWebSocket()
     conn4 = WsConnection(ws4, server, auth=auth, conn_limiter=cl)
     t4 = asyncio.create_task(conn4.run())
-    await _wait(lambda: any(
-        m["type"] == "hello" and m.get("authenticated") for m in ws4.sent))
+    await _wait(lambda: any(m["type"] == "hello" for m in ws4.sent))
+    resp4 = await _ws_auth(ws4, tok)
+    assert resp4["ok"] is True
     for ws, t in [conns[1], (ws4, t4)]:
         ws.disconnect()
         await t
@@ -559,15 +593,15 @@ class FakeStore:
 
 
 async def _auth_conn(ws, mgr, *, plain_id="acc1", auth=None, **kw):
-    """cookie 認証済みの conn を起動(settings 等の要認証フロー用)。"""
-    from app.ws_server import COOKIE_NAME
+    """WS auth 済みの conn を起動(settings 等の要認証フロー用, A-33)。"""
     auth = auth or _make_auth(plain_id)
     tok = auth.establish_session(plain_id)
-    ws.cookies[COOKIE_NAME] = tok
     conn = WsConnection(ws, mgr, auth=auth, **kw)
     task = asyncio.create_task(conn.run())
+    await _wait(lambda: any(m["type"] == "hello" for m in ws.sent))
+    ws.feed({"type": "auth", "token": tok})
     await _wait(lambda: any(
-        m["type"] == "hello" and m.get("authenticated") for m in ws.sent))
+        m["type"] == "auth" and m.get("ok") for m in ws.sent))
     return conn, task
 
 

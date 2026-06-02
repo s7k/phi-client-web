@@ -1,7 +1,8 @@
 """REST 統合テスト(create_app)。
 
-TestClient で 認証フロー(未認証401 → session 確立 → 認証要求成功)、登録
-エンドポイント、CSRF Origin 検査、レート制限(429)を検証(ID-only)。
+TestClient で 認証フロー(未認証401 → session 確立 → Bearer 認証成功)、登録
+エンドポイント、レート制限(429)を検証(ID-only, A-33 token/Bearer)。
+A-33: cookie 廃止で CSRF Origin 検査も撤去 → 任意 Origin で通る。
 ⛔ 登録はモックTCP代行(実サーバ未接続)。
 """
 from __future__ import annotations
@@ -92,23 +93,29 @@ def env(tmp_path, monkeypatch):
         registrar_factory=registrar_factory,
         rate_limiter=rl,
         conn_limiter=ConcurrencyLimiter(),
-        allowed_origins={"https://app.test"},
-        production=True,  # CSRF Origin検査を有効化(developmentはスキップのため)
+        production=True,  # A-33: CSRF 撤去後も production で通ることを検証
     )
-    # Secure cookie を保持/送出させるため https ベース URL を使う。
-    c = TestClient(app, base_url="https://testserver")
+    c = TestClient(app)
     c._store = store  # type: ignore[attr-defined]
     yield c
     store.close()
 
 
-HDR = {"Origin": "https://app.test"}
+# A-33: cookie 廃止で CSRF Origin 検査も撤去。任意 Origin(LAN-IP 等)で通る。
+HDR = {"Origin": "http://192.168.1.28:8080"}
 
 
 def _session(env, plain_id, **body):
-    """`/api/auth/session` でセッション確立(cookie 取得)。"""
+    """`/api/auth/session` でセッション確立し token を取得。"""
     return env.post("/api/auth/session",
                     json={"id": plain_id, **body}, headers=HDR)
+
+
+def _login(env, plain_id, **body):
+    """セッション確立し `Authorization: Bearer <token>` ヘッダ dict を返す。"""
+    r = _session(env, plain_id, **body)
+    assert r.status_code == 200, r.text
+    return {**HDR, "Authorization": f"Bearer {r.json()['token']}"}
 
 
 # --- 認証フロー(ID-only セッション確立) ---------------------------------
@@ -124,12 +131,16 @@ def test_upload_requires_auth(env):
     assert r.status_code == 401
 
 
-def test_session_returns_is_admin(env):
-    # 管理者 alice → isAdmin True。
+def test_session_returns_is_admin_and_token(env):
+    # 管理者 alice → isAdmin True、token を JSON body で返す(Set-Cookie しない)。
     r = _session(env, "alice")
     assert r.status_code == 200
-    assert r.json()["ok"] is True
-    assert r.json()["isAdmin"] is True
+    body = r.json()
+    assert body["ok"] is True
+    assert body["isAdmin"] is True
+    assert isinstance(body["token"], str) and body["token"]
+    # A-33: cookie は発行しない。
+    assert "set-cookie" not in {k.lower() for k in r.headers}
 
 
 def test_session_no_id_400(env):
@@ -138,28 +149,27 @@ def test_session_no_id_400(env):
 
 
 def test_session_non_admin_is_admin_false_and_upload_403(env):
-    # 未登録 ID bob でセッション確立 → isAdmin False、upload は 403。
-    r = _session(env, "bob")
-    assert r.status_code == 200
-    assert r.json()["isAdmin"] is False
+    # 未登録 ID bob でセッション確立 → isAdmin False、upload(Bearer)は 403。
+    hdr = _login(env, "bob")
+    assert env.post("/api/auth/session", json={"id": "bob"},
+                    headers=HDR).json()["isAdmin"] is False
     r2 = env.post(
         "/api/chara/graphics",
         files={"file": ("g.bmp", _bmp(), "image/bmp")},
         data={"graName": "g"},
-        headers=HDR,
+        headers=hdr,
     )
     assert r2.status_code == 403
 
 
 def test_session_then_upload(env):
-    r = _session(env, "alice")
-    assert r.status_code == 200
-    # cookie が TestClient に保持される
+    # A-33: Bearer token で認証して upload。
+    hdr = _login(env, "alice")
     r2 = env.post(
         "/api/chara/graphics",
         files={"file": ("g.bmp", _bmp(), "image/bmp")},
         data={"graName": "g", "colorKey": "teal"},
-        headers=HDR,
+        headers=hdr,
     )
     assert r2.status_code == 200, r2.text
     assert r2.json()["graName"] == "g"
@@ -202,28 +212,33 @@ def test_lifespan_shutdown_invokes_manager(tmp_path):
 
 
 def test_logout(env):
-    _session(env, "alice")
-    r = env.post("/api/auth/logout", headers=HDR)
+    # A-33: Bearer token を logout で失効 → 同 token で 401。
+    hdr = _login(env, "alice")
+    r = env.post("/api/auth/logout", headers=hdr)
     assert r.status_code == 200
-    # ログアウト後はアップロード 401
     r2 = env.post(
         "/api/chara/graphics",
         files={"file": ("g.bmp", _bmp(), "image/bmp")},
         data={"graName": "g"},
-        headers=HDR,
+        headers=hdr,
     )
     assert r2.status_code == 401
 
 
-# --- CSRF -----------------------------------------------------------------
+# --- CSRF 撤去(A-33): cookie 廃止で任意 Origin 不問 ----------------------
 
-def test_csrf_blocks_bad_origin(env):
+def test_any_origin_allowed_after_csrf_removed(env):
+    # LAN-IP 等の任意 Origin でも session 確立が通る(CSRF 403 が出ない)。
     r = env.post("/api/auth/session", json={"id": "alice"},
-                 headers={"Origin": "https://evil.test"})
-    assert r.status_code == 403
+                 headers={"Origin": "http://192.168.1.28:8080"})
+    assert r.status_code == 200
+    # 別 Origin でも 403 にならない(CSRF 検査撤去)。
+    r2 = env.post("/api/auth/session", json={"id": "alice"},
+                  headers={"Origin": "https://other.test"})
+    assert r2.status_code == 200
 
 
-def test_csrf_allows_get_without_origin(env):
+def test_get_without_origin_ok(env):
     r = env.get("/healthz")
     assert r.status_code == 200
 
@@ -231,18 +246,18 @@ def test_csrf_allows_get_without_origin(env):
 # --- 登録(モックTCP代行) -------------------------------------------------
 
 def test_register_graphics(env):
-    _session(env, "alice")
-    r = env.get("/api/register/graphics", headers=HDR)
+    hdr = _login(env, "alice")
+    r = env.get("/api/register/graphics", headers=hdr)
     assert r.status_code == 200
     assert r.json()["graphics"] == [{"index": 0, "graName": "戦士"}]
 
 
 def test_register_success(env):
-    _session(env, "alice")
+    hdr = _login(env, "alice")
     r = env.post("/api/register",
                  json={"name": "Hero", "pass": "abc123", "imageIndex": 0,
                        "mail": "h@x.z"},
-                 headers=HDR)
+                 headers=hdr)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["name"] == "Hero"
@@ -255,10 +270,10 @@ def test_register_success(env):
 
 
 def test_register_local_reject(env):
-    _session(env, "alice")
+    hdr = _login(env, "alice")
     r = env.post("/api/register",
                  json={"name": "H", "pass": "x", "imageIndex": 0},
-                 headers=HDR)
+                 headers=hdr)
     assert r.status_code == 400
     detail = r.json()["detail"]
     assert detail["error"]["code"] == "REGISTER_REJECT"
@@ -266,10 +281,10 @@ def test_register_local_reject(env):
 
 
 def test_register_rate_limit_429(env):
-    _session(env, "alice")
+    hdr = _login(env, "alice")
     body = {"name": "Hero", "pass": "abc123", "imageIndex": 0}
     for _ in range(5):
-        r = env.post("/api/register", json=body, headers=HDR)
+        r = env.post("/api/register", json=body, headers=hdr)
         assert r.status_code == 200, r.text
-    r = env.post("/api/register", json=body, headers=HDR)
+    r = env.post("/api/register", json=body, headers=hdr)
     assert r.status_code == 429
