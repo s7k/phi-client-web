@@ -5,6 +5,7 @@ import { useKeyHandler } from '../src/lib/useKeyHandler';
 import { useListStore } from '../src/stores/listStore';
 import { useEditStore } from '../src/stores/editStore';
 import { useSettingsStore } from '../src/stores/settingsStore';
+import { useMapStore } from '../src/stores/mapStore';
 
 function makeController(over: Partial<WsController> = {}): WsController {
   return {
@@ -30,13 +31,35 @@ beforeEach(() => {
   useListStore.getState().reset();
   useEditStore.getState().reset();
   useSettingsStore.getState().reset();
+  useMapStore.getState().reset?.();
 });
 
 describe('useKeyHandler 配線', () => {
-  it('keydown(w) で sendMove(step F) を呼ぶ(wasd既定/turnモード)', () => {
+  it('keydown(8) で sendMove(step N)(numpad既定/北固定)', () => {
+    // 既定=numpad、map未設定→style既定solid=北固定。8=前進=北。
     const sendMove = vi.fn();
     render(<Harness controller={makeController({ sendMove })} session="s1" />);
-    fireEvent.keyDown(document, { key: 'w' });
+    fireEvent.keyDown(document, { key: '8' });
+    expect(sendMove).toHaveBeenCalledWith('s1', { dir: 'N', mode: 'step' });
+  });
+
+  it('北固定で u=左(step W) / o=右(step E)(左右が正しい向き)', () => {
+    const sendMove = vi.fn();
+    render(<Harness controller={makeController({ sendMove })} session="s1" />);
+    fireEvent.keyDown(document, { key: 'u' });
+    expect(sendMove).toHaveBeenCalledWith('s1', { dir: 'W', mode: 'step' });
+    fireEvent.keyDown(document, { key: 'o' });
+    expect(sendMove).toHaveBeenCalledWith('s1', { dir: 'E', mode: 'step' });
+  });
+
+  it('ライブmap.style=turn では視点固定操作(8=step F)', () => {
+    const sendMove = vi.fn();
+    useMapStore.getState().setMap('s1', {
+      type: 'map', session: 's1', size: 5, dir: 0, style: 'turn',
+      mapset: 'm', cells: [], chars: [], signs: [],
+    });
+    render(<Harness controller={makeController({ sendMove })} session="s1" />);
+    fireEvent.keyDown(document, { key: '8' });
     expect(sendMove).toHaveBeenCalledWith('s1', { dir: 'F', mode: 'step' });
   });
 

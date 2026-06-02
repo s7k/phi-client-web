@@ -49,7 +49,8 @@ export interface IntervalsSettings {
 
 /** 各scope既定値([12]§3)。settings 未取得時のフォールバック。 */
 export const DEFAULT_KEYBIND: KeybindSettings = {
-  layout: 'wasd',
+  // PHI Client デフォルトは仮想Numpad(789uiojklm,.)。既定を numpad に。
+  layout: 'numpad',
   magic: { F1: null, F2: null, F3: null, F4: null, F5: null, F6: null, F7: null },
   shortcuts: { F8: null, F9: null, F10: null, F11: null, F12: null },
   altG: '',

@@ -209,6 +209,16 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - BE 343 / FE 312 tests緑。docker実機で LAN-IP Origin→token返却200・cookie無し確認。
 - 留意: localStorage token はXSS可読(markdownサニタイズ+非dangerouslySetInnerHTMLで緩和)。ref選択ログインのtoken取得は残課題(通常のid入力ログインは動作)。
 
+## 6.12 操作: 既定numpad化 + 北固定操作の左右逆転バグ修正
+
+- **要望**: PHI Clientデフォルト操作(仮想Numpad `789uiojklm,.`)を既定に。
+- **バグ**: 北固定なのに視点固定(turn)操作になり左右(上下)が逆。原因 = `useKeyHandler` の `northFix = display?.mapStyle==='solid'` が、設定(display)未取得時 undefined→false→turn操作。サーバは solid(北固定)。
+- **修正**:
+  - `northFix` を **ライブ `map.style`(サーバ実状態)最優先** で導出(mapStore)。解決順: map.style → display設定 → 既定'solid'。北固定で u=左(step W)/o=右(step E)/8=北 が正しく出る。
+  - 既定レイアウト `DEFAULT_KEYBIND.layout` = **numpad**(従来wasd)。`useKeyHandler` フォールバックも numpad。
+  - 仮想Numpad対応(legacy `FullKeyMoveTranslate` 準拠): 7/8/9=turnL or NW行・forward・turnR、u/i/o=W/Uturn/E、k=後退、m=status。
+- FE 315 tests緑(北固定 u→W/o→E、turn時 8→F の回帰テスト追加)。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

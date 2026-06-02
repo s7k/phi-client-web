@@ -11,6 +11,7 @@ import type { WsController } from '../ws/controller';
 import { resolveKey, type KeyContext, type KeyLayout } from './keyHandler';
 import { useListStore } from '../stores/listStore';
 import { useEditStore } from '../stores/editStore';
+import { useMapStore } from '../stores/mapStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { DisplaySettings } from '../stores/settingsStore';
 
@@ -69,15 +70,21 @@ export function useKeyHandler(
   const edit = useEditStore((s) => (session ? s.bySession[session] : undefined));
   const keybind = useSettingsStore((s) => s.byScope['keybind'] as KeybindSettings | undefined);
   const display = useSettingsStore((s) => s.byScope['display'] as DisplaySettings | undefined);
+  // 北固定判定は**サーバの実マップstyle**(ライブ)を最優先([07]§6.2 map.style)。
+  // 設定(display)が未取得でも、現在のマップが solid なら北固定操作にする。
+  // (従来は display 未取得時 undefined→turn操作になり、北固定なのに左右逆だった)
+  const mapStyle = useMapStore((s) => (session ? s.bySession[session]?.style : undefined));
 
   useEffect(() => {
     if (!session) return;
 
     const handler = (ev: KeyboardEvent) => {
+      // style 解決順: ライブmap.style → 設定display → 既定'solid'。
+      const effStyle = mapStyle ?? display?.mapStyle ?? 'solid';
       const ctx: KeyContext = {
-        layout: keybind?.layout ?? 'wasd',
-        // 北固定: display.mapStyle === 'solid'([12]§3.3, key_handler north_fix)
-        northFix: display?.mapStyle === 'solid',
+        layout: keybind?.layout ?? 'numpad',
+        // 北固定: style === 'solid'(turn=視点固定)。([07]§6.2, key_handler north_fix)
+        northFix: effStyle === 'solid',
         listActive: list?.active ?? false,
         inputFocused: isInputFocused(),
         magic: keybind?.magic ?? {},
@@ -95,5 +102,5 @@ export function useKeyHandler(
 
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [controller, session, list?.active, edit?.active, keybind, display]);
+  }, [controller, session, list?.active, edit?.active, keybind, display, mapStyle]);
 }
