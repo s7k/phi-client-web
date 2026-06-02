@@ -57,7 +57,7 @@ export type KeyIntent =
 // ----------------------------------------------------------------------------
 
 /** 抽象移動アクション。実際のintentは northFix で分岐して生成。 */
-type MoveAction =
+export type MoveAction =
   | 'forward'
   | 'back'
   | 'strafeL'
@@ -184,8 +184,8 @@ function isNumpadKey(ev: KeyboardEvent): boolean {
   return ev.location === 3;
 }
 
-/** 抽象移動アクション → intent(northFix で分岐)。 */
-function actionToIntent(action: MoveAction, northFix: boolean): KeyIntent {
+/** 抽象移動アクション → intent(northFix で分岐)。タッチ操作(TouchControls)でも再利用。 */
+export function actionToIntent(action: MoveAction, northFix: boolean): KeyIntent {
   switch (action) {
     case 'turnL':
       return { type: 'move', mode: 'turn', dir: 'l' };

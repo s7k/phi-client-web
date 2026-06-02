@@ -145,6 +145,7 @@ body {
 .game__map    {
   grid-area: map; min-height: 0; overflow: auto;
   display: flex; align-items: center; justify-content: center;  /* エリア中央にマップ配置 */
+  position: relative;  /* タッチ操作パッド(TouchControls)のオーバーレイ基準 */
 }
 .game__chat   { grid-area: chat;   min-height: 0; display: flex; }
 .game__status { grid-area: status; min-height: 0; overflow: auto; }
@@ -172,9 +173,19 @@ body {
   .game__chat   { order: 1; flex: 1 1 auto; min-height: 0; }  /* 主役(残りを占有) */
   .game__map    {
     order: 2; flex: 0 0 auto;
-    height: 24vh; max-height: 24vh;  /* 控えめ固定。大きいマップは内部スクロール */
-    align-items: flex-start;         /* 縦は詰める(中央寄せの黒余白を排除) */
+    height: 24vh; max-height: 24vh;
+    align-items: center;       /* 縮小したマップを領域中央に */
+    overflow: hidden;          /* はみ出しスクロールを止める(下で縮小) */
     padding: 0;
+  }
+  /* マップ canvas(固定px)を領域内にアスペクト維持で縮小(スクロール解消)。
+     インライン width/height(px)を上書きするため !important。 */
+  .game__map canvas,
+  .game__map .eagle-eye {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto !important;
+    height: auto !important;
   }
   .game__status {
     order: 3; flex: 0 0 auto;

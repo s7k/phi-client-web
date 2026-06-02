@@ -30,6 +30,7 @@ import { Settings } from './components/Settings';
 import { TabBar } from './components/TabBar';
 import { ListView } from './components/ListView';
 import { EditDialog } from './components/EditDialog';
+import { TouchControls } from './components/TouchControls';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { ErrorBanners } from './components/ErrorBanners';
 import { WorldTransferIndicator } from './components/WorldTransferIndicator';
@@ -93,6 +94,8 @@ function Game({
       <div className="game__body">
         <section className="game__map" ref={mainRef}>
           {eagleEye ? <EagleEyeView session={session} /> : <MapView session={session} />}
+          {/* スマホのみ表示の操作パッド(CSS で desktop は非表示)。 */}
+          <TouchControls session={session} />
         </section>
         <section className="game__chat">
           <Chat session={session} />
