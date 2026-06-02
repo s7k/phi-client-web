@@ -62,7 +62,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   loud: true,
   regexInclude: null,
   regexExclude: null,
-  sound: true,
+  sound: false,
   titleFlash: true,
 };
 

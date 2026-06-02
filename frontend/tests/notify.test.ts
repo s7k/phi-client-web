@@ -60,7 +60,7 @@ describe('notify 発火', () => {
     };
     const ok = notify(
       { channel: 'priv', text: '/*r*/やあ/*.*/', from: 'Alice' },
-      settings(),
+      settings({ sound: true }),  // 既定sound=offのため明示有効化して発火を検証
       deps,
     );
     expect(ok).toBe(true);
