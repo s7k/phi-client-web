@@ -3,6 +3,7 @@
  * statusStore(HP/MP/EXP/GP + 属性値) と cond(状態異常)を近代的UIで表示。
  */
 import { useStatusStore } from '../stores/statusStore';
+import { useNoticeStore } from '../stores/noticeStore';
 import type { CondState } from '../stores/statusStore';
 import './StatusPanel.css';
 
@@ -54,6 +55,9 @@ export function StatusPanel({ session }: { session: string }) {
   const entry = useStatusStore((s) => s.bySession[session]);
   const status = entry?.status;
   const cond = entry?.cond;
+  // キャラクター名は #name 由来(noticeStore)。status.name は #status のグラ名(t_Lord等)
+  // なので表示には使わない。notice 未取得時のみ status.name へフォールバック。
+  const charName = useNoticeStore((s) => s.bySession[session]?.name);
 
   if (!status) {
     return <div className="status-panel status-panel--empty">ステータス未取得</div>;
@@ -61,7 +65,7 @@ export function StatusPanel({ session }: { session: string }) {
 
   return (
     <div className="status-panel">
-      <div className="status-panel__name">{status.name}</div>
+      <div className="status-panel__name">{charName || status.name}</div>
 
       <Bar label="HP" value={status.hp} max={status.maxHp} variant="hp" />
       <Bar label="MP" value={status.mp} max={status.maxMp} variant="mp" />
