@@ -237,7 +237,26 @@ class ProtocolParser:
                 if after.startswith(">"):
                     return [self._message("priv", text, frm=sender)]
 
+        # プレイヤー発言検出: "<名前> > 本文" で名前が #user 名簿にあれば talk(チャット)。
+        # NPC会話・DM(ゲーム進行)案内・移動メッセージ等は名簿に無く log のまま
+        # (FE は通知/未読をチャット種別=talk/priv に限定できる)。
+        speaker = self._chat_speaker(text)
+        if speaker is not None:
+            return [self._message("talk", text, frm=speaker)]
+
         return [self._message("log", text)]
+
+    def _chat_speaker(self, text: str) -> str | None:
+        """`"<名前> > 本文"` の名前を抽出し、#user 名簿(ulist)にあれば返す。
+
+        名簿はマップ内プレイヤー(#user)。NPC/DM はここに載らないため区別できる。
+        区切りは " > "(priv と同じ会話形式)。先頭に名前が無い案内行は None。
+        """
+        idx = text.find(" > ")
+        if idx <= 0:
+            return None
+        name = text[:idx]
+        return name if name in self.ulist else None
 
     # ------------------------------------------------------------------
     # コマンドディスパッチ

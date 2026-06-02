@@ -438,7 +438,7 @@ export interface CondEvent extends Envelope, CondEventPayload {
 
 // --- 6.5 メッセージ・ログ ---
 
-export type MessageChannel = 'log' | 'priv' | 'loud' | 'system';
+export type MessageChannel = 'log' | 'talk' | 'priv' | 'loud' | 'system';
 
 export interface MessageEvent extends Envelope {
   type: 'message';

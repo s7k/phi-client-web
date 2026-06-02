@@ -329,6 +329,36 @@ def test_user_table_populated(parser):
     assert parser.ulist == {"ExampleChar": 12}
 
 
+# --- チャット分類 (talk: プレイヤー発言 / log: NPC・DM・案内) ----------------
+
+def test_player_speech_classified_as_talk(parser):
+    # 名簿(#user)にいる話者の "<名前> > 本文" は talk(チャット)。
+    parser.feed(load_synthetic("user.bin"))  # ulist に ExampleChar
+    ev = parser.feed("ExampleChar > やあ".encode("cp932"))[0]
+    assert ev["type"] == "message"
+    assert ev["channel"] == "talk"
+    assert ev["from"] == "ExampleChar"
+
+
+def test_npc_dm_and_notice_stay_log(parser):
+    parser.feed(load_synthetic("user.bin"))
+    # 名簿に無い話者(NPC)は log(from 無し)。
+    npc = parser.feed("Goblin > ぐるるる".encode("cp932"))[0]
+    assert npc["channel"] == "log" and "from" not in npc
+    # DM(ゲーム進行)案内は名簿外 → log。
+    dm = parser.feed("DM > 移動しました".encode("cp932"))[0]
+    assert dm["channel"] == "log"
+    # 話者形式でない案内行も log。
+    plain = parser.feed("進めません.".encode("cp932"))[0]
+    assert plain["channel"] == "log"
+
+
+def test_speech_before_user_table_is_log(parser):
+    # 名簿未取得(ulist空)では talk 化しない(誤分類防止)。
+    ev = parser.feed("ExampleChar > やあ".encode("cp932"))[0]
+    assert ev["channel"] == "log"
+
+
 # --- EagleEye (#ex-eagleeye 集約 構造化, CR-2) ----------------------------
 
 def _ee_row(size: int, y: int, cells: list[tuple[int, int]]) -> bytes:

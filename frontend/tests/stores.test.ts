@@ -122,6 +122,20 @@ describe('chatStore', () => {
     expect(log).toHaveLength(cap);
     expect(log[0].text).toBe('5'); // 先頭5件破棄
   });
+
+  it('未読はチャット種別のみカウント(log/NPC/DMは数えない)', () => {
+    const mk = (channel: string, text: string): MessageEvent => ({
+      type: 'message', session: S, channel: channel as never, text,
+    });
+    useChatStore.getState().addMessage(S, mk('log', 'DM > 移動しました')); // 案内→数えない
+    useChatStore.getState().addMessage(S, mk('log', 'Goblin > ぐるる'));   // NPC→数えない
+    expect(useChatStore.getState().unread[S] ?? 0).toBe(0);
+    useChatStore.getState().addMessage(S, mk('talk', 'Carol > やあ'));      // プレイヤー→数える
+    useChatStore.getState().addMessage(S, mk('priv', '[Dave] > ひそひそ')); // 個人宛→数える
+    expect(useChatStore.getState().unread[S]).toBe(2);
+    // ログも表示は残る(全4件)。
+    expect(useChatStore.getState().bySession[S]).toHaveLength(4);
+  });
 });
 
 describe('applySnapshot', () => {

@@ -430,9 +430,11 @@ describe('L4 自己通知抑止(isSelfEcho / selfNameOf)', () => {
     expect(selfNameOf('s3')).toBeUndefined();
   });
 
-  it('channel=log かつ from=自キャラ名 → 抑止対象', () => {
+  it('channel=log/talk かつ from=自キャラ名 → 抑止対象', () => {
     setSelfName('s1', 'Hero');
     expect(isSelfEcho('s1', 'log', 'Hero')).toBe(true);
+    // talk(プレイヤー発言)も自分のエコーは抑止対象。
+    expect(isSelfEcho('s1', 'talk', 'Hero')).toBe(true);
   });
 
   it('他者発言/他チャネル/from無しは抑止しない', () => {

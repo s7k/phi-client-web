@@ -44,7 +44,7 @@ import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useMapStore } from '../stores/mapStore';
 import { useStatusStore } from '../stores/statusStore';
-import { useChatStore } from '../stores/chatStore';
+import { useChatStore, isChatChannel } from '../stores/chatStore';
 import { useUserStore } from '../stores/userStore';
 import { useModeStore } from '../stores/modeStore';
 import { useListStore } from '../stores/listStore';
@@ -82,7 +82,7 @@ export function selfNameOf(session: string): string | undefined {
 
 /**
  * 自キャラ発言のエコー(自己通知抑止対象)か判定(L4)。
- * channel='log'(通常ログ)かつ from が自キャラ名と一致する場合のみ true。
+ * channel='log'/'talk'(自分の発言エコー)かつ from が自キャラ名と一致する場合のみ true。
  * priv/loud/system は対象外(他者宛/他者発を含むため抑止しない)。
  */
 export function isSelfEcho(
@@ -90,7 +90,7 @@ export function isSelfEcho(
   channel: string,
   from: string | undefined,
 ): boolean {
-  if (channel !== 'log') return false;
+  if (channel !== 'log' && channel !== 'talk') return false;
   if (!from) return false;
   const self = selfNameOf(session);
   return self !== undefined && self === from;
@@ -179,9 +179,12 @@ export class WsController {
     c.on('message', (msg) => {
       const s = resolveSession(msg.session);
       if (s) useChatStore.getState().addMessage(s, msg);
-      // L4: 自キャラ発言のエコー(channel='log')での自己通知を抑止。
+      // L4: 自キャラ発言のエコー(channel='log'/'talk')での自己通知を抑止。
       // 自キャラ名は status / notice から取得(snapshot/status で設定済み前提)。
       if (s && isSelfEcho(s, msg.channel, msg.from)) return;
+      // 通知はチャット種別(talk/priv/loud)のみ。NPC会話・DM進行案内・移動メッセージ
+      // (channel='log')はログ表示のみで通知しない(ユーザー要望: チャットのみ通知)。
+      if (!isChatChannel(msg.channel)) return;
       // F11 通知判定([05]§10)。設定は notify scope(無ければ既定)。
       const ns =
         (useSettingsStore.getState().byScope['notify'] as NotifySettings | undefined) ??

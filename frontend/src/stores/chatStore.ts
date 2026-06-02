@@ -19,6 +19,15 @@ export type ChatEntry = Omit<MessageEvent, 'type' | 'reqId'> & { _id: number };
 /** リングバッファ上限(session毎)。 */
 const DEFAULT_CAPACITY = 1000;
 
+/**
+ * 通知/未読の対象とする「チャット」種別(プレイヤー会話)。
+ * talk=プレイヤー発言 / priv=個人宛 / loud=大声。
+ * log(NPC会話・DM進行案内・移動メッセージ等)は表示のみで未読/通知に数えない。
+ */
+export function isChatChannel(channel: string): boolean {
+  return channel === 'talk' || channel === 'priv' || channel === 'loud';
+}
+
 /** ログエントリの安定キー採番(全 session 通し単調増加)。 */
 let _entrySeq = 0;
 
@@ -68,9 +77,11 @@ export const useChatStore = create<ChatStoreState>((set) => ({
       if (next.length > s.capacity) {
         next.splice(0, next.length - s.capacity);
       }
+      // 未読はチャット種別のみ加算(NPC/DM/ログは表示するがバッジに数えない)。
+      const inc = isChatChannel(entry.channel) ? 1 : 0;
       return {
         bySession: { ...s.bySession, [session]: next },
-        unread: { ...s.unread, [session]: (s.unread[session] ?? 0) + 1 },
+        unread: { ...s.unread, [session]: (s.unread[session] ?? 0) + inc },
       };
     }),
   markRead: (session) =>

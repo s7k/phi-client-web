@@ -426,10 +426,12 @@ describe('TabBar (F9)', () => {
     useSessionStore.getState().addSession({ session: 's2', label: 'Bob', opener: { charId: 'c2' } });
     useConnectionStore.getState().setSessionConnection('s1', 'connected');
     useConnectionStore.getState().setSessionConnection('s2', 'closed');
+    // 未読はチャット種別(talk/priv/loud)のみカウント。talk=プレイヤー発言。
     useChatStore.getState().addMessage('s2', {
       type: 'message',
       session: 's2',
-      channel: 'log',
+      channel: 'talk',
+      from: 'Carol',
       text: 'hi',
     });
     useUiStore.getState().setActiveTab('s1');
