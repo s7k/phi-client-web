@@ -26,10 +26,34 @@ export function Login() {
   const saved = useSessionStore((s) => s.saved);
   const setActiveTab = useUiStore((s) => s.setActiveTab);
 
-  const [id, setId] = useState('');
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('');
+  // ログインフォームの前回値を localStorage に記憶し再入力を省く(ユーザー要望)。
+  // ID は資格情報だが token 同様 localStorage 保持(同一信頼モデル)。
+  const FORM_KEY = 'phi_login_form';
+  const savedForm = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(FORM_KEY) || '{}') as {
+        id?: string; host?: string; port?: string;
+      };
+    } catch {
+      return {};
+    }
+  })();
+
+  const [id, setId] = useState(savedForm.id ?? '');
+  const [host, setHost] = useState(savedForm.host ?? '');
+  const [port, setPort] = useState(savedForm.port ?? '');
   const [remember, setRemember] = useState(false);
+
+  /** 入力中の ID/IP/ポートを localStorage に保存(次回プリフィル用)。 */
+  function rememberForm(idV: string, hostV: string, portV: string) {
+    try {
+      localStorage.setItem(
+        FORM_KEY, JSON.stringify({ id: idV, host: hostV, port: portV }),
+      );
+    } catch {
+      /* localStorage 不可環境は無視 */
+    }
+  }
   const [phase, setPhase] = useState<'login' | 'register'>('login');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +109,7 @@ export function Login() {
         port: p,
         remember,
       });
+      rememberForm(id, h, port.trim());  // 次回プリフィル用に記憶
       setActiveTab(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : '認証失敗');
@@ -112,6 +137,7 @@ export function Login() {
         { ref: item.ref, host: h, port: p },
         item.label,
       );
+      rememberForm(id, h ?? '', String(p ?? port.trim()));  // 接続先を記憶
       setActiveTab(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ログイン失敗');

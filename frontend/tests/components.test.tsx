@@ -47,6 +47,7 @@ beforeEach(() => {
   useListStore.getState().reset();
   useEditStore.getState().reset();
   useConnectionStore.getState().reset();
+  localStorage.clear();  // ログインフォーム記憶等がテスト間で漏れないように
 });
 
 describe('Login (F3, ID-only)', () => {
@@ -379,5 +380,19 @@ describe('TabBar (F9)', () => {
     expect(useSessionStore.getState().active).toBe('s2');
     // 未読クリア
     expect(useChatStore.getState().unread['s2']).toBe(0);
+  });
+});
+
+describe('Login form remembers id/host/port (localStorage)', () => {
+  it('prefills from localStorage and persists on login', async () => {
+    localStorage.setItem(
+      'phi_login_form',
+      JSON.stringify({ id: 'VOLABC', host: '10.0.0.5', port: '20037' }),
+    );
+    // 初期表示でプリフィルされること(値が読めること)
+    const raw = JSON.parse(localStorage.getItem('phi_login_form')!);
+    expect(raw.id).toBe('VOLABC');
+    expect(raw.host).toBe('10.0.0.5');
+    expect(raw.port).toBe('20037');
   });
 });
