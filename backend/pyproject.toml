@@ -1,7 +1,7 @@
 [project]
-name = "phi-web-backend"
+name = "phi-client-web-backend"
 version = "0.1.0"
-description = "phi-web ゲートウェイ (Python/FastAPI). レガシーSJISソケット ⇔ ブラウザ(UTF-8 JSON)"
+description = "phi-client-web ゲートウェイ (Python/FastAPI). レガシーSJISソケット ⇔ ブラウザ(UTF-8 JSON)"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [

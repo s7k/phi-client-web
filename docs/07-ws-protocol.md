@@ -1,6 +1,6 @@
 # バックエンド ⇔ フロントエンド 通信プロトコル仕様
 
-phi-web の BE(ゲートウェイ) と FE(ブラウザ) 間の通信プロトコル。[02 設計](02-architecture-design.md)・[05 責務分担](05-feature-responsibility-design.md) で断片定義したWS APIを統合した正式仕様。
+phi-client-web の BE(ゲートウェイ) と FE(ブラウザ) 間の通信プロトコル。[02 設計](02-architecture-design.md)・[05 責務分担](05-feature-responsibility-design.md) で断片定義したWS APIを統合した正式仕様。
 
 関連: BEはレガシーサーバへSJISソケットを常時保持。本プロトコルはBE⇔FE間のみを規定。レガシー側プロトコルは [01](01-legacy-investigation.md)。
 

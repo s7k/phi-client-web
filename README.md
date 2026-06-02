@@ -1,4 +1,4 @@
-# phi-web
+# phi-client-web
 
 レガシーSJISソケットゲーム(Phantasmal Island系)を、ブラウザからUTF-8で操作可能にするWebクライアント。
 **バックエンド(Python/FastAPI)** がレガシーサーバへSJIS TCP接続を常時保持するゲートウェイとなり、**フロントエンド(React/TS)** とは WebSocket(UTF-8 JSON) で通信する。
@@ -81,7 +81,7 @@ docker compose up --build         # web=:8080(エッジ), backend=:8000(内部)
 
 - ゲームのグラフィックス(キャラクター/オブジェクト/マップパーツ/アイコン等)は
   **PCGL(Phi Charactor Graphics License, Copyright (C) 2000 Athena Developer-ML)** 下にある。
-- phi-web は PCGL が想定する「新クライアント/Webページ」に該当する。これらの
+- phi-client-web は PCGL が想定する「新クライアント/Webページ」に該当する。これらの
   グラフィックスを使用・配布する場合、**PCGL に従い「使用グラフィックスが PCGL 下にある」
   旨を明記する義務**がある(本節がその明記)。PCGL 文書は自由にコピー・頒布可・改変不可。
 - 全文: [`licenses/PCGL.utf8.txt`](licenses/PCGL.utf8.txt)(UTF-8 閲覧用) / [`licenses/PCGL.sjis.txt`](licenses/PCGL.sjis.txt)(SJIS 原本)。詳細は [`licenses/README.md`](licenses/README.md)。

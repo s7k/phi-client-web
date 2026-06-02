@@ -1,6 +1,6 @@
-# phi-web frontend
+# phi-client-web frontend
 
-phi-web のフロントエンド。React 18 + TypeScript + Vite。状態管理 Zustand、テスト Vitest + React Testing Library。
+phi-client-web のフロントエンド。React 18 + TypeScript + Vite。状態管理 Zustand、テスト Vitest + React Testing Library。
 
 BE↔FE の通信契約は `docs/07-ws-protocol.md`。FE側の型実体は `src/types/protocol.ts`。
 

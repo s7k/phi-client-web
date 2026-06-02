@@ -7,7 +7,7 @@ import { test, expect } from '@playwright/test';
  * BE 不要 — WS はルート傍受でモック(接続を握り、何も返さない)。
  * これで再接続ループや実 BE 依存を避けつつ、初期 UI の表示を検証。
  */
-test.describe('phi-web スモーク', () => {
+test.describe('phi-client-web スモーク', () => {
   test('起動でログイン画面が表示される', async ({ page }) => {
     // WS をモック傍受。接続は確立させ、サーバ送信はしない(初期 UI に不要)。
     await page.routeWebSocket(/\/ws$/, () => {
@@ -17,8 +17,8 @@ test.describe('phi-web スモーク', () => {
     await page.goto('/');
 
     // タイトル(アプリ識別)
-    await expect(page).toHaveTitle(/phi-web/);
-    await expect(page.getByRole('heading', { name: 'phi-web' })).toBeVisible();
+    await expect(page).toHaveTitle(/phi-client-web/);
+    await expect(page.getByRole('heading', { name: 'phi-client-web' })).toBeVisible();
 
     // ログインフォーム(A-34): アカウントID + パスワード + ログインボタン。
     await expect(page.getByLabel('アカウントID')).toBeVisible();

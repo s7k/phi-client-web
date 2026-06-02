@@ -158,7 +158,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   return (
     <div className="login">
       <div className="login__card">
-        <h1 className="login__title">phi-web</h1>
+        <h1 className="login__title">phi-client-web</h1>
 
         {notice && (
           <p className="login__notice" role="status">

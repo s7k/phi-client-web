@@ -143,7 +143,7 @@ CREATE TABLE settings (             -- map-iv/status-iv 等のクライアント
 ## 7. ディレクトリ構成（提案）
 
 ```
-phi-web/
+phi-client-web/
 ├── docs/                  # 本資料群
 ├── legacy/                # 既存（変更しない・gitignore）
 ├── backend/               # Python (FastAPI) ゲートウェイ

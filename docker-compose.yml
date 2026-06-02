@@ -1,4 +1,4 @@
-# phi-web スタック (backend + edge/frontend)
+# phi-client-web スタック (backend + edge/frontend)
 # 使い方: cp .env.docker.example .env し値を設定 → docker compose up --build
 # 透過PNGは ./assets に配置(tools/gfx_convert で生成。レガシーBMPは別途用意)。
 

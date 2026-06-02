@@ -1,4 +1,4 @@
-# phi-web backend (Gateway)
+# phi-client-web backend (Gateway)
 
 レガシーSJISソケットゲーム ⇔ ブラウザ(UTF-8 JSON) を仲介するPython/FastAPIゲートウェイ。
 設計: [docs/02-architecture-design.md](../docs/02-architecture-design.md) / 契約: [docs/07-ws-protocol.md](../docs/07-ws-protocol.md)

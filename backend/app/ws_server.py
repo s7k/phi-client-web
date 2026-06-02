@@ -562,7 +562,7 @@ def create_app(
         if callable(shutdown):
             await shutdown()
 
-    app = FastAPI(title="phi-web gateway", lifespan=lifespan)
+    app = FastAPI(title="phi-client-web gateway", lifespan=lifespan)
     app.state.session_manager = mgr
 
     if auth is None:  # pragma: no cover - 統合層(本番起動)
