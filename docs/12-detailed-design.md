@@ -6,7 +6,7 @@
 
 ### 1.1 重要前提: レガシー `#open <uid>` の uid はパスワード埋め込み
 レガシー登録(`new_proto.c` `ex_adduser_v52`)で uid は `<addw><5桁 s_id><6字 pass>` 形式。**接続ID(=uid)自体に6文字パスワードが埋め込まれている**(調査[本doc §2])。
-→ uid は**資格情報**。SQLiteに平文保存禁止。**保存時暗号化(at-rest)**必須。これが実キャラID秘匿([履歴秘匿対応])の根拠でもある。
+→ uid は**資格情報**。SQLiteに平文保存禁止。**保存時暗号化(at-rest)**必須。
 
 ### 1.2 2層の認証
 | 層 | 用途 | 資格 |
@@ -178,7 +178,7 @@ Zustand。store分割:
 - Web認証 argon2id、Bearer token(localStorage 保持, A-33。cookie廃止)。token はログ非出力。
 - CSP(FE: `img=`外部URL対策[05]§13)。CSRF/Origin 検査は cookie 廃止(A-33, Bearer token)により不要。
 - レート制限(§4)。
-- 秘匿値(IP/Port/uid)はコード/履歴に残さない([test_connect.py]は環境変数)。
+- 接続先などの設定値は環境変数で供給(`app/config.py`)。
 
 ## 8. 既存ドキュメントへの反映
 - [05]§14 の「登録プロトコル未調査」→ **本doc §2で解決**(参照追記)。

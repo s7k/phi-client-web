@@ -27,7 +27,7 @@
 | `backend/` | Python/FastAPI ゲートウェイ(プロトコル変換・セッション・WS・REST・SQLite) |
 | `frontend/` | React/TypeScript/Vite クライアント(マップ描画・チャット・操作UI) |
 | `tools/gfx_convert/` | レガシーBMP→透過PNG変換ツール |
-| `assets/` | 変換済透過PNG(gitignore・実行時生成) |
+| `assets/` | 透過PNGアセット(PCGL, 初期同梱: chara/chip/items)。問題データは選別除外済 |
 | `legacy/` | レガシー原典(gitignore・ライセンス都合で非コミット) |
 
 ## 開発・起動
