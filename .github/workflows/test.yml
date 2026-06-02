@@ -18,7 +18,8 @@ jobs:
       - run: uv pip install -e ".[dev]"
       - run: uv run pytest -q --cov=app --cov-report=term-missing
     env:
-      PHI_SECRET_KEY: ci-test-key-not-secret
+      # CI用テスト鍵(機密でない)。有効な Fernet 鍵(32byte url-safe base64)。
+      PHI_SECRET_KEY: 3i5gtIBJJRY3xLN73cTj-WmV_QOuC6CojzHPErPvVnA=
 
   frontend:
     runs-on: ubuntu-latest
@@ -32,7 +33,7 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npx vitest run --coverage
+      - run: npx vitest run
       - run: npx vite build
 
   e2e:
