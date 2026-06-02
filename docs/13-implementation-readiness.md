@@ -18,7 +18,7 @@
 | B9 | gfx透過変換(共有module) | ✅ | [06], tools/gfx_convert | 実装済ロジックをmodule化するだけ |
 | B10 | REST chara(graphics/index/manifest) | ✅ | [08]§7 | 即着手可 |
 | B11 | フォールバック解決 | ✅ | [09], chara_type_fallback.json | 即着手可 |
-| B12 | 認証/トークン/uid暗号 | ✅ | [12]§1 | 方式確定(cookie+sessionId, AEAD)。即着手可 |
+| B12 | 認証/トークン/uid暗号 | ✅ | [12]§1 | 実装済(A-33: Bearer token/localStorage, uid Fernet AEAD) |
 | B13 | 世界移動(#ch-srv) | ✅ | [05]§8, phi-client `_handle_ch_srv` | 300s/last_server確定 |
 | B14 | レート制限 | ✅ | [12]§4 | 閾値確定。即着手可 |
 | B15 | 新規キャラ登録(#ex-register) | ⚠️ | [12]§2 | プロトコル判明。**uid の addw/s_id 供給元のみ実機確認要**([12]§2.4)。登録以外は着手可、登録は確認後 |

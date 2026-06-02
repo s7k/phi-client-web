@@ -44,32 +44,38 @@ phi-web の BE(ゲートウェイ) と FE(ブラウザ) 間の通信プロトコ
 
 ## 4. 接続ライフサイクル
 
-**ID-only認証**(DEVLOG A-31): PHIは**IDのみで識別**、`#open <uid>` の uid 自体が資格情報(6字パス埋込)。**別Webパスワードは持たない**。
+**アカウント認証(DEVLOG A-34 / A-33)**: Webアカウント(`accountId`+パスワード)でログインし token を発行(A-33)。1アカウントに複数キャラ(`label`+PHI uid+host+port)を登録(A-34)。PHI uid(6字パス埋込の資格情報)は BE が Fernet 暗号で `characters.phi_uid_enc` に保管し FE へ出さない。
+旧 ID-only 認証(A-31)・`saved_ids`・`saved.list`・cookie は A-33/A-34 で**廃止**。
 
 ```
 FE                                   BE
-│ ── POST /api/auth/session {id} ──▶ │   REST. cookie(phi_session)発行
-│ ◀─ {ok, isAdmin, label?} ───────── │
-│ ── WS接続(cookie) ───────────────▶ │   接続時 cookie 検証
-│ ◀─ hello (protocolVersion, authenticated, isAdmin) │
-│ ── saved.list ───────────────────▶ │   (任意)保存IDピッカー
-│ ◀─ saved {items:[{ref,label,isAdmin}]} │   生ID非公開
-│ ── session.open {id | ref} ──────▶ │   id=入力PHI ID / ref=保存id_key → #open <平文ID>
+│ ── POST /api/auth/register {accountId,password} ─▶ │  (任意)新規登録。argon2id
+│ ── POST /api/auth/login {accountId,password} ────▶ │  REST. token発行(A-33)
+│ ◀─ {ok, token, isAdmin} ─────────────────────────  │
+│ ── GET /api/characters (Bearer) ─────────────────▶ │  キャラ一覧(phi_uid非公開)
+│ ◀─ [{charId,label,host,port}] ───────────────────  │
+│ ── WS接続 ───────────────────────────────────────▶ │
+│ ── auth {token} ─────────────────────────────────▶ │  first message。token検証(A-33)
+│ ◀─ auth {ok, isAdmin?} ──────────────────────────  │
+│ ◀─ hello (protocolVersion, serverTime) │
+│ ── session.open {charId} ────────────────────────▶ │  BE: charId→phi_uid復号→#open
 │ ◀─ session.open {ok, session, isAdmin} │
-│ ◀─ connection (connected) ──────── │
-│ ◀─ snapshot (map,status,cond,…) ── │
-│ ── chat / move / command … ──────▶ │
+│ ◀─ connection (connected) │
+│ ◀─ snapshot (map,status,cond,…) │
+│ ── chat / move / command … ──────────────────────▶ │
 ```
 
-### 4.1 認証・キャラ選択(ID-only)
-- 認証 = **PHI ID のみ**。`POST /api/auth/session {id}` で cookie 発行(別パスワード無し)。
-- ID(=資格情報)は **SQLite `saved_ids` に暗号保存**(`id_key=sha256(id)`, `id_enc`, PHI_SECRET_KEY)。レガシー .phirc 相当。**IDはログ/応答に平文露出しない**(`saved.list` は ref/label のみ)。
-- `session.open` は `id`(新規入力)または `ref`(保存id_key)。BEが平文IDを解決し `#open` に使用。
-- 管理者 = `saved_ids.is_admin`(CLI `admin_cli` で付与)。`isAdmin` を各応答で返しFEが管理UI出し分け。
+### 4.1 認証・キャラ管理(A-34 / A-33)
+- 認証 = **Webアカウント**(`accountId`+パスワード)。`POST /api/auth/login` で token 発行。パスワードは argon2id でハッシュ保管(`accounts.password_hash`)。
+- token は localStorage 保持。REST は `Authorization: Bearer <token>`、WS は接続後 first message の `auth {token}` で検証(cookie 廃止, A-33)。
+- キャラは `characters`(`charId`(uuid), `account_id`(FK), `label`, `phi_uid_enc`, `host`, `port`)。PHI uid(=資格情報)は Fernet 暗号で保管し、ログ/応答に平文露出しない。
+- `session.open {charId}` で BE が所有検証→`phi_uid` 復号→`#open` を `host:port` のキャラへ送出。
+- 管理者 = `accounts.is_admin`。`isAdmin` を auth / session.open 応答で返しFEが管理UI出し分け。
+- 管理 API(全て Bearer): `POST /api/auth/register`, `GET /api/characters`, `POST /api/characters`, `DELETE /api/characters/{charId}`。
 
 ### 4.2 常時接続・再アタッチ・スナップショット
 - BEはFE切断後もタイムアウトまでレガシー接続を保持([02])。
-- FE再接続時: 再`auth`→`session.open`で**既存セッションへ再アタッチ**。BEは現在の map/status/cond/userList/モード状態を `snapshot` で一括再送 → FEが画面復元。
+- FE再接続時: WS再接続で token により自動再`auth`(A-33)→各開いている session を `session.open {charId}` で**既存セッションへ再アタッチ**。BEは現在の map/status/cond/userList/モード状態を `snapshot` で一括再送 → FEが画面復元。
 - スナップショットにより、FEは差分を気にせず常に最新へ追従。
 
 ### 4.3 ハートビート
@@ -85,8 +91,8 @@ FE                                   BE
 ### 5.1 接続・セッション
 | type | フィールド | 説明 / レガシー変換 |
 |------|-----------|---------------------|
-| `auth` | `id`, `password` | アカウント認証(reqId必須) |
-| `session.open` | `charId` | キャラ接続。BE: `#open <charId>`+LoginCommand([03]) or 再アタッチ。**応答**: `{type:"session.open", reqId, ok:true, session:"<id>"}`(割当session返却, A-10)→続けて `connection`+`snapshot` |
+| `auth` | `token` | WS認証(A-33)。接続後 first message。token を検証 |
+| `session.open` | `charId` | キャラ接続。BE: charId→phi_uid復号→`#open`+LoginCommand([03]) or 再アタッチ。**応答**: `{type:"session.open", reqId, ok:true, session:"<id>"}`(割当session返却, A-10)→続けて `connection`+`snapshot` |
 | `session.close` | — | 当該セッション切断。BE: `#x`送信・接続終了 |
 
 ### 5.2 移動
@@ -134,7 +140,7 @@ move契約(DEVLOG A-17):
 | type | フィールド | 説明 |
 |------|-----------|------|
 | `settings.get` | `scope`("keybind"\|"notify"\|…) | reqIdで応答(SQLite `settings`) |
-| `settings.set` | `scope`, `value` | 永続化 |
+| `settings.set` | `scope`, `value` | scope別に value 構造を検証(未知キー許容/サイズ上限)→ 永続化。不正は BAD_REQUEST |
 
 ### 5.8 表示モード要求
 | type | フィールド | レガシー変換 |
@@ -155,7 +161,7 @@ move契約(DEVLOG A-17):
 | type | フィールド | 由来 |
 |------|-----------|------|
 | `hello` | `protocolVersion`, `serverTime` | 接続直後 |
-| `auth` (応答) | `ok`, `characters`[{`charId`,`name`,`lastServer`}], `error?` | reqId相関 |
+| `auth` (応答) | `ok`, `isAdmin?`, `error?` | token検証結果(A-33)。キャラ一覧は含まず(GET /api/characters で別取得) |
 | `connection` | `state`("connecting"\|"connected"\|"detached"\|"closed"), `reason?` | レガシー接続状態. `#x`/`#close`→closed |
 | `snapshot` | `map?`, `status?`, `cond?`, `userList?`, `mode?`, `notice?`, `list?`, `edit?` | 再アタッチ時の一括状態(§4.2)。`list?`/`edit?` はアクティブな対話状態がある場合のみ(DEVLOG A-04) |
 

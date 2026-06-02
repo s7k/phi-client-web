@@ -17,14 +17,15 @@
 - Web認証成功後、当該アカウントのキャラ一覧を返す。`session.open` でBEが復号した `legacy_uid` を使い `#open` 送信。
 - uid 復号鍵はBE環境変数(`PHI_SECRET_KEY`)。SQLiteには暗号文のみ。
 
-### 1.3 トークン方式（確定）
-- **方式**: 不透明セッションID(サーバ保持) + **httpOnly + Secure + SameSite=Strict cookie**。JWTは不採用(失効容易性・XSS耐性優先)。
+### 1.3 トークン方式（確定。**A-33でcookie→Bearer/localStorageへ変更**）
+- **方式**: 不透明トークン(サーバ保持 `sessions_web`) + **Bearer ヘッダ + localStorage 保持**。JWTは不採用(失効容易性優先)。
+  - 当初は httpOnly+Secure+SameSite cookie 案だったが、LAN/非HTTPS 環境で Secure cookie が拒否される問題のため A-33 で Bearer token + localStorage に変更。
 - フロー:
-  1. `POST /api/auth/login` (id, password) → 検証 → `sessions_web` に sessionId 発行、cookie設定。
-  2. WS接続時: cookie の sessionId を検証(WSハンドシェイク内 `auth`/または接続時cookie)。
-  3. `POST /api/auth/logout` → sessionId失効。
+  1. `POST /api/auth/login` (accountId, password) → 検証 → `sessions_web` にトークン発行、**レスポンス body** で返却(`{ok, token, isAdmin}`)。
+  2. REST 変更系: `Authorization: Bearer <token>`。WS: 接続後 first message `auth {token}` で検証。
+  3. `POST /api/auth/logout` (Bearer) → トークン失効。
 - 有効期限: idle 30分 / absolute 24h(設定可)。WS切断中もゲームセッション([07]§4.2)は別タイムアウトで保持。
-- CSRF: cookie方式のためREST変更系に CSRFトークン(double-submit) or SameSite=Strict + Origin検査。
+- CSRF: cookie 廃止により従来の CSRF トークンは不要。Origin 検査(CsrfOriginMiddleware)を本番で実施、開発はskip(A-33)。token はログ出力しない。
 
 ### 1.4 スキーマ追補（[02]§6 / [08]§4 に追加）
 ```sql
@@ -146,7 +147,7 @@ Zustand。store分割:
 
 - **検知**: WS `close`/`error` → connectionStore=disconnected。
 - **バックオフ**: 指数 `min(30s, 1s * 2^n)` + jitter。手動再接続ボタンも提供。
-- **復帰**: 再接続成功 → cookie で `auth` 自動 → 各アクティブsession `session.open`(reattach) → BEが `snapshot` 送出 → store全置換で画面復元。
+- **復帰**: 再接続成功 → token で `auth` 自動(A-33)→ 各アクティブsession `session.open`(reattach) → BEが `snapshot` 送出 → store全置換で画面復元。
 - **ゲームセッション保持**: BE側はWS切断後もタイムアウト([07]§4.2)までレガシー接続維持。再接続が間に合えば無切断。間に合わねば `connection:closed` を表示し再ログイン誘導。
 - **送信中メッセージ**: WS切断中のFE送信はキューせず破棄(ゲーム操作は最新状態前提)。重要操作(register等)はREST(再送可)で。
 
@@ -162,7 +163,7 @@ Zustand。store分割:
 [FastAPI] --TCP(SJIS)--> [レガシーサーバ群]
 [FastAPI] -- SQLite(ファイル, WALモード) / 暗号鍵は環境変数]
 ```
-- TLS必須(wss)。cookie Secure。
+- TLS推奨(wss)。token は localStorage 保持(A-33, cookie廃止)。LAN/非HTTPSでも動作。
 - プロセス: `uvicorn`(asyncio単一プロセス) + プロセスマネージャ(systemd/supervisor)。**状態(セッション/ソケット)がプロセス内のため当面単一プロセス**。水平スケールは将来課題(セッション外部化要)。
 - SQLite: WALモード。バックアップ(定期コピー)。
 - 環境変数: `PHI_SECRET_KEY`(uid暗号), `PHI_DB_PATH`, `PHI_ALLOWED_ORIGINS`。
@@ -174,8 +175,8 @@ Zustand。store分割:
 
 ### 7.3 セキュリティ要点（再掲・集約）
 - legacy uid 暗号化保存・ログ非出力。
-- Web認証 argon2id、cookie httpOnly/Secure/SameSite。
-- CSP(FE: `img=`外部URL対策[05]§13)・Origin検査・CSRF。
+- Web認証 argon2id、Bearer token(localStorage 保持, A-33。cookie廃止)。token はログ非出力。
+- CSP(FE: `img=`外部URL対策[05]§13)・Origin検査(CsrfOriginMiddleware)。CSRFトークンは cookie 廃止により不要(A-33)。
 - レート制限(§4)。
 - 秘匿値(IP/Port/uid)はコード/履歴に残さない([test_connect.py]は環境変数)。
 

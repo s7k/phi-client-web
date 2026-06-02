@@ -18,7 +18,7 @@
 | 透過変換gfx(colorkey/chip/mask-v) | ✅ | [06],[08]§5 | tools/gfx_convert と共有モジュール化 |
 | REST: chara graphics/index/manifest | ✅ | [08]§7 | アップロード・配信・Index取込/生成 |
 | キャラグラ フォールバック解決(type→key→グラ) | ✅ | [09] | chara_type_fallback.json |
-| **認証・セッショントークン機構** | 🔶 | [07]§4.1,[02]§6 | accounts照合は設計済だが**トークン形式(JWT/cookie/sessionId)・有効期限・WS再接続時の認証継続が未確定** |
+| 認証・セッショントークン機構 | ✅ | [07]§4.1,[12]§1 | A-33確定・実装済: Bearer token(localStorage)、WS first message `auth{token}`で再接続継続。argon2id |
 | **レート制限(`command.raw`等)** | 🔶 | [07]§10 | コードはあるが**閾値・単位・超過時挙動が未定義** |
 | **設定(settings)スコープ定義** | 🔶 | [05]§6,[07]§5.7 | keybind/notify等の**値スキーマ未確定** |
 | **新規キャラ作成プロトコル** | ❌ | [05]§14,[08]§14 | **レガシー登録プロトコル未調査**(要フェーズ調査) |
@@ -58,8 +58,8 @@
 
 | 項目 | 影響 | 推奨アクション |
 |------|------|----------------|
-| 認証トークン方式 | BE/FE両方 | sessionId(サーバ保持)+httpOnly cookie or Bearer。WS接続時にトークン提示。次フェーズで確定 |
-| 設定(settings)値スキーマ | BE/FE両方 | keybind/notifyのJSON Schemaを[05]§6ベースで定義 |
+| 認証トークン方式 | BE/FE両方 | ✅解決(A-33): Bearer token(サーバ保持 `sessions_web`)+localStorage。WS first message `auth{token}` |
+| 設定(settings)値スキーマ | BE/FE両方 | ✅解決: `app/settings_schema.py` で scope別 value 検証(既知キー型/未知キー許容/サイズ上限) |
 | 新規キャラ作成プロトコル | BE | レガシー`#ex-register`等を実サーバ/ソースで追加調査([08]§14) |
 | デプロイ構成 | 運用 | リバースプロキシ(TLS/wss・静的assets)・プロセス管理を別途設計 |
 | FE状態管理store構成 | FE | session/map/status/chat/list/ui の分割を定義 |
