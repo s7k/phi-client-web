@@ -45,8 +45,7 @@ TDD(red→green→refactor)で進行。テスト設計は [docs/11-test-design.m
 
 ## 環境変数
 
-実サーバ接続情報は `.env`(gitignore)に置く。テンプレート: `.env.example`。
-秘匿値(IP/Port/ID)はコードにハードコードしない。
+接続先などの環境変数は `.env`(gitignore)に置く。テンプレート: `.env.example`。
 
 起動設定([12]§7, `app/config.py` で集約):
 

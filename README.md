@@ -36,7 +36,7 @@
 ```bash
 cd backend
 uv venv .venv && uv pip install -e ".[dev]"
-cp .env.example .env   # 実サーバ接続情報を設定(任意・実値はコミットしない)
+cp .env.example .env   # 接続先など環境変数を設定(任意)
 uv run uvicorn app.main:app --reload --port 8000
 uv run pytest          # テスト(354件)
 ```
@@ -71,11 +71,9 @@ docker compose up --build         # web=:8080(エッジ), backend=:8000(内部)
 - レガシー応答は合成フィクスチャ(`backend/tests/fixtures/synthetic/`)で検証。実サーバ録画は `recorded/`(gitignore)。
 - 設計: [docs/11-test-design.md](docs/11-test-design.md)。
 
-## セキュリティ / 運用上の注意
-- **実キャラID・接続先IP/ポートは秘匿**。コード/コミットに残さない(`backend/.env`=gitignore で供給)。
+## セキュリティ
 - レガシー `#open` の uid はパスワード埋め込みのため、SQLiteには**暗号化保存**(Fernet, `PHI_SECRET_KEY`)。Webパスワードは argon2id ハッシュ。
-- 認証は Bearer token(A-33)。cookie/CSRF は廃止(token は JS 明示付与でアンビエント資格が無い)。本番は `PHI_SECRET_KEY` 必須・wss(TLS)推奨。
-- ⛔ **実サーバへの priv送信・大声・パーティ発言・通常チャットはテストで行わない**(他者迷惑)。`test_connect.py` にガードあり。これらの仕様検証は運用者が別途実施。
+- 認証は Bearer token(A-33)。本番は `PHI_SECRET_KEY` 必須・wss(TLS)推奨。
 
 ## ライセンス / グラフィックス
 
