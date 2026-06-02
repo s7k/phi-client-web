@@ -25,7 +25,7 @@
   2. REST 変更系: `Authorization: Bearer <token>`。WS: 接続後 first message `auth {token}` で検証。
   3. `POST /api/auth/logout` (Bearer) → トークン失効。
 - 有効期限: idle 30分 / absolute 24h(設定可)。WS切断中もゲームセッション([07]§4.2)は別タイムアウトで保持。
-- CSRF: cookie 廃止により従来の CSRF トークンは不要。Origin 検査(CsrfOriginMiddleware)を本番で実施、開発はskip(A-33)。token はログ出力しない。
+- CSRF: cookie 廃止により CSRF/Origin 検査とも**不要**(A-33)。token は JS が明示付与し、ブラウザが自動送信するアンビエント資格(cookie)が無いため CSRF が原理的に発生しない。token はログ非出力。
 
 ### 1.4 スキーマ追補（[02]§6 / [08]§4 に追加）
 ```sql
@@ -166,7 +166,7 @@ Zustand。store分割:
 - TLS推奨(wss)。token は localStorage 保持(A-33, cookie廃止)。LAN/非HTTPSでも動作。
 - プロセス: `uvicorn`(asyncio単一プロセス) + プロセスマネージャ(systemd/supervisor)。**状態(セッション/ソケット)がプロセス内のため当面単一プロセス**。水平スケールは将来課題(セッション外部化要)。
 - SQLite: WALモード。バックアップ(定期コピー)。
-- 環境変数: `PHI_SECRET_KEY`(uid暗号), `PHI_DB_PATH`, `PHI_ALLOWED_ORIGINS`。
+- 環境変数: `PHI_SECRET_KEY`(uid暗号), `PHI_DB_PATH`, `PHI_ASSETS_DIR`, `PHI_HOST`/`PHI_PORT`。
 
 ### 7.2 ログ / 監視（最小）
 - 構造化ログ(JSON): 接続/切断/認証/世界移動/エラー/レート超過。**実uid・パスワードはログ禁止**(マスク)。
@@ -176,7 +176,7 @@ Zustand。store分割:
 ### 7.3 セキュリティ要点（再掲・集約）
 - legacy uid 暗号化保存・ログ非出力。
 - Web認証 argon2id、Bearer token(localStorage 保持, A-33。cookie廃止)。token はログ非出力。
-- CSP(FE: `img=`外部URL対策[05]§13)・Origin検査(CsrfOriginMiddleware)。CSRFトークンは cookie 廃止により不要(A-33)。
+- CSP(FE: `img=`外部URL対策[05]§13)。CSRF/Origin 検査は cookie 廃止(A-33, Bearer token)により不要。
 - レート制限(§4)。
 - 秘匿値(IP/Port/uid)はコード/履歴に残さない([test_connect.py]は環境変数)。
 

@@ -249,6 +249,20 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - BE 353 tests緑(end-listでactive維持 / ex-list-mode-endでclose の回帰テスト追加)。
 - 「入力」ダイアログ(#s-edit)は一時的なサーバ入力待ち状態で、現在は出ない(ユーザー報告)。
 
+## 6.16 設計負債の洗い出しと一掃ラウンド
+
+3観点(BE/FE/横断)で設計負債を調査し、確定分を高→中→低で順次修正。
+
+- **高1: logout時の全ストアreset漏れ(state leak)**。`controller.logout()` が `sessionStore` のみ reset しており、chat/map/status/user/mode/list/edit/eagleEye/notice/connection が残留。別アカウント/別キャラ再接続で前キャラ状態が復活。`stores/resetSessionState()` を追加し一括破棄(connection は socketState 維持しsession接続のみクリア)。
+- **高2: settings入力検証の欠落**。`settings.set` が value を無検証で保存。`app/settings_schema.py` 追加(dict必須・既知キー型検証・未知キー許容・サイズ上限8KB)、不正は BAD_REQUEST。get側も壊れたJSONを握る。
+- **中3: 設計docの旧仕様残存**。docs/07/12/13/10 に ID-only/cookie/saved.list 記述が残り A-34/A-33 実装と乖離 → 現行(アカウント+複数キャラ+Bearer token)に統一。
+- **中4(誤検出)**: reqId付与漏れ → `_error()` が条件付き付与で正しく実装済。修正不要。
+- **中5: FE応答型のcast濫用**。`request()` は ServerMessage を返すため `as` cast を撤去し discriminated-union narrow に。
+- **中6: 描画index key**。chatStore に安定キー `_id` 採番、Chat/ListView/MarkupText の key を index から安定値へ(リングバッファ破棄時の要素reuse防止)。
+- **低7: 小粒**。altG(Shift+G)を keyHandler に接続(設定UIだけ存在し未配線だった)、`eagleEyeStore.clear` デッドコード削除。
+- **低7b(A-33方針確定)**: CSRF/Origin 検査が「コードはあるが未配線(無効)」状態だった。ユーザー判断で **撤去を正**とし、`csrf.py`/`test_csrf.py` 削除、`create_app`/`build_app`/`Config` の `allowed_origins`/未使用 `production` param 削除、`PHI_ALLOWED_ORIGINS` を env例/docker/READMEから除去。token は JS 明示付与でアンビエント資格が無く CSRF 原理的に不発、の判断を全docで統一。
+- BE 351 / FE 348 tests緑。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

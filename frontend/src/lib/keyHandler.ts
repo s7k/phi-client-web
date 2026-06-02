@@ -36,6 +36,8 @@ export interface KeyContext {
   magic: Partial<Record<string, string | null>>;
   /** F8-F12 → コマンド語(keybind.shortcuts)。 */
   shortcuts: Partial<Record<string, string | null>>;
+  /** Shift+G に割り当てる raw コマンド語(keybind.altG)。空/未設定で無効。 */
+  altG?: string;
 }
 
 /** 回転方向(レガシー turn l/r/b)。 */
@@ -274,6 +276,11 @@ export function resolveKey(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null
   }
 
   const lower = k.length === 1 ? k.toLowerCase() : k;
+
+  // ---- Shift+G: ユーザー設定 altG の raw コマンド語(無修飾 g=equip より優先) ----
+  if (ev.shiftKey && lower === 'g' && ctx.altG) {
+    return { type: 'command', name: 'raw', text: ctx.altG };
+  }
 
   // ---- 物理テンキー(常時有効) ----
   if (isNumpadKey(ev)) {

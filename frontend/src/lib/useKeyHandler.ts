@@ -89,6 +89,7 @@ export function useKeyHandler(
         inputFocused: isInputFocused(),
         magic: keybind?.magic ?? {},
         shortcuts: keybind?.shortcuts ?? {},
+        altG: keybind?.altG,
       };
       // 編集ダイアログ表示中はゲームキー無効(編集UI側でキー処理)
       // ゲームキー無効化は **複数行編集(#m-edit)モーダル表示中のみ**。

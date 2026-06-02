@@ -8,11 +8,10 @@ services:
     environment:
       # 本番必須: uid暗号鍵(未設定なら起動時に一時鍵=再起動で復号不可)
       PHI_SECRET_KEY: ${PHI_SECRET_KEY:?set PHI_SECRET_KEY in .env}
-      # CSRF/Origin 許可元(エッジの公開URL)
-      PHI_ALLOWED_ORIGINS: ${PHI_ALLOWED_ORIGINS:-http://localhost:8080}
       PHI_DB_PATH: /data/phi.db
       PHI_ASSETS_DIR: /srv/assets
-      # 本番モード: PHI_SECRET_KEY/PHI_ALLOWED_ORIGINS 未設定なら起動失敗(fail-closed)
+      # 本番モード: PHI_SECRET_KEY 未設定なら起動失敗(fail-closed)。
+      # A-33: 認証は Bearer token(cookie/CSRF 廃止)。
       PHI_ENV: ${PHI_ENV:-production}
       # エッジ(nginx)を1段信頼しXFFから実クライアントIPを取得(レート制限の正確化)
       PHI_TRUSTED_PROXY_HOPS: ${PHI_TRUSTED_PROXY_HOPS:-1}

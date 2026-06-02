@@ -521,8 +521,6 @@ def create_app(
     rate_limiter=None,
     conn_limiter=None,
     login_throttle=None,
-    allowed_origins=None,
-    production=False,
 ):
     """FastAPI アプリを生成(REST 統合 + WS)。
 
@@ -538,7 +536,6 @@ def create_app(
     - registrar_factory: () -> LegacyRegistrar(既定は env のレガシー接続情報)。
     - rate_limiter     : RateLimiter(既定で生成)。
     - conn_limiter     : ConcurrencyLimiter(既定で生成)。
-    - allowed_origins  : 後方互換で受けるが未使用(A-33: cookie 廃止で CSRF 不要)。
 
     *auth* 省略時は `PHI_DB_PATH` から Store を開き AuthService を構築。
 
@@ -577,7 +574,6 @@ def create_app(
     rate_limiter = rate_limiter if rate_limiter is not None else RateLimiter()
     conn_limiter = conn_limiter if conn_limiter is not None else ConcurrencyLimiter()
     login_throttle = login_throttle if login_throttle is not None else LoginThrottle()
-    # allowed_origins/production は後方互換で受けるが A-33(cookie 廃止)で CSRF 不要。
     app.state.rate_limiter = rate_limiter
     app.state.conn_limiter = conn_limiter
     app.state.login_throttle = login_throttle

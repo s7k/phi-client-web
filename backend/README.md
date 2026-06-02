@@ -54,7 +54,6 @@ TDD(red→green→refactor)で進行。テスト設計は [docs/11-test-design.m
 |------|------|------|
 | `PHI_DB_PATH` | SQLite パス | `:memory:`(揮発) |
 | `PHI_SECRET_KEY` | uid 暗号鍵(Fernet, `Fernet.generate_key()` 形式 / urlsafe-base64 32B) | 一時鍵生成(警告) |
-| `PHI_ALLOWED_ORIGINS` | CSRF 許可 origin(カンマ区切り) | 未設定=検査無効(開発用) |
 | `PHI_ASSETS_DIR` | キャラグラ保存/配信ディレクトリ | `./assets` |
 | `PHI_HOST` | レガシーサーバ ホスト(既定接続先) | `""` |
 | `PHI_PORT` | ポート | `0` |
@@ -69,9 +68,8 @@ TDD(red→green→refactor)で進行。テスト設計は [docs/11-test-design.m
 ### 本番注意
 
 - `PHI_SECRET_KEY` **必須**: 未設定だと一時鍵を生成し、再起動で `legacy_uid` 復号不能。
-- `PHI_ALLOWED_ORIGINS` **必須**: 未設定だと CSRF origin 検査が無効(変更系を素通し)。
-  本番 origin を必ず列挙。
-- 公開は TLS 終端(前段リバースプロキシ)経由で **wss/https**。cookie は httpOnly/Secure/SameSite=Strict。
+- 認証は Bearer token(localStorage 保持, A-33)。cookie/CSRF は廃止のため CSRF 許可 origin 設定は無し。
+- 公開は TLS 終端(前段リバースプロキシ)経由で **wss/https** を推奨(token のため LAN/非HTTPS でも動作)。
 - `PHI_DB_PATH` を永続パスに(`:memory:` は揮発)。
 
 ## 構成

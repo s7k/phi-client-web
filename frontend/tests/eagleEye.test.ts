@@ -86,7 +86,7 @@ describe('drawEagleEye', () => {
 describe('useEagleEyeStore', () => {
   beforeEach(() => useEagleEyeStore.getState().reset());
 
-  it('setEagleEye で session別保持・clear で削除', () => {
+  it('setEagleEye で session別保持・reset で全破棄', () => {
     useEagleEyeStore.getState().setEagleEye('s1', {
       type: 'eagleEye',
       session: 's1',
@@ -96,7 +96,7 @@ describe('useEagleEyeStore', () => {
       cells: grid(15),
     });
     expect(useEagleEyeStore.getState().bySession['s1'].width).toBe(15);
-    useEagleEyeStore.getState().clear('s1');
+    useEagleEyeStore.getState().reset();
     expect(useEagleEyeStore.getState().bySession['s1']).toBeUndefined();
   });
 });

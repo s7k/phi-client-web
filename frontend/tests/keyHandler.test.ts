@@ -27,6 +27,25 @@ const baseCtx = (over: Partial<KeyContext> = {}): KeyContext => ({
   ...over,
 });
 
+describe('resolveKey: Shift+G(altG) ショートカット', () => {
+  it('altG 設定あり + Shift+G で raw コマンド送出', () => {
+    expect(resolveKey(key('G', { shiftKey: true }), baseCtx({ altG: 'guild' }))).toEqual({
+      type: 'command', name: 'raw', text: 'guild',
+    });
+  });
+  it('altG 空なら無修飾扱い(g=equip on wasd, Shift無視)', () => {
+    // altG 未設定時は Shift+G は altG 分岐に入らず、通常の g 解決へ流れる。
+    expect(resolveKey(key('G', { shiftKey: true }), baseCtx({ layout: 'wasd', altG: '' }))).toEqual({
+      type: 'command', name: 'equip',
+    });
+  });
+  it('Shift なしの g は altG を発火しない(g=equip)', () => {
+    expect(resolveKey(key('g'), baseCtx({ layout: 'wasd', altG: 'guild' }))).toEqual({
+      type: 'command', name: 'equip',
+    });
+  });
+});
+
 describe('resolveKey: 入力欄フォーカス時はゲームキー無効', () => {
   it('inputFocused なら null', () => {
     expect(resolveKey(key('w'), baseCtx({ inputFocused: true }))).toBeNull();

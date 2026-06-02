@@ -3,7 +3,7 @@
 - `import app.main` が通る(実サーバ非接続)。
 - Config.from_env が env を正しく解釈。
 - TestClient: GET /healthz 200、未認証で保護 REST 401。
-- 一時鍵フォールバック / allowed_origins。
+- 一時鍵フォールバック。
 """
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ def test_config_from_env_full():
     env = {
         "PHI_DB_PATH": "/tmp/x.db",
         "PHI_SECRET_KEY": UidCipher.generate_key().decode(),
-        "PHI_ALLOWED_ORIGINS": "https://a.example, https://b.example",
         "PHI_ASSETS_DIR": "/tmp/assets",
         "PHI_HOST": "legacy.example",
         "PHI_PORT": "1234",
@@ -39,17 +38,15 @@ def test_config_from_env_full():
     cfg = Config.from_env(env)
     assert cfg.db_path == "/tmp/x.db"
     assert cfg.secret_key_ephemeral is False
-    assert cfg.allowed_origins == {"https://a.example", "https://b.example"}
     assert cfg.assets_dir == "/tmp/assets"
     assert cfg.legacy_host == "legacy.example"
     assert cfg.legacy_port == 1234
 
 
 def test_config_defaults_and_ephemeral_key():
-    """env 最小: db_path None / origins None / 一時鍵生成。"""
+    """env 最小: db_path None / 一時鍵生成。"""
     cfg = Config.from_env({})
     assert cfg.db_path is None
-    assert cfg.allowed_origins is None
     assert cfg.assets_dir.endswith("assets")
     assert cfg.legacy_host == ""
     assert cfg.legacy_port == 0
@@ -73,36 +70,22 @@ def test_prod_missing_secret_key_fails():
     """CR-9: 本番で PHI_SECRET_KEY 未設定 → ConfigError(揮発鍵禁止)。"""
     env = {
         "PHI_ENV": "production",
-        "PHI_ALLOWED_ORIGINS": "https://phi.example",
     }
     with pytest.raises(ConfigError):
         Config.from_env(env)
 
 
-def test_prod_missing_allowed_origins_ok():
-    """A-33: cookie 廃止で CSRF 撤去 → 本番でも PHI_ALLOWED_ORIGINS 未設定で起動可。"""
+def test_prod_secret_key_set_ok():
+    """A-33: 本番でも PHI_SECRET_KEY 設定済なら起動可・production=True。
+    cookie/CSRF 廃止のため PHI_ALLOWED_ORIGINS は不要(設定項目なし)。"""
     from app.auth import UidCipher
     env = {
         "PHI_ENV": "production",
         "PHI_SECRET_KEY": UidCipher.generate_key().decode(),
-    }
-    cfg = Config.from_env(env)
-    assert cfg.production is True
-    assert cfg.allowed_origins is None
-
-
-def test_prod_full_config_ok():
-    """本番でも両方設定済なら起動可・production=True。"""
-    from app.auth import UidCipher
-    env = {
-        "PHI_ENV": "production",
-        "PHI_SECRET_KEY": UidCipher.generate_key().decode(),
-        "PHI_ALLOWED_ORIGINS": "https://phi.example",
     }
     cfg = Config.from_env(env)
     assert cfg.production is True
     assert cfg.secret_key_ephemeral is False
-    assert cfg.allowed_origins == {"https://phi.example"}
 
 
 # ----------------------------------------------------------------------
@@ -115,7 +98,6 @@ def client(tmp_path):
     cfg = Config(
         db_path=":memory:",
         secret_key=UidCipher.generate_key(),
-        allowed_origins=None,
         assets_dir=str(tmp_path / "assets"),  # 無し → /assets マウントスキップ
         legacy_host="",
         legacy_port=0,
@@ -156,7 +138,6 @@ def test_assets_mount_when_dir_exists(tmp_path):
     cfg = Config(
         db_path=":memory:",
         secret_key=UidCipher.generate_key(),
-        allowed_origins=None,
         assets_dir=str(adir),
         legacy_host="",
         legacy_port=0,

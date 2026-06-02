@@ -95,7 +95,6 @@ def env(tmp_path, monkeypatch):
         registrar_factory=registrar_factory,
         rate_limiter=rl,
         conn_limiter=ConcurrencyLimiter(),
-        production=True,  # A-33: CSRF 撤去後も production で通ることを検証
     )
     c = TestClient(app)
     c._store = store  # type: ignore[attr-defined]
@@ -285,7 +284,6 @@ def test_lifespan_shutdown_invokes_manager(tmp_path):
         assets_dir=str(tmp_path / "assets"),
         registrar_factory=lambda: None,
         rate_limiter=RateLimiter(), conn_limiter=ConcurrencyLimiter(),
-        allowed_origins={"https://app.test"},
     )
     # with でコンテキスト管理すると lifespan(startup/shutdown)が走る。
     with TestClient(app) as c:

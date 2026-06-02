@@ -29,7 +29,7 @@ cp .env.example .env   # 実サーバ接続情報を設定(任意・実値はコ
 uv run uvicorn app.main:app --reload --port 8000
 uv run pytest          # テスト(238件)
 ```
-主なenv: `PHI_SECRET_KEY`(uid暗号鍵・本番必須), `PHI_DB_PATH`, `PHI_ALLOWED_ORIGINS`(本番必須), `PHI_ASSETS_DIR`, `PHI_HOST`/`PHI_PORT`(既定接続先)。詳細は `backend/README.md`。
+主なenv: `PHI_SECRET_KEY`(uid暗号鍵・本番必須), `PHI_DB_PATH`, `PHI_ASSETS_DIR`, `PHI_HOST`/`PHI_PORT`(既定接続先)。詳細は `backend/README.md`。
 
 ### フロントエンド
 ```bash
@@ -61,7 +61,7 @@ docker compose up --build         # web=:8080(エッジ), backend=:8000(内部)
 - **実キャラID・接続先IP/ポートは秘匿**。コード/コミットに残さない(`backend/.env`=gitignore で供給)。
 - レガシー `#open` の uid はパスワード埋め込みのため、SQLiteには**暗号化保存**(`PHI_SECRET_KEY`)。
 - ⛔ **実サーバへの priv送信・大声・パーティ発言・通常チャットはテストで行わない**(他者迷惑)。`test_connect.py` にガードあり。これらの仕様検証は運用者が別途実施。
-- 本番は wss(TLS)・`PHI_SECRET_KEY`/`PHI_ALLOWED_ORIGINS` 設定必須。
+- 本番は `PHI_SECRET_KEY` 設定必須。認証は Bearer token(A-33, cookie/CSRF 廃止)。wss(TLS)推奨。
 
 ## ドキュメント
 設計・調査の全体は [docs/README.md](docs/README.md) を参照。実装の進行・決定事項は [docs/DEVLOG.md](docs/DEVLOG.md)。

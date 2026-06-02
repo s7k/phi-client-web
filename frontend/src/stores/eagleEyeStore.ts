@@ -11,7 +11,6 @@ export type EagleEyeState = Omit<EagleEyeEvent, 'type' | 'session' | 'reqId' | '
 interface EagleEyeStoreState {
   bySession: Record<string, EagleEyeState>;
   setEagleEye: (session: string, ev: EagleEyeEvent | EagleEyeState) => void;
-  clear: (session: string) => void;
   reset: () => void;
 }
 
@@ -24,11 +23,5 @@ export const useEagleEyeStore = create<EagleEyeStoreState>((set) => ({
   bySession: {},
   setEagleEye: (session, ev) =>
     set((s) => ({ bySession: { ...s.bySession, [session]: toState(ev) } })),
-  clear: (session) =>
-    set((s) => {
-      const next = { ...s.bySession };
-      delete next[session];
-      return { bySession: next };
-    }),
   reset: () => set({ bySession: {} }),
 }));
