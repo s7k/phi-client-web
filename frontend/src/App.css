@@ -152,25 +152,31 @@ body {
 
 /* モバイル: チャット → マップ → ステータス の縦積み。入力はチャット内最下部で常時表示 */
 @media (max-width: 820px) {
-  /* モバイル: 100dvh 内に必ず収める(ページ/body スクロール無し)。
-     - chat=縮小可の伸縮要素(flex:1 1 0)。残り空間を占有し、内部ログがスクロール。
-     - map/status=確保(flex:0 0 auto)。status を必ず画面内に表示(切れ防止)。
-     これで chat が余りを吸収し、map+status は固定確保→下が切れない/黒余白も出ない。 */
+  /* モバイル: チャット主体(スマホはチャット中心の遊び方)。100dvh 内に収める。
+     優先度 = チャット > マップ > ステータス。
+     - chat  : 主役。残り空間を全部占有(flex:1 1 auto)し下限も大きめ。内部ログがスクロール。
+     - map   : 控えめ固定高(視認できる程度)。
+     - status: 圧縮。高さ上限内に収め、溢れは内部スクロール(EXP/属性/cond は副次情報)。
+     これで Galaxy S24 等でもチャットが潰れず読める。 */
   .game__body {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     padding: 0.5rem;
-    overflow: hidden;          /* スクロールさせず縮小で収める */
+    overflow: hidden;          /* スクロールさせず各領域の配分で収める */
   }
-  .game__chat   { order: 1; flex: 1 1 0; min-height: 6rem; }
+  .game__chat   { order: 1; flex: 1 1 auto; min-height: 40vh; }  /* 主役 */
   .game__map    {
     order: 2; flex: 0 0 auto;
-    max-height: 38vh;          /* 大きいマップは内部スクロール(overflow:auto) */
-    align-items: flex-start;   /* 縦は詰める(中央寄せの黒余白を排除) */
+    height: 27vh; max-height: 27vh;  /* 控えめ固定。大きいマップは内部スクロール */
+    align-items: flex-start;         /* 縦は詰める(中央寄せの黒余白を排除) */
     padding: 0;
   }
-  .game__status { order: 3; flex: 0 0 auto; }  /* 自然高さで常時表示 */
+  .game__status {
+    order: 3; flex: 0 0 auto;
+    max-height: 22vh;          /* 圧縮: 副次情報は内部スクロール */
+    overflow: auto;
+  }
 }
 
 /* インライン画像(img= タグ, [05]§13)。過大表示を抑制。 */

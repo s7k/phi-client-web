@@ -13,8 +13,22 @@ import type { Page } from '@playwright/test';
  * - キャラ選択画面のカードをクリック → game 画面へ。
  */
 
-/** game 画面を充実させる snapshot(status/cond/notice)。map は省略(MapView は空表示)。 */
+/** game 画面を充実させる snapshot(map/status/cond/notice)。 */
 const SNAPSHOT = {
+  // 7x7 マップ。MapView が data-testid="map-canvas" を描画(map 未取得時は map-empty)。
+  // チップ画像(/assets)は E2E に無いため pixel は黒だが、Canvas のマウント/サイズは検証可。
+  map: {
+    size: 7,
+    dir: 0,
+    style: 'solid',
+    mapset: 'town',
+    cells: Array.from({ length: 49 }, () => ({ chip: 1, attr: 0 })),
+    chars: [
+      { id: 1, x: 3, y: 3, dir: 'B', name: 'Wilt', gra: 't_man',
+        status: 0, gigant: '#', layer: 0, default: 0 },
+    ],
+    signs: [],
+  },
   status: {
     name: 't_Lord', hp: 80, maxHp: 100, mp: 30, maxMp: 50,
     exp: 1234, gp: 567, f: 1, w: 2, m: 3, c: 4,

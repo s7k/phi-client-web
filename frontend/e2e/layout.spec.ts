@@ -43,6 +43,16 @@ test.describe('レイアウト: モバイル', () => {
     expect(Math.abs(chat.x - map.x)).toBeLessThan(2);
   });
 
+  test('チャット主体: チャットがマップ/ステータスより高い', async ({ page }) => {
+    await gotoGame(page, MOBILE);
+    const { map, chat, status } = await boxes(page);
+    // スマホはチャット主役 → 最大の縦領域を占有。
+    expect(chat.height).toBeGreaterThan(map.height);
+    expect(chat.height).toBeGreaterThan(status.height);
+    // チャットが viewport の 1/3 超(読める高さ)。
+    expect(chat.height).toBeGreaterThan(MOBILE.height / 3);
+  });
+
   test('ステータスが画面内に収まる(縦切れが無い)', async ({ page }) => {
     await gotoGame(page, MOBILE);
     const { status } = await boxes(page);
