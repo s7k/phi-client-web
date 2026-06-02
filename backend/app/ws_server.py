@@ -33,6 +33,7 @@ import time
 from fastapi import HTTPException, Request, Response, WebSocket  # noqa: E402
 
 from app.session import SessionManager
+from app.settings_schema import validate_setting
 
 PROTOCOL_VERSION = 1
 
@@ -359,15 +360,23 @@ class WsConnection:
 
         if t == "settings.get":
             raw = self._store.get_account_setting(self._account_id, scope)
-            value = json.loads(raw) if raw is not None else None
+            # 旧 broken データ(不正JSON)に備え握る。壊れていれば None 返却。
+            try:
+                value = json.loads(raw) if raw is not None else None
+            except (ValueError, TypeError):
+                value = None
             await self._ws.send_json({
                 "type": "settings", "reqId": msg.get("reqId"),
                 "ok": True, "scope": scope, "value": value,
             })
             return
 
-        # settings.set: value を JSON 文字列で永続化し ok 応答。
+        # settings.set: value を検証 → JSON 文字列で永続化し ok 応答。
         value = msg.get("value")
+        err = validate_setting(scope, value)
+        if err is not None:
+            await self._error(msg, "BAD_REQUEST", f"invalid settings value: {err}")
+            return
         self._store.set_account_setting(
             self._account_id, scope, json.dumps(value)
         )

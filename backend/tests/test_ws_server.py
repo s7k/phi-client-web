@@ -667,6 +667,41 @@ async def test_settings_invalid_scope_bad_request(server):
     await task
 
 
+async def test_settings_set_invalid_value_bad_request(server):
+    # 高2: 不正な value(既知キー型不一致)は検証で BAD_REQUEST、保存されない。
+    store = FakeStore()
+    ws = FakeWebSocket()
+    _, task = await _auth_conn(ws, server, store=store)
+    ws.feed({"type": "settings.set", "reqId": "bad", "scope": "display",
+             "value": {"mapStyle": "iso"}})  # 不正値
+    await _wait(lambda: any(m["type"] == "error" and m.get("reqId") == "bad"
+                            for m in ws.sent))
+    err = next(m for m in ws.sent if m.get("reqId") == "bad")
+    assert err["type"] == "error" and err["error"]["code"] == "BAD_REQUEST"
+    # 保存されていない(get で None)
+    ws.feed({"type": "settings.get", "reqId": "chk", "scope": "display"})
+    await _wait(lambda: any(m.get("reqId") == "chk" for m in ws.sent))
+    resp = next(m for m in ws.sent if m.get("reqId") == "chk")
+    assert resp["value"] is None
+    ws.disconnect()
+    await task
+
+
+async def test_settings_set_non_dict_bad_request(server):
+    # value が dict でない場合も拒否。
+    store = FakeStore()
+    ws = FakeWebSocket()
+    _, task = await _auth_conn(ws, server, store=store)
+    ws.feed({"type": "settings.set", "reqId": "nd", "scope": "notify",
+             "value": "not-an-object"})
+    await _wait(lambda: any(m["type"] == "error" and m.get("reqId") == "nd"
+                            for m in ws.sent))
+    err = next(m for m in ws.sent if m.get("reqId") == "nd")
+    assert err["error"]["code"] == "BAD_REQUEST"
+    ws.disconnect()
+    await task
+
+
 async def test_settings_account_scoped(server):
     # 別IDの設定は混ざらない(所有キー=id_key)。
     store = FakeStore()
