@@ -192,6 +192,14 @@ BE(バックエンド)・FE(フロントエンド)を並行スレッドで開発
 - **検証**: 実サーバ経由フルパス成功 → session.open→connection→snapshot→notice→message(74)→map(2)→status→cond。CSRFミドルウェアも BaseHTTPMiddleware→純ASGIに置換(WS素通し)。
 - 342 tests緑。
 
+## 6.10 修正: 認証403(CSRF Origin不一致, LAN-IPアクセス)
+
+- **症状**: ログインで「認証に失敗 (HTTP 403)」。ログ: `POST /api/auth/session 403`, Referer `http://192.168.1.28:8080`。
+- **原因**: CSRF Origin検査がアクセス元Origin(LAN-IP)と `PHI_ALLOWED_ORIGINS`(既定 localhost:8080)の不一致で拒否。development でも allowed が設定されていると強制していた。
+- **修正**: `CsrfOriginMiddleware` を **development では CSRF検査スキップ**(localhost/LAN-IP/任意ポートのローカルアクセス許容)、**本番のみ厳格検査**(PHI_ALLOWED_ORIGINS必須・fail-closed)に。
+- **本番運用**: `PHI_ENV=production` 時は `PHI_ALLOWED_ORIGINS` に実公開URLを設定すること(LAN-IPなら `http://<IP>:8080`)。
+- テスト: test_rest_integration の CSRF テストを production app で検査するよう修正。342 tests緑。docker実機で LAN-IP Origin→200 確認。
+
 ## 7. 総括サマリ（起床時用）
 
 **到達状態(R0→R6)**: BE/FEのコア機能をTDDで実装・全緑(**BE 238 / FE 217 / E2E 2**)。`uvicorn app.main:app`+`npm run dev`で起動可能な構成。設計[02-13]・契約[07]に整合。

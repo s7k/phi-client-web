@@ -93,6 +93,7 @@ def env(tmp_path, monkeypatch):
         rate_limiter=rl,
         conn_limiter=ConcurrencyLimiter(),
         allowed_origins={"https://app.test"},
+        production=True,  # CSRF Origin検査を有効化(developmentはスキップのため)
     )
     # Secure cookie を保持/送出させるため https ベース URL を使う。
     c = TestClient(app, base_url="https://testserver")

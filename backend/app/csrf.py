@@ -88,6 +88,12 @@ class CsrfOriginMiddleware:
             # websocket / lifespan はそのまま通す(WS認証は接続後にcookieで実施)。
             await self.app(scope, receive, send)
             return
+        if not self.production:
+            # 開発(PHI_ENV != production)は CSRF Origin 検査をスキップ。
+            # localhost/LAN-IP/任意ポートからのローカルアクセスを許容する。
+            # 本番のみ Origin を厳格検査(PHI_ALLOWED_ORIGINS 必須・fail-closed)。
+            await self.app(scope, receive, send)
+            return
         headers = {k.decode("latin-1").lower(): v.decode("latin-1")
                    for k, v in scope.get("headers", [])}
         method = scope.get("method", "GET")
