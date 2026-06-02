@@ -18,11 +18,8 @@ import type {
   ListSelectRequest,
   MoveMode,
   TurnDir,
-  ServerMessage,
   SessionOpenRequest,
-  SessionOpenResponse,
   SettingsGetRequest,
-  SettingsResponse,
   SettingsScope,
   SettingsSetRequest,
   ViewSetRequest,
@@ -405,18 +402,15 @@ export class WsController {
       type: 'session.open',
       charId,
     };
-    const res = (await this.client.request<SessionOpenRequest>(
-      req,
-    )) as ServerMessage;
+    // request() は ServerMessage を返す。type で discriminated-union narrow。
+    const res = await this.client.request<SessionOpenRequest>(req);
     const session = res.session;
     if (!session) {
       throw new Error('session.open 応答に session 無し');
     }
     // session.open 応答は isAdmin を持つ場合がある(snapshot 経由でも可)。
-    const isAdmin =
-      res.type === 'session.open'
-        ? (res as SessionOpenResponse).isAdmin
-        : undefined;
+    // type narrow により res は SessionOpenResponse として安全に参照できる。
+    const isAdmin = res.type === 'session.open' ? res.isAdmin : undefined;
     useSessionStore.getState().addSession({
       session,
       label: label ?? charId,
@@ -490,21 +484,21 @@ export class WsController {
    * 値が無い場合は undefined。
    */
   async getSettings<T = unknown>(scope: SettingsScope): Promise<T | undefined> {
-    const res = (await this.client.request<SettingsGetRequest>({
+    const res = await this.client.request<SettingsGetRequest>({
       type: 'settings.get',
       scope,
-    })) as ServerMessage;
+    });
+    // type narrow: 以降 res は SettingsResponse(cast 不要)。
     if (res.type !== 'settings') {
       throw new Error('予期しない応答: ' + res.type);
     }
-    const s = res as SettingsResponse;
-    if (s.ok === false) {
-      throw new Error(s.error?.message ?? '設定取得失敗');
+    if (res.ok === false) {
+      throw new Error(res.error?.message ?? '設定取得失敗');
     }
-    if (s.value !== undefined) {
-      useSettingsStore.getState().setScope(scope, s.value);
+    if (res.value !== undefined) {
+      useSettingsStore.getState().setScope(scope, res.value);
     }
-    return s.value as T | undefined;
+    return res.value as T | undefined;
   }
 
   /** 設定保存(永続化はBE)。即座に settingsStore へ反映(楽観更新)。 */

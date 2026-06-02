@@ -24,7 +24,7 @@ export function MarkupText({
       {segments.map((seg, i) =>
         seg.kind === 'image' ? (
           <img
-            key={i}
+            key={`${seg.kind}-${i}`}
             className="markup-img"
             src={seg.url}
             alt=""
@@ -33,7 +33,7 @@ export function MarkupText({
             referrerPolicy="no-referrer"
           />
         ) : (
-          <span key={i} style={seg.color ? { color: seg.color } : undefined}>
+          <span key={`${seg.kind}-${i}`} style={seg.color ? { color: seg.color } : undefined}>
             {seg.text}
           </span>
         ),

@@ -31,7 +31,7 @@ export function ListView({ session }: { session: string }) {
           const { num, label } = stripLeadingNumber(line);
           const value = num ?? i + 1;
           return (
-            <li key={i}>
+            <li key={`${i}:${line}`}>
               <button
                 type="button"
                 className="listview__item"

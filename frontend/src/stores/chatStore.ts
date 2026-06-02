@@ -8,11 +8,19 @@
 import { create } from 'zustand';
 import type { MessageEvent } from '../types/protocol';
 
-/** 表示用ログエントリ。連番(seq, 任意)は MessageEvent 由来で重複抑止に使用。 */
-export type ChatEntry = Omit<MessageEvent, 'type' | 'reqId'>;
+/**
+ * 表示用ログエントリ。連番(seq, 任意)は MessageEvent 由来で重複抑止に使用。
+ * `_id` はクライアント側で採番する安定キー(React の list key 用)。サーバ seq は
+ * 任意かつ session を跨ぐと衝突し得るため、描画 key には内容index でなく `_id` を使う
+ * (リングバッファ先頭破棄時の要素 reuse / 状態混濁を防ぐ)。
+ */
+export type ChatEntry = Omit<MessageEvent, 'type' | 'reqId'> & { _id: number };
 
 /** リングバッファ上限(session毎)。 */
 const DEFAULT_CAPACITY = 1000;
+
+/** ログエントリの安定キー採番(全 session 通し単調増加)。 */
+let _entrySeq = 0;
 
 interface ChatStoreState {
   capacity: number;
@@ -26,7 +34,7 @@ interface ChatStoreState {
 
 function toEntry(msg: MessageEvent): ChatEntry {
   const { session, ts, channel, from, text, markup, seq } = msg;
-  return { session, ts, channel, from, text, markup, seq };
+  return { session, ts, channel, from, text, markup, seq, _id: _entrySeq++ };
 }
 
 /** entry が既存ログ末尾と重複か判定。 */

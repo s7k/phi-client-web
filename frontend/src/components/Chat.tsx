@@ -67,8 +67,8 @@ export function Chat({ session }: { session: string }) {
   return (
     <div className="chat">
       <ul className="chat__log" aria-label="チャットログ" ref={logRef}>
-        {log.map((m, i) => (
-          <li key={i} className={`chat__line chat__line--${m.channel}`}>
+        {log.map((m) => (
+          <li key={m._id} className={`chat__line chat__line--${m.channel}`}>
             {m.from && <span className="chat__from">{m.from}</span>}
             <span className="chat__text">
               <MarkupText text={m.text} markup={m.markup} />
