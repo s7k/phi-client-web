@@ -4,7 +4,7 @@
  * - 発言種別UI: 通常/大声/パーティー/全タブ/priv(宛先選択)。
  * - chat intent 送信。大声は確認ダイアログ([05]§1)。
  */
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useWs } from '../ws/WsContext';
 import { useChatStore } from '../stores/chatStore';
 import { useUserStore } from '../stores/userStore';
@@ -25,6 +25,13 @@ export function Chat({ session }: { session: string }) {
   const ws = useWs();
   const log = useChatStore((s) => s.bySession[session] ?? []);
   const users = useUserStore((s) => s.bySession[session] ?? []);
+
+  // 新着で最下部へ自動スクロール(ユーザーがスクロールせずに最新ログを見られる)。
+  const logRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log.length, session]);
 
   const chatMode = useUiStore((s) => s.chatMode);
   const setChatMode = useUiStore((s) => s.setChatMode);
@@ -59,7 +66,7 @@ export function Chat({ session }: { session: string }) {
 
   return (
     <div className="chat">
-      <ul className="chat__log" aria-label="チャットログ">
+      <ul className="chat__log" aria-label="チャットログ" ref={logRef}>
         {log.map((m, i) => (
           <li key={i} className={`chat__line chat__line--${m.channel}`}>
             {m.from && <span className="chat__from">{m.from}</span>}

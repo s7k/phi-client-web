@@ -52,27 +52,30 @@ function Game({
 
   return (
     <div className="game">
-      <aside className="game__side">
-        <StatusPanel session={session} />
-        <ListView session={session} />
-      </aside>
-      <main className="game__main" ref={mainRef}>
-        <div className="game__toolbar">
-          <WorldArea session={session} />
-          <button type="button" onClick={() => setSettingsOpen(true)}>
-            設定
-          </button>
-          <button type="button" onClick={takeScreenshot}>
-            スクリーンショット
-          </button>
-          <button type="button" onClick={() => void controller.logout()}>
-            ログアウト
-          </button>
+      {/* 上部バー: 世界/エリア + 操作ボタン */}
+      <header className="game__topbar">
+        <WorldArea session={session} />
+        <div className="game__actions">
+          <button type="button" onClick={() => setSettingsOpen(true)}>設定</button>
+          <button type="button" onClick={takeScreenshot}>SS</button>
+          <button type="button" onClick={() => void controller.logout()}>ログアウト</button>
         </div>
-        <WorldTransferIndicator />
-        {eagleEye ? <EagleEyeView session={session} /> : <MapView session={session} />}
-        <Chat session={session} />
-      </main>
+      </header>
+      <WorldTransferIndicator />
+      {/* 本体: デスクトップ=左(マップ+ステータス)/右(チャット)。
+          モバイル=チャット(ログ+入力)上→マップ→ステータス下 */}
+      <div className="game__body">
+        <section className="game__map" ref={mainRef}>
+          {eagleEye ? <EagleEyeView session={session} /> : <MapView session={session} />}
+        </section>
+        <section className="game__chat">
+          <Chat session={session} />
+        </section>
+        <section className="game__status">
+          <StatusPanel session={session} />
+          <ListView session={session} />
+        </section>
+      </div>
       <EditDialog session={session} />
     </div>
   );
