@@ -15,6 +15,8 @@ export interface KeybindSettings {
   shortcuts: Record<string, string | null>;
   /** Shift+G ショートカット語。 */
   altG: string;
+  /** スマホのタッチ操作パッドの利き手(配置)。right=右下/left=左下。既定 right。 */
+  touchHand: 'left' | 'right';
 }
 
 /** notify scope([12]§3.2, [05]§10)。 */
@@ -54,6 +56,7 @@ export const DEFAULT_KEYBIND: KeybindSettings = {
   magic: { F1: null, F2: null, F3: null, F4: null, F5: null, F6: null, F7: null },
   shortcuts: { F8: null, F9: null, F10: null, F11: null, F12: null },
   altG: '',
+  touchHand: 'right',
 };
 
 export const DEFAULT_NOTIFY: NotifySettings = {

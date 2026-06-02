@@ -65,6 +65,29 @@ test.describe('レイアウト: モバイル', () => {
     await expect(page.getByRole('button', { name: '攻撃' })).toBeVisible();
   });
 
+  test('利き手切替: 既定は右(パッド右・マップ左)、左手でパッド左・マップ右', async ({ page }) => {
+    await gotoGame(page, MOBILE);
+    const pad = page.getByRole('group', { name: '操作パッド' });
+    const map = page.locator('.game__map');
+    const vw = MOBILE.width;
+
+    // 既定(右手): パッドは右寄り。
+    let padBox = await pad.boundingBox();
+    expect(padBox!.x + padBox!.width / 2).toBeGreaterThan(vw / 2);
+    await expect(map).toHaveClass(/game__map--pad-right/);
+
+    // 設定で左手へ(モバイルはハンバーガー内に設定)。
+    await page.getByRole('button', { name: 'メニュー' }).click();
+    await page.getByRole('button', { name: '設定' }).click();
+    await page.getByLabel('タッチ操作の利き手').selectOption('left');
+    await page.getByRole('button', { name: '閉じる' }).click();
+
+    // 左手: パッドは左寄り、マップは右寄せクラス。
+    padBox = await pad.boundingBox();
+    expect(padBox!.x + padBox!.width / 2).toBeLessThan(vw / 2);
+    await expect(map).toHaveClass(/game__map--pad-left/);
+  });
+
   test('ステータスが画面内に収まる(縦切れが無い)', async ({ page }) => {
     await gotoGame(page, MOBILE);
     const { status } = await boxes(page);

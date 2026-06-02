@@ -7,7 +7,6 @@
   .touch-controls {
     display: grid;
     position: absolute;
-    right: 0.4rem;
     bottom: 0.4rem;
     grid-template-columns: repeat(3, 2.4rem);
     grid-template-rows: repeat(3, 2.4rem);
@@ -16,6 +15,9 @@
     /* マップ視認を妨げないよう全体は触らせつつボタンのみ操作。 */
     pointer-events: none;
   }
+  /* 利き手で左右配置(マップは逆側に寄せる→ App.css .game__map--pad-*)。 */
+  .touch-controls--right { right: 0.4rem; left: auto; }
+  .touch-controls--left  { left: 0.4rem; right: auto; }
 }
 
 .tc {

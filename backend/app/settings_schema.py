@@ -43,6 +43,7 @@ _KEYBIND_CHECKS = {
     "magic": _check_str_null_map,
     "shortcuts": _check_str_null_map,
     "altG": lambda v: isinstance(v, str),
+    "touchHand": lambda v: v in ("left", "right"),
 }
 _NOTIFY_CHECKS = {
     "enabled": _is_bool,

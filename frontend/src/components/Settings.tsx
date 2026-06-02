@@ -106,6 +106,20 @@ export function Settings() {
               </select>
             </label>
 
+            <label className="settings__row">
+              <span>タッチ操作の利き手(スマホ)</span>
+              <select
+                aria-label="タッチ操作の利き手"
+                value={kb.touchHand ?? 'right'}
+                onChange={(e) =>
+                  saveKeybind({ touchHand: e.target.value as KeybindSettings['touchHand'] })
+                }
+              >
+                <option value="right">右手(パッド右・マップ左)</option>
+                <option value="left">左手(パッド左・マップ右)</option>
+              </select>
+            </label>
+
             <fieldset className="settings__group">
               <legend>魔法(F1-F7 → 呪文名)</legend>
               {MAGIC_KEYS.map((k) => (

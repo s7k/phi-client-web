@@ -13,6 +13,8 @@
  */
 import { useWs } from '../ws/WsContext';
 import { useMapStore } from '../stores/mapStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import type { KeybindSettings } from '../stores/settingsStore';
 import { actionToIntent, type MoveAction } from '../lib/keyHandler';
 import './TouchControls.css';
 
@@ -21,6 +23,10 @@ export function TouchControls({ session }: { session: string }) {
   // 北固定判定はライブ map.style(useKeyHandler と同一基準)。既定 solid=北固定。
   const style = useMapStore((s) => s.bySession[session]?.style);
   const northFix = (style ?? 'solid') === 'solid';
+  // 利き手(配置)。既定は右手(右下)。
+  const hand =
+    useSettingsStore((s) => (s.byScope['keybind'] as KeybindSettings | undefined)?.touchHand) ??
+    'right';
 
   function move(action: MoveAction) {
     const intent = actionToIntent(action, northFix);
@@ -30,7 +36,7 @@ export function TouchControls({ session }: { session: string }) {
   }
 
   return (
-    <div className="touch-controls" role="group" aria-label="操作パッド">
+    <div className={`touch-controls touch-controls--${hand}`} role="group" aria-label="操作パッド">
       <button className="tc tc--tl" type="button" aria-label="左回転"
         onClick={() => move('turnL')}>↺</button>
       <button className="tc tc--up" type="button" aria-label="前進"

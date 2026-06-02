@@ -187,6 +187,10 @@ body {
     width: auto !important;
     height: auto !important;
   }
+  /* 操作パッドの逆側にマップを寄せ、パッドとの重なりを回避。
+     右手(パッド右下)→マップ左寄せ / 左手(パッド左下)→マップ右寄せ。 */
+  .game__map--pad-right { justify-content: flex-start; }
+  .game__map--pad-left  { justify-content: flex-end; }
   .game__status {
     order: 3; flex: 0 0 auto;
     max-height: 28vh;          /* HP/MP/EXP/GP は見せる。属性/cond 溢れは内部スクロール */

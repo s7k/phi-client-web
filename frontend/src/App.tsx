@@ -14,7 +14,7 @@ import { WsProvider } from './ws/WsContext';
 import type { WsController } from './ws/controller';
 import { useUiStore } from './stores/uiStore';
 import { useSettingsStore } from './stores/settingsStore';
-import type { DisplaySettings } from './stores/settingsStore';
+import type { DisplaySettings, KeybindSettings } from './stores/settingsStore';
 import { useKeyHandler } from './lib/useKeyHandler';
 import { useTheme } from './lib/useTheme';
 import { captureCanvas } from './lib/screenshot';
@@ -55,6 +55,10 @@ function Game({
   const eagleEye =
     useSettingsStore((s) => (s.byScope['display'] as DisplaySettings | undefined)?.eagleEye) ??
     false;
+  // タッチ操作パッドの利き手(スマホ)。マップをパッドの逆側へ寄せ重なりを回避。
+  const touchHand =
+    useSettingsStore((s) => (s.byScope['keybind'] as KeybindSettings | undefined)?.touchHand) ??
+    'right';
 
   // F11 スクリーンショット: マップ(or EagleEye)Canvas を PNG ダウンロード([05]§12)。
   function takeScreenshot() {
@@ -92,7 +96,7 @@ function Game({
       {/* 本体: デスクトップ=左(マップ+ステータス)/右(チャット)。
           モバイル=チャット(ログ+入力)上→マップ→ステータス下 */}
       <div className="game__body">
-        <section className="game__map" ref={mainRef}>
+        <section className={`game__map game__map--pad-${touchHand}`} ref={mainRef}>
           {eagleEye ? <EagleEyeView session={session} /> : <MapView session={session} />}
           {/* スマホのみ表示の操作パッド(CSS で desktop は非表示)。 */}
           <TouchControls session={session} />

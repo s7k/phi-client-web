@@ -4,7 +4,8 @@ from app.settings_schema import validate_setting
 
 def test_valid_known_values_pass():
     assert validate_setting("keybind", {"layout": "numpad", "altG": "g",
-                                        "magic": {"F1": None}, "shortcuts": {"F8": "x"}}) is None
+                                        "magic": {"F1": None}, "shortcuts": {"F8": "x"},
+                                        "touchHand": "left"}) is None
     assert validate_setting("notify", {"enabled": True, "regexInclude": None,
                                        "sound": False}) is None
     assert validate_setting("display", {"mapSize": 57, "mapStyle": "solid",
@@ -37,6 +38,7 @@ def test_known_key_type_mismatch_rejected():
     assert validate_setting("intervals", {"mapUpdate": 0}) is not None  # >0
     assert validate_setting("intervals", {"mapUpdate": True}) is not None  # bool不可
     assert validate_setting("keybind", {"magic": {"F1": 5}}) is not None  # str|None以外
+    assert validate_setting("keybind", {"touchHand": "up"}) is not None  # left/right以外
 
 
 def test_oversized_value_rejected():
