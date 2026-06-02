@@ -362,17 +362,6 @@ describe('EditDialog (F9)', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('single: 1行確定で submitEdit(lines=[値])', () => {
-    const submitEdit = vi.fn();
-    useEditStore.getState().setEdit('s1', { mode: 'single' });
-    renderWith(makeController({ submitEdit }), <EditDialog session="s1" />);
-    fireEvent.change(screen.getByLabelText('入力本文'), {
-      target: { value: 'hello' },
-    });
-    fireEvent.click(screen.getByText('確定'));
-    expect(submitEdit).toHaveBeenCalledWith('s1', 'single', ['hello']);
-  });
-
   it('multi: 複数行を改行分割して submitEdit', () => {
     const submitEdit = vi.fn();
     useEditStore.getState().setEdit('s1', { mode: 'multi' });
@@ -386,14 +375,14 @@ describe('EditDialog (F9)', () => {
 
   it('キャンセルで cancelEdit', () => {
     const cancelEdit = vi.fn();
-    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    useEditStore.getState().setEdit('s1', { mode: 'multi' });
     renderWith(makeController({ cancelEdit }), <EditDialog session="s1" />);
     fireEvent.click(screen.getByText('キャンセル'));
     expect(cancelEdit).toHaveBeenCalledWith('s1');
   });
 
   it('キャンセルで BE 応答を待たず即クローズ(editStore 非アクティブ化)', () => {
-    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    useEditStore.getState().setEdit('s1', { mode: 'multi' });
     const { container } = renderWith(
       makeController({ cancelEdit: vi.fn() }),
       <EditDialog session="s1" />,
@@ -408,7 +397,7 @@ describe('EditDialog (F9)', () => {
 
   it('Esc で即クローズ', () => {
     const cancelEdit = vi.fn();
-    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    useEditStore.getState().setEdit('s1', { mode: 'multi' });
     renderWith(makeController({ cancelEdit }), <EditDialog session="s1" />);
     fireEvent.keyDown(screen.getByLabelText('入力本文'), { key: 'Escape' });
     expect(cancelEdit).toHaveBeenCalledWith('s1');
@@ -416,12 +405,12 @@ describe('EditDialog (F9)', () => {
   });
 
   it('確定で即クローズ', () => {
-    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    useEditStore.getState().setEdit('s1', { mode: 'multi' });
     renderWith(makeController({ submitEdit: vi.fn() }), <EditDialog session="s1" />);
     fireEvent.change(screen.getByLabelText('入力本文'), {
       target: { value: 'hi' },
     });
-    fireEvent.click(screen.getByText('確定'));
+    fireEvent.click(screen.getByText('確定 (Ctrl+Enter)'));
     expect(useEditStore.getState().bySession['s1'].active).toBe(false);
   });
 });
@@ -480,16 +469,16 @@ describe('Login: アカウントID 記憶(localStorage, パスワードは保存
   });
 });
 
-describe('EditDialog はリスト中は出さない', () => {
-  it('list active 時は EditDialog を表示しない(選択肢を覆わない)', () => {
+describe('EditDialog は m-edit(複数行)のみ表示', () => {
+  it('single(#s-edit)はモーダルを出さない(通常入力欄で応答)', () => {
     useEditStore.getState().setEdit('s1', { mode: 'single' } as any);
-    useListStore.getState().setList('s1', { active: true, lines: ['1: a'] } as any);
     const { container } = renderWith(makeController(), <EditDialog session="s1" />);
     expect(container.querySelector('.editdialog')).toBeNull();
   });
-  it('list 非アクティブなら single editは表示', () => {
-    useEditStore.getState().setEdit('s1', { mode: 'single' } as any);
+  it('multi(#m-edit)はモーダルを表示', () => {
+    useEditStore.getState().setEdit('s1', { mode: 'multi' } as any);
     const { container } = renderWith(makeController(), <EditDialog session="s1" />);
     expect(container.querySelector('.editdialog')).not.toBeNull();
   });
 });
+

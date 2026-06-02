@@ -7,22 +7,20 @@
 import { useState } from 'react';
 import { useWs } from '../ws/WsContext';
 import { useEditStore } from '../stores/editStore';
-import { useListStore } from '../stores/listStore';
 import './EditDialog.css';
 
 export function EditDialog({ session }: { session: string }) {
   const ws = useWs();
   const edit = useEditStore((s) => s.bySession[session]);
   const closeEdit = useEditStore((s) => s.close);
-  // リスト選択中(看板/移動メニュー等)はサーバが #list と #s-edit を同時に送る。
-  // この場合は中央モーダルを出さず、リスト(選択肢)から番号で選ばせる(モーダルが
-  // 選択肢を覆って操作不能になるのを防ぐ)。番号選択(list.select)が #s-edit を満たす。
-  const listActive = useListStore((s) => s.bySession[session]?.active ?? false);
   const [value, setValue] = useState('');
 
-  if (listActive) return null;
-  if (!edit?.active || !edit.mode) return null;
-  const multi = edit.mode === 'multi';
+  // #s-edit(1行入力)は「メイン入力欄を1行入力モードにする」通常の入力待ちシグナル
+  // (PHIの既定状態)であり、専用モーダルは出さない。下部の通常入力欄で応答する。
+  // モーダルを出すのは #m-edit(複数行編集=看板書き込み等)のみ。
+  // これによりトランスファー後等に出る不要な「入力」モーダルを排除。
+  if (edit?.mode !== 'multi' || !edit.active) return null;
+  const multi = true;
 
   function submit() {
     // single=1行、multi=改行分割(空末尾は除去)

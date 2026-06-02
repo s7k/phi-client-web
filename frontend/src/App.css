@@ -43,11 +43,27 @@ body {
    ページ全体はスクロールさせず(100vh固定)、各パネルが独立スクロール。
    デスクトップ: 左(マップ+ステータス) / 右(チャット:ログ+入力) のサイドバイサイド。
    モバイル(<=820px): チャット(ログ+入力)上 → マップ → ステータス下 の縦積み。 */
+/* アプリ全体: 100dvh のフレックス列。子(バナー/タブ=固定高, 本体=flex:1)を
+   内包しページ全体スクロールを防ぐ。 */
+.app {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* 本体スクリーンは残り高さを占有(タブ等は固定高) */
+.app > .game,
+.app > .login,
+.app > .charsel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .game {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;            /* モバイルのアドレスバー考慮 */
+  min-height: 0;            /* .app 内で flex:1 占有(height:100vh は廃止) */
   box-sizing: border-box;
   overflow: hidden;
 }

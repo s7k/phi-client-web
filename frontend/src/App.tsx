@@ -122,9 +122,13 @@ export function App({ controller }: { controller: WsController }) {
 
   return (
     <WsProvider controller={controller}>
-      <ConnectionBanner />
-      <ErrorBanners />
-      {screen}
+      {/* 100dvh のフレックス列。バナー/タブ(固定高)+本体(flex:1)を内包し
+          ページ全体のスクロールを防ぐ(タブが100vh外に出てスクロールしていた件)。 */}
+      <div className="app">
+        <ConnectionBanner />
+        <ErrorBanners />
+        {screen}
+      </div>
       <ConfirmDialog />
       <Settings />
     </WsProvider>
