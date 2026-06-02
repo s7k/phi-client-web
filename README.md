@@ -86,7 +86,7 @@ docker compose up --build         # web=:8080(エッジ), backend=:8000(内部)
   旨を明記する義務**がある(本節がその明記)。PCGL 文書は自由にコピー・頒布可・改変不可。
 - 全文: [`licenses/PCGL.utf8.txt`](licenses/PCGL.utf8.txt)(UTF-8 閲覧用) / [`licenses/PCGL.sjis.txt`](licenses/PCGL.sjis.txt)(SJIS 原本)。詳細は [`licenses/README.md`](licenses/README.md)。
   グラフィックスを同梱配布する際は PCGL 全文を成果物へ添付すること。
-- コード(backend/frontend/tools)とグラフィックス資産はライセンスが別。コードのライセンスは別途定める。
+- **コード(backend/frontend/tools)は MIT License**([`LICENSE`](LICENSE))。グラフィックス資産(PCGL)とは別ライセンス。MIT は permissive(コピーレフトなし)で、改変・商用利用ともに著作権表示と許諾文の保持のみが条件。
 
 ## ドキュメント
 設計・調査の全体は [docs/README.md](docs/README.md) を参照。実装の進行・決定事項(A-01〜)は [docs/DEVLOG.md](docs/DEVLOG.md)。
