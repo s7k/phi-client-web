@@ -479,3 +479,17 @@ describe('Login: アカウントID 記憶(localStorage, パスワードは保存
     expect(localStorage.getItem('phi_login_form')).toBeNull();
   });
 });
+
+describe('EditDialog はリスト中は出さない', () => {
+  it('list active 時は EditDialog を表示しない(選択肢を覆わない)', () => {
+    useEditStore.getState().setEdit('s1', { mode: 'single' } as any);
+    useListStore.getState().setList('s1', { active: true, lines: ['1: a'] } as any);
+    const { container } = renderWith(makeController(), <EditDialog session="s1" />);
+    expect(container.querySelector('.editdialog')).toBeNull();
+  });
+  it('list 非アクティブなら single editは表示', () => {
+    useEditStore.getState().setEdit('s1', { mode: 'single' } as any);
+    const { container } = renderWith(makeController(), <EditDialog session="s1" />);
+    expect(container.querySelector('.editdialog')).not.toBeNull();
+  });
+});

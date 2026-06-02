@@ -7,14 +7,20 @@
 import { useState } from 'react';
 import { useWs } from '../ws/WsContext';
 import { useEditStore } from '../stores/editStore';
+import { useListStore } from '../stores/listStore';
 import './EditDialog.css';
 
 export function EditDialog({ session }: { session: string }) {
   const ws = useWs();
   const edit = useEditStore((s) => s.bySession[session]);
   const closeEdit = useEditStore((s) => s.close);
+  // リスト選択中(看板/移動メニュー等)はサーバが #list と #s-edit を同時に送る。
+  // この場合は中央モーダルを出さず、リスト(選択肢)から番号で選ばせる(モーダルが
+  // 選択肢を覆って操作不能になるのを防ぐ)。番号選択(list.select)が #s-edit を満たす。
+  const listActive = useListStore((s) => s.bySession[session]?.active ?? false);
   const [value, setValue] = useState('');
 
+  if (listActive) return null;
   if (!edit?.active || !edit.mode) return null;
   const multi = edit.mode === 'multi';
 
