@@ -91,7 +91,10 @@ export function useKeyHandler(
         shortcuts: keybind?.shortcuts ?? {},
       };
       // 編集ダイアログ表示中はゲームキー無効(編集UI側でキー処理)
-      if (edit?.active && !ctx.listActive) return;
+      // ゲームキー無効化は **複数行編集(#m-edit)モーダル表示中のみ**。
+      // #s-edit(1行)はPHIの通常入力待ち状態でモーダルも出ない(下部入力欄で応答)
+      // ため、テンキー等の移動キーは有効のまま(s-editでテンキーが効かない不具合の修正)。
+      if (edit?.active && edit.mode === 'multi' && !ctx.listActive) return;
 
       const intent = resolveKey(ev, ctx);
       if (intent) {
@@ -102,5 +105,5 @@ export function useKeyHandler(
 
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [controller, session, list?.active, edit?.active, keybind, display, mapStyle]);
+  }, [controller, session, list?.active, edit?.active, edit?.mode, keybind, display, mapStyle]);
 }

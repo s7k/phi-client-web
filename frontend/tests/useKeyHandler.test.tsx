@@ -86,11 +86,28 @@ describe('useKeyHandler 配線', () => {
     expect(sendMove).not.toHaveBeenCalled();
   });
 
-  it('編集ダイアログ表示中はゲームキー無効', () => {
+  it('複数行編集(m-edit)モーダル中はゲームキー無効', () => {
     const sendMove = vi.fn();
-    useEditStore.getState().setEdit('s1', { mode: 'single' });
+    useEditStore.getState().setEdit('s1', { mode: 'multi' });
     render(<Harness controller={makeController({ sendMove })} session="s1" />);
-    fireEvent.keyDown(document, { key: 'w' });
+    fireEvent.keyDown(document, { key: '8' });
+    expect(sendMove).not.toHaveBeenCalled();
+  });
+});
+
+describe('s-edit(single) 中もテンキー有効 / m-edit(multi)中は無効', () => {
+  it('edit single active でも 8 で sendMove(step N)', () => {
+    const sendMove = vi.fn();
+    useEditStore.getState().setEdit('s1', { mode: 'single' } as any);
+    render(<Harness controller={makeController({ sendMove })} session="s1" />);
+    fireEvent.keyDown(document, { key: '8' });
+    expect(sendMove).toHaveBeenCalledWith('s1', { dir: 'N', mode: 'step' });
+  });
+  it('edit multi active 中は移動キー無効(8で送らない)', () => {
+    const sendMove = vi.fn();
+    useEditStore.getState().setEdit('s1', { mode: 'multi' } as any);
+    render(<Harness controller={makeController({ sendMove })} session="s1" />);
+    fireEvent.keyDown(document, { key: '8' });
     expect(sendMove).not.toHaveBeenCalled();
   });
 });
