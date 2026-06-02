@@ -584,4 +584,32 @@ describe('WsController.restore / logout (A-33/A-34)', () => {
     expect(useUiStore.getState().activeTab).toBeNull();
     expect(Object.keys(useSessionStore.getState().sessions)).toHaveLength(0);
   });
+
+  it('logout: 全 session 系 store を破棄(state leak 防止)', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    await controller.login('acc-1', 'pw');
+    // 各 store に前キャラのデータを残置
+    useChatStore.getState().addMessage('s1', {
+      type: 'message', session: 's1', channel: 'log', text: 'old', from: 'X',
+    } as ServerMessage as never);
+    useStatusStore.getState().setStatus('s1', {
+      type: 'status', session: 's1', name: 'X',
+    } as ServerMessage as never);
+    useNoticeStore.getState().setNotice('s1', {
+      type: 'notice', session: 's1', name: 'X',
+    } as ServerMessage as never);
+    useConnectionStore.getState().setSessionConnection('s1', 'connected');
+    useConnectionStore.getState().setSocketState('open');
+
+    await controller.logout();
+
+    // 全 session 系 store が空
+    expect(Object.keys(useChatStore.getState().bySession)).toHaveLength(0);
+    expect(Object.keys(useStatusStore.getState().bySession)).toHaveLength(0);
+    expect(Object.keys(useNoticeStore.getState().bySession)).toHaveLength(0);
+    expect(Object.keys(useConnectionStore.getState().sessions)).toHaveLength(0);
+    // socketState は維持(logout では WS 切断しない)
+    expect(useConnectionStore.getState().socketState).toBe('open');
+  });
 });

@@ -60,6 +60,7 @@ import { useNoticeStore } from '../stores/noticeStore';
 import { useUiStore } from '../stores/uiStore';
 import { notify } from '../lib/notify';
 import { applySnapshot } from '../stores/applySnapshot';
+import { resetSessionState } from '../stores';
 
 /** union を分配して各メンバから共通エンベロープキーを除いた command ペイロード型。 */
 type CommandPayload = CommandRequest extends infer R
@@ -381,8 +382,10 @@ export class WsController {
   async logout(): Promise<void> {
     const token = this.token;
     this.clearAuth();
-    useSessionStore.getState().reset();
-    useUiStore.getState().setActiveTab(null);
+    // 全 session 系 store を破棄(state leak 防止)。settings/ui も別アカウント用に reset。
+    resetSessionState();
+    useSettingsStore.getState().reset();
+    useUiStore.getState().reset(); // activeTab=null / worldTransfer / settingsOpen 等もクリア
     await restLogout(token);
   }
 
