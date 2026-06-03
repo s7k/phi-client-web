@@ -71,30 +71,42 @@ def test_upload_default_gra_name_from_filename(client):
     assert r.json()["graName"] == "t_Elf"
 
 
-def test_upload_dimension_warning(client):
+def test_upload_dimension_mismatch_rejected(client):
+    """キャラ標準 96x160 と不一致は 400 で拒否。"""
     bmp = _bmp_bytes(size=(32, 32))
     r = client.post(
         "/api/chara/graphics",
         files={"file": ("x.bmp", bmp, "image/bmp")},
         data={"graName": "small"},
     )
-    assert r.status_code == 200
-    assert r.json()["dimensionWarning"] is not None
+    assert r.status_code == 400, r.text
 
 
-def test_upload_idempotent_same_sha(client):
+def test_upload_duplicate_name_rejected(client):
+    """同名(物理名 = lower(graName))の二重アップロードは 409。"""
     bmp = _bmp_bytes()
     r1 = client.post(
         "/api/chara/graphics",
         files={"file": ("a.bmp", bmp, "image/bmp")},
         data={"graName": "dup"},
     )
+    assert r1.status_code == 200, r1.text
     r2 = client.post(
         "/api/chara/graphics",
         files={"file": ("a.bmp", bmp, "image/bmp")},
         data={"graName": "dup"},
     )
-    assert r1.json()["uploadedAt"] == r2.json()["uploadedAt"]  # 冪等(既存返却)
+    assert r2.status_code == 409, r2.text
+
+
+def test_upload_path_separator_rejected(client):
+    """graName に区切り文字を含む(path traversal)は 400。"""
+    r = client.post(
+        "/api/chara/graphics",
+        files={"file": ("a.bmp", _bmp_bytes(), "image/bmp")},
+        data={"graName": "../evil"},
+    )
+    assert r.status_code == 400, r.text
 
 
 def test_upload_invalid_image(client):
@@ -132,8 +144,8 @@ def test_upload_pixel_bomb_rejected(client):
 
 
 def test_upload_within_limits_ok(client):
-    """上限内(192x320 等)は許可される。"""
-    ok = _bmp_bytes(size=(192, 320))
+    """標準寸法(96x160)は許可される。"""
+    ok = _bmp_bytes(size=(96, 160))
     r = client.post(
         "/api/chara/graphics",
         files={"file": ("ok.bmp", ok, "image/bmp")},
@@ -331,6 +343,20 @@ def test_delete_graphic_admin_only(gated_app):
     assert gated_app.delete(
         "/api/chara/graphics/g", headers={"X-Test-Account": "admin1"}
     ).status_code == 200
+
+
+def test_delete_protected_seed_forbidden(client):
+    """protected=1(seed)のグラは管理者でも削除不可(403)。"""
+    store = client._store  # type: ignore[attr-defined]
+    store.upsert_graphic(
+        "seedgra", "seedgra", "/x/seedgra.png", 96, 160, "shaseed",
+        protected=True,
+    )
+    r = client.delete("/api/chara/graphics/seedgra")
+    assert r.status_code == 403, r.text
+    # 一覧では protected フラグが立つ。
+    items = client.get("/api/chara/graphics").json()
+    assert any(g["graName"] == "seedgra" and g["protected"] for g in items)
 
 
 def test_get_endpoints_open_to_anyone(gated_app):

@@ -53,6 +53,21 @@ class ChAraGraphic:
     orig_sha256: str
     uploaded_by: str | None
     uploaded_at: str
+    protected: bool = False
+
+
+@dataclass
+class ChipGraphic:
+    mapset_name: str
+    mapset_key: str
+    stored_name: str
+    png_path: str
+    width: int
+    height: int
+    orig_sha256: str
+    uploaded_by: str | None
+    uploaded_at: str
+    protected: bool = False
 
 
 @dataclass
@@ -102,7 +117,17 @@ class Store:
         """schema.sql を適用(冪等)。"""
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         self.conn.executescript(sql)
+        # 既存DBへの後付けカラム追加(SQLite は ADD COLUMN IF NOT EXISTS 不可のため
+        # PRAGMA で存在確認してから ALTER)。新規DBは schema.sql で既に列があり no-op。
+        self._add_column_if_missing("chara_graphics", "protected", "INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
+
+    def _add_column_if_missing(self, table: str, column: str, decl: str) -> None:
+        """table に column が無ければ ALTER TABLE ADD COLUMN(冪等マイグレーション)。"""
+        cur = self.conn.execute(f"PRAGMA table_info({table})")
+        cols = {row["name"] for row in cur.fetchall()}
+        if column not in cols:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         self.conn.close()
@@ -164,6 +189,30 @@ class Store:
             "FROM accounts ORDER BY account_id"
         )
         return cur.fetchall()
+
+    def count_accounts(self) -> int:
+        """アカウント総数。初回登録(=0)時の自動管理者化判定に使う。"""
+        cur = self.conn.execute("SELECT COUNT(*) AS n FROM accounts")
+        return int(cur.fetchone()["n"])
+
+    def count_admins(self) -> int:
+        """管理者アカウント数(最後の管理者保護の判定に使う)。"""
+        cur = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM accounts WHERE is_admin = 1"
+        )
+        return int(cur.fetchone()["n"])
+
+    def delete_account(self, account_id: str) -> bool:
+        """アカウント削除。characters は FK CASCADE で連鎖削除。削除行があれば True。
+
+        sessions_web は account_id への FK を張っていないため別途
+        `delete_web_sessions_for` で失効させること。
+        """
+        cur = self.conn.execute(
+            "DELETE FROM accounts WHERE account_id = ?", (account_id,)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     # ------------------------------------------------------------------
     # characters(アカウント配下の複数キャラ, A-34)
@@ -320,6 +369,14 @@ class Store:
         )
         self.conn.commit()
 
+    def delete_web_sessions_for(self, account_id: str) -> int:
+        """account の Web セッションを全失効(強制PW変更/削除/admin剥奪時)。削除件数を返す。"""
+        cur = self.conn.execute(
+            "DELETE FROM sessions_web WHERE account_id = ?", (account_id,)
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     # ------------------------------------------------------------------
     # settings(char_id, key) upsert
     # ------------------------------------------------------------------
@@ -395,24 +452,22 @@ class Store:
         *,
         color_key: str = "teal",
         uploaded_by: str | None = None,
+        protected: bool = False,
     ) -> ChAraGraphic:
         """グラを登録/更新。
 
-        冪等([08]§4): 同一 orig_sha256 が既存なら**再生成せず既存を返す**。
-        gra_key は lower(gra_name) で PRIMARY KEY、case-insensitive 一意。
+        gra_key = lower(gra_name) を PRIMARY KEY とし case-insensitive 一意。
+        同名(gra_key 衝突)は上書き更新。同名拒否は REST 層で事前判定する
+        ([08] アップロードは物理名 = stored_name = lower(gra_name) で配信解決)。
         """
-        existing = self.get_graphic_by_sha(orig_sha256)
-        if existing is not None:
-            return existing
-
         key = gra_key_of(gra_name)
         now = utc_now()
         self.conn.execute(
             """
             INSERT INTO chara_graphics
               (gra_name, gra_key, stored_name, png_path, width, height,
-               color_key, orig_sha256, uploaded_by, uploaded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               color_key, orig_sha256, protected, uploaded_by, uploaded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(gra_key) DO UPDATE SET
               gra_name    = excluded.gra_name,
               stored_name = excluded.stored_name,
@@ -421,14 +476,96 @@ class Store:
               height      = excluded.height,
               color_key   = excluded.color_key,
               orig_sha256 = excluded.orig_sha256,
+              protected   = excluded.protected,
               uploaded_by = excluded.uploaded_by,
               uploaded_at = excluded.uploaded_at
             """,
             (gra_name, key, stored_name, png_path, width, height,
-             color_key, orig_sha256, uploaded_by, now),
+             color_key, orig_sha256, 1 if protected else 0, uploaded_by, now),
         )
         self.conn.commit()
         return self.get_graphic(gra_name)  # type: ignore[return-value]
+
+    def delete_graphic(self, gra_name: str) -> bool:
+        """グラ削除(DB行のみ。物理PNGは呼出側で削除)。削除行があれば True。"""
+        cur = self.conn.execute(
+            "DELETE FROM chara_graphics WHERE gra_key = ?",
+            (gra_key_of(gra_name),),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # chip_graphics(マップチップシート, [06]/[08]§5)
+    # ------------------------------------------------------------------
+
+    def get_chip_by_sha(self, orig_sha256: str) -> ChipGraphic | None:
+        cur = self.conn.execute(
+            "SELECT * FROM chip_graphics WHERE orig_sha256 = ? LIMIT 1",
+            (orig_sha256,),
+        )
+        row = cur.fetchone()
+        return _row_to_chip(row) if row else None
+
+    def get_chip(self, mapset_name: str) -> ChipGraphic | None:
+        """case-insensitive 解決。mapset_key = lower(mapset_name)。"""
+        cur = self.conn.execute(
+            "SELECT * FROM chip_graphics WHERE mapset_key = ?",
+            (mapset_name.lower(),),
+        )
+        row = cur.fetchone()
+        return _row_to_chip(row) if row else None
+
+    def list_chips(self) -> list[ChipGraphic]:
+        cur = self.conn.execute("SELECT * FROM chip_graphics ORDER BY mapset_key")
+        return [_row_to_chip(r) for r in cur.fetchall()]
+
+    def upsert_chip(
+        self,
+        mapset_name: str,
+        stored_name: str,
+        png_path: str,
+        width: int,
+        height: int,
+        orig_sha256: str,
+        *,
+        uploaded_by: str | None = None,
+        protected: bool = False,
+    ) -> ChipGraphic:
+        """チップシートを登録/更新(mapset_key 一意)。同名拒否は REST 層で事前判定。"""
+        key = mapset_name.lower()
+        now = utc_now()
+        self.conn.execute(
+            """
+            INSERT INTO chip_graphics
+              (mapset_name, mapset_key, stored_name, png_path, width, height,
+               orig_sha256, protected, uploaded_by, uploaded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(mapset_key) DO UPDATE SET
+              mapset_name = excluded.mapset_name,
+              stored_name = excluded.stored_name,
+              png_path    = excluded.png_path,
+              width       = excluded.width,
+              height      = excluded.height,
+              orig_sha256 = excluded.orig_sha256,
+              protected   = excluded.protected,
+              uploaded_by = excluded.uploaded_by,
+              uploaded_at = excluded.uploaded_at
+            """,
+            (mapset_name, key, stored_name, png_path, width, height,
+             orig_sha256, 1 if protected else 0, uploaded_by, now),
+        )
+        self.conn.commit()
+        return self.get_chip(mapset_name)  # type: ignore[return-value]
+
+    def delete_chip(self, mapset_name: str) -> bool:
+        """チップ削除(DB行のみ)。削除行があれば True。"""
+        cur = self.conn.execute(
+            "DELETE FROM chip_graphics WHERE mapset_key = ?",
+            (mapset_name.lower(),),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     # ------------------------------------------------------------------
     # chara_index([08]§4 / §6 Index.txt 取込/生成)
@@ -506,6 +643,22 @@ def _row_to_graphic(row: sqlite3.Row) -> ChAraGraphic:
         orig_sha256=row["orig_sha256"],
         uploaded_by=row["uploaded_by"],
         uploaded_at=row["uploaded_at"],
+        protected=bool(row["protected"]),
+    )
+
+
+def _row_to_chip(row: sqlite3.Row) -> ChipGraphic:
+    return ChipGraphic(
+        mapset_name=row["mapset_name"],
+        mapset_key=row["mapset_key"],
+        stored_name=row["stored_name"],
+        png_path=row["png_path"],
+        width=row["width"],
+        height=row["height"],
+        orig_sha256=row["orig_sha256"],
+        uploaded_by=row["uploaded_by"],
+        uploaded_at=row["uploaded_at"],
+        protected=bool(row["protected"]),
     )
 
 

@@ -592,21 +592,24 @@ def create_app(
     async def register_account(request: Request):
         """新規アカウント作成。body `{accountId, password}`。
 
-        - 成功 `{ok:true}`。
+        - 成功 `{ok:true, isAdmin}`。
         - 既存 accountId → 409。
         - accountId 空 / パスワード最小長未満 → 400。
+        - **初回(アカウント0件)登録は自動的に管理者化**(Web 経由で初期管理者を
+          作れるようにする要件)。2件目以降は通常アカウント。
         password はログ/エラーへ出さない(資格情報)。
         """
         body = await request.json()
         account_id = str(body.get("accountId", "") or "")
         password = str(body.get("password", "") or "")
+        is_first = auth.store.count_accounts() == 0
         try:
-            auth.register(account_id, password)
+            auth.register(account_id, password, is_admin=is_first)
         except ValueError as exc:
             if str(exc) == "account exists":
                 raise HTTPException(409, "アカウントは既に存在します") from exc
             raise HTTPException(400, str(exc)) from exc
-        return {"ok": True}
+        return {"ok": True, "isAdmin": is_first}
 
     @app.post("/api/auth/login")
     async def login_account(request: Request):
@@ -647,8 +650,10 @@ def create_app(
     # ------------------------------------------------------------------
     # REST ルータ(chara / register)
     # ------------------------------------------------------------------
+    from app.rest.admin import build_admin_router
     from app.rest.chara import build_chara_router
     from app.rest.characters import build_characters_router
+    from app.rest.chip import build_chip_router
     from app.rest.register import build_register_router
 
     assets = assets_dir or os.environ.get("PHI_ASSETS_DIR") or "./assets"
@@ -657,8 +662,15 @@ def create_app(
         store, assets,
         require_admin=require_admin, rate_limiter=rate_limiter,
     ))
+    app.include_router(build_chip_router(
+        store, assets,
+        require_admin=require_admin, rate_limiter=rate_limiter,
+    ))
     app.include_router(build_characters_router(
         store, auth.cipher, require_account,
+    ))
+    app.include_router(build_admin_router(
+        store, auth, require_admin=require_admin,
     ))
 
     if registrar_factory is None:  # pragma: no cover - 統合層(本番起動)

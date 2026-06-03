@@ -71,19 +71,37 @@ CREATE TABLE IF NOT EXISTS settings (
 -- キャラグラフィック([08]§4)
 -- ------------------------------------------------------------------
 -- uploaded_by/updated_by は account_id(A-34)。FK は張らない。
+-- protected=1 はリポジトリ同梱 seed(起動時 seed_assets で登録)。管理画面から削除不可。
 CREATE TABLE IF NOT EXISTS chara_graphics (
   gra_name     TEXT NOT NULL,          -- グラ名(原文UTF-8, 表示用)
   gra_key      TEXT PRIMARY KEY,       -- 正規化キー = lower(gra_name)
-  stored_name  TEXT NOT NULL UNIQUE,   -- 物理ファイル名(安全名)
+  stored_name  TEXT NOT NULL UNIQUE,   -- 物理ファイル名(= lower(gra_name)。/assets/chara/<stored_name>.png で解決)
   png_path     TEXT NOT NULL,          -- assets/chara/<stored_name>.png
   width        INTEGER NOT NULL,
   height       INTEGER NOT NULL,
   color_key    TEXT NOT NULL DEFAULT 'teal',
-  orig_sha256  TEXT NOT NULL,          -- 元BMPハッシュ(重複検出/冪等)
+  orig_sha256  TEXT NOT NULL,          -- 元画像ハッシュ(重複検出用)
+  protected    INTEGER NOT NULL DEFAULT 0,  -- 1=seed(削除不可)
   uploaded_by  TEXT,                   -- account_id(A-34)
   uploaded_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chara_graphics_sha ON chara_graphics(orig_sha256);
+
+-- マップチップシート([06]/[08]§5)。物理名 = mapset 名で、/assets/chip/<stored_name>.png 配信。
+-- 入力は左右分割(左=画像/右=マスク, 1024x96)を convert_chip で 512x96 透過PNG 化して保存。
+-- protected=1 はリポジトリ同梱 seed(削除不可)。
+CREATE TABLE IF NOT EXISTS chip_graphics (
+  mapset_name  TEXT NOT NULL,          -- mapset 名(原文, 表示用)
+  mapset_key   TEXT PRIMARY KEY,       -- 正規化キー = lower(mapset_name)
+  stored_name  TEXT NOT NULL UNIQUE,   -- 物理ファイル名(= lower(mapset_name))
+  png_path     TEXT NOT NULL,          -- assets/chip/<stored_name>.png
+  width        INTEGER NOT NULL,
+  height       INTEGER NOT NULL,
+  orig_sha256  TEXT NOT NULL,
+  protected    INTEGER NOT NULL DEFAULT 0,  -- 1=seed(削除不可)
+  uploaded_by  TEXT,
+  uploaded_at  TEXT NOT NULL
+);
 
 -- Index.txt 相当 + フォールバックカテゴリ
 CREATE TABLE IF NOT EXISTS chara_index (

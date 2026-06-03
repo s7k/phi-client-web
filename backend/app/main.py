@@ -38,6 +38,10 @@ def build_app(config: Config | None = None):
     # Store: migrate 実行済(Store.open 内で適用)。
     store = Store.open(cfg.db_path)
 
+    # リポジトリ同梱アセットを DB へ seed 登録(protected=1, 削除不可)。
+    from app.store.seed import seed_assets
+    seed_assets(store, cfg.assets_dir)
+
     # 認証/uid 暗号: 鍵は config 経由(env 未設定なら一時鍵)。
     cipher = UidCipher(cfg.secret_key)
     auth = AuthService(store, cipher)

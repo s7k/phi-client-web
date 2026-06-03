@@ -39,7 +39,13 @@
   color: var(--text-muted);
 }
 
-.charsel__logout {
+.charsel__header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.charsel__logout,
+.charsel__admin {
   cursor: pointer;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -49,7 +55,13 @@
   padding: 0.4rem 0.8rem;
 }
 
-.charsel__logout:not(:disabled):hover {
+.charsel__admin {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.charsel__logout:not(:disabled):hover,
+.charsel__admin:not(:disabled):hover {
   border-color: var(--accent);
 }
 

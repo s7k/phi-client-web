@@ -39,6 +39,8 @@ interface UiStoreState {
   confirm: ConfirmDialog | null;
   /** 設定パネル(F10)表示中か。 */
   settingsOpen: boolean;
+  /** 管理画面表示中か(管理者のみ)。 */
+  adminOpen: boolean;
   /** 進行中の世界移動(null=移動なし)。 */
   worldTransfer: WorldTransferState | null;
   /** 表示中のエラーバナー/トースト。 */
@@ -50,6 +52,7 @@ interface UiStoreState {
   openConfirm: (dialog: ConfirmDialog) => void;
   closeConfirm: () => void;
   setSettingsOpen: (open: boolean) => void;
+  setAdminOpen: (open: boolean) => void;
   setWorldTransfer: (t: WorldTransferState | null) => void;
   pushError: (err: ProtocolError, session?: string) => void;
   dismissError: (id: number) => void;
@@ -62,6 +65,7 @@ const initial = {
   privTo: null as string | null,
   confirm: null as ConfirmDialog | null,
   settingsOpen: false,
+  adminOpen: false,
   worldTransfer: null as WorldTransferState | null,
   errors: [] as ErrorBanner[],
 };
@@ -76,6 +80,7 @@ export const useUiStore = create<UiStoreState>((set) => ({
   openConfirm: (confirm) => set({ confirm }),
   closeConfirm: () => set({ confirm: null }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setAdminOpen: (adminOpen) => set({ adminOpen }),
   setWorldTransfer: (worldTransfer) => set({ worldTransfer }),
   pushError: (err, session) =>
     set((s) => ({

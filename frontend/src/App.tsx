@@ -30,6 +30,7 @@ import { Settings } from './components/Settings';
 import { TabBar } from './components/TabBar';
 import { ListView } from './components/ListView';
 import { EditDialog } from './components/EditDialog';
+import { AdminPanel } from './components/Admin/AdminPanel';
 import { TouchControls } from './components/TouchControls';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { ErrorBanners } from './components/ErrorBanners';
@@ -118,6 +119,7 @@ export function App({ controller }: { controller: WsController }) {
   // display.theme/fontScale を documentElement へ適用(ライト/ダーク切替)。
   useTheme();
   const activeTab = useUiStore((s) => s.activeTab);
+  const adminOpen = useUiStore((s) => s.adminOpen);
   // 起動時 token があればログイン済(自動復帰)→キャラ選択画面へ(A-34)。
   const [loggedIn, setLoggedIn] = useState(() => getStoredToken() !== null);
 
@@ -131,6 +133,9 @@ export function App({ controller }: { controller: WsController }) {
   let screen: React.ReactNode;
   if (!loggedIn) {
     screen = <Login onLoggedIn={() => setLoggedIn(true)} />;
+  } else if (adminOpen) {
+    // 管理画面(管理者がキャラ選択画面から開く)。
+    screen = <AdminPanel />;
   } else if (activeTab) {
     screen = (
       <>

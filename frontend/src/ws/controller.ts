@@ -55,6 +55,7 @@ import { DEFAULT_NOTIFY } from '../stores/settingsStore';
 import { useEagleEyeStore } from '../stores/eagleEyeStore';
 import { useNoticeStore } from '../stores/noticeStore';
 import { useUiStore } from '../stores/uiStore';
+import { useAccountStore } from '../stores/accountStore';
 import { notify } from '../lib/notify';
 import { applySnapshot } from '../stores/applySnapshot';
 import { resetSessionState } from '../stores';
@@ -327,6 +328,8 @@ export class WsController {
     const result = await restLogin(accountId, password);
     // token を保持・永続化し、WS auth ゲートを駆動(A-33/A-34)。
     this.applyToken(result.token);
+    // 管理者フラグを保持(管理画面ボタンの出し分け。変更系は BE で再検証)。
+    useAccountStore.getState().setIsAdmin(result.isAdmin);
     return result;
   }
 
@@ -386,6 +389,7 @@ export class WsController {
     resetSessionState();
     useSettingsStore.getState().reset();
     useUiStore.getState().reset(); // activeTab=null / worldTransfer / settingsOpen 等もクリア
+    useAccountStore.getState().reset(); // 管理者フラグもクリア
     await restLogout(token);
   }
 

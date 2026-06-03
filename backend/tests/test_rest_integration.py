@@ -138,8 +138,26 @@ def test_register_account(env):
                  json={"accountId": "newuser", "password": "password1"},
                  headers=HDR)
     assert r.status_code == 200
-    assert r.json() == {"ok": True}
+    # 既に他アカウントが存在する env のため 2件目以降 → isAdmin False。
+    assert r.json() == {"ok": True, "isAdmin": False}
     assert env._store.get_account("newuser") is not None
+
+
+def test_first_account_becomes_admin(tmp_path):
+    """アカウント0件の状態での初回登録は自動的に管理者化(2件目以降は一般)。"""
+    store = Store.open(":memory:")
+    auth = AuthService(store, UidCipher(UidCipher.generate_key()))
+    app = create_app(manager=object(), auth=auth, assets_dir=str(tmp_path / "a"))
+    c = TestClient(app)
+    r1 = c.post("/api/auth/register",
+                json={"accountId": "first", "password": "password1"}, headers=HDR)
+    assert r1.status_code == 200 and r1.json()["isAdmin"] is True
+    assert store.is_account_admin("first") is True
+    r2 = c.post("/api/auth/register",
+                json={"accountId": "second", "password": "password1"}, headers=HDR)
+    assert r2.status_code == 200 and r2.json()["isAdmin"] is False
+    assert store.is_account_admin("second") is False
+    store.close()
 
 
 def test_register_duplicate_409(env):

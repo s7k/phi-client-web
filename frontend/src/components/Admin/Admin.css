@@ -1,0 +1,248 @@
+.admin {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+  padding: 1.5rem;
+  background: radial-gradient(circle at 30% 20%, var(--surface), var(--bg) 70%);
+}
+
+.admin__card {
+  width: 100%;
+  max-width: 880px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-faint);
+  border-radius: 16px;
+  padding: 1.5rem 2rem 2rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+}
+
+.admin__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.admin__title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.admin__close,
+.admin__tab,
+.asset__kind {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+.admin__tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border-faint);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.admin__tab--active,
+.asset__kind--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #04212e;
+  font-weight: 700;
+}
+
+/* ── アセット ── */
+.asset__kindtabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.asset__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  padding: 1rem;
+  border: 1px solid var(--border-faint);
+  border-radius: 12px;
+  margin-bottom: 1rem;
+}
+
+.asset__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.asset__field input[type='text'] {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+}
+
+.asset__hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-faint);
+}
+
+.asset__upload {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #04212e;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 0.45rem 1.2rem;
+  cursor: pointer;
+}
+
+.asset__upload:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.asset__error {
+  color: #f87171;
+  margin: 0.5rem 0;
+}
+
+.asset__grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.asset__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border-faint);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.asset__preview {
+  max-width: 100%;
+  height: 80px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  background:
+    repeating-conic-gradient(#0003 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+.asset__name {
+  font-size: 0.8rem;
+  color: var(--text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset__dim {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+.asset__badge {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 0.4rem;
+}
+
+.asset__delete {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.asset__delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── テーブル(紐付け / ユーザ) ── */
+.idx__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
+}
+
+.idx__table,
+.users__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.idx__table th,
+.idx__table td,
+.users__table th,
+.users__table td {
+  border-bottom: 1px solid var(--border-faint);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  color: var(--text);
+}
+
+.idx__actions,
+.users__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.idx__actions button,
+.users__actions button {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.idx__actions button:disabled,
+.users__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.users__date {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.users__notice {
+  color: var(--accent);
+  margin: 0.5rem 0;
+}

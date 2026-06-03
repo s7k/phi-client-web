@@ -74,7 +74,7 @@ class CharaStorage:
             p.unlink()
 
 
-def _graphic_meta(g, *, dimension_warning: str | None = None) -> dict:
+def _graphic_meta(g) -> dict:
     """ChAraGraphic → REST メタ dict([08]§7.1)。"""
     quoted = urllib.parse.quote(g.gra_name, safe="")
     return {
@@ -83,7 +83,9 @@ def _graphic_meta(g, *, dimension_warning: str | None = None) -> dict:
         "width": g.width,
         "height": g.height,
         "colorKey": g.color_key,
-        "dimensionWarning": dimension_warning,
+        # 寸法不一致は upload 時に 400 拒否するため常に None(応答互換のため残置)。
+        "dimensionWarning": None,
+        "protected": g.protected,
         "uploadedAt": g.uploaded_at,
     }
 
@@ -153,6 +155,9 @@ def build_chara_router(
             name = stem
         if any(ord(c) < 0x20 for c in name) or len(name) > 255:
             raise HTTPException(400, "graName が不正(制御文字/長すぎ)")
+        # path traversal 対策: 物理名 = lower(graName) で配信するため区切り文字を禁止。
+        if any(sep in name for sep in ("/", "\\")) or name in (".", ".."):
+            raise HTTPException(400, "graName に使用できない文字(/ \\ .)が含まれます")
 
         try:
             key_rgb = parse_color_key(colorKey)
@@ -191,34 +196,34 @@ def build_chara_router(
         rgba = convert_colorkey(img, key_rgb)
         w, h = rgba.size
 
-        dimension_warning = None
+        # 寸法不一致は拒否(キャラ標準 96x160 固定)。
         if (w, h) != (CHARA_STD_W, CHARA_STD_H):
-            dimension_warning = (
-                f"キャラ標準 {CHARA_STD_W}x{CHARA_STD_H} と不一致: {w}x{h}"
+            raise HTTPException(
+                400,
+                f"キャラ標準 {CHARA_STD_W}x{CHARA_STD_H} と不一致: {w}x{h}",
             )
+
+        # 同名拒否: 物理名(= lower(graName))が既存なら 409。seed/既存アップロード
+        # の上書き事故を防ぐ。差し替えは一旦削除してから再アップロード運用とする。
+        if store.get_graphic(name) is not None:
+            raise HTTPException(409, f"同名グラが既に存在します: {name}")
 
         orig_sha = hashlib.sha256(raw).hexdigest()
-        # stored_name: sha256 由来の安全名(小文字16進, グラ名非直結[08]§3)。
-        stored_name = orig_sha[:32]
+        # stored_name = lower(graName)。/assets/chara/<stored_name>.png で配信解決。
+        stored_name = name.lower()
 
-        # 冪等: 既存 sha があれば PNG 再生成せず既存メタ返却([08]§4)。
-        existing = store.get_graphic_by_sha(orig_sha)
-        if existing is None:
-            png_path = storage.save_png(stored_name, rgba)
-            g = store.upsert_graphic(
-                name,
-                stored_name,
-                str(png_path),
-                w,
-                h,
-                orig_sha,
-                color_key=colorKey,
-                uploaded_by=account_id,
-            )
-        else:
-            g = existing
-
-        return _graphic_meta(g, dimension_warning=dimension_warning)
+        png_path = storage.save_png(stored_name, rgba)
+        g = store.upsert_graphic(
+            name,
+            stored_name,
+            str(png_path),
+            w,
+            h,
+            orig_sha,
+            color_key=colorKey,
+            uploaded_by=account_id,
+        )
+        return _graphic_meta(g)
 
     @router.get("/graphics")
     async def list_graphics(request: Request) -> list[dict]:
@@ -268,11 +273,10 @@ def build_chara_router(
         g = store.get_graphic(urllib.parse.unquote(gra_name))
         if g is None:
             raise HTTPException(404, "グラフィック未登録")
+        if g.protected:
+            raise HTTPException(403, "初期同梱グラは削除できません")
         storage.delete(g.stored_name)
-        store.conn.execute(
-            "DELETE FROM chara_graphics WHERE gra_key = ?", (g.gra_key,)
-        )
-        store.conn.commit()
+        store.delete_graphic(g.gra_name)
         return {"deleted": g.gra_name}
 
     # ------------------------------------------------------------------
