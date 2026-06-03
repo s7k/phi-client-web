@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
+import { useSettingsStore, type DisplaySettings } from '../stores/settingsStore';
 import { CHIP_SIZE, gridDim, hasItem } from '../lib/mapRender';
 import { graCandidateUrls } from '../lib/charaGra';
 import { drawMap, type ImageRefs } from '../lib/drawMap';
@@ -32,6 +33,9 @@ export interface MapViewProps {
 
 export function MapView({ session, loader, disableAnimation }: MapViewProps) {
   const map = useMapStore((s) => s.bySession[session]);
+  const cellScale =
+    useSettingsStore((s) => (s.byScope['display'] as DisplaySettings | undefined)?.cellScale) ?? 1;
+  const cellSize = CHIP_SIZE * cellScale;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [animFrame, setAnimFrame] = useState(0);
 
@@ -74,15 +78,15 @@ export function MapView({ session, loader, disableAnimation }: MapViewProps) {
       items: cache.get(ITEMS_URL) ?? null,
       chara: (url) => cache.get(url) ?? null,
     };
-    drawMap(ctx, map, imgs, animFrame);
-  }, [map, cache, animFrame]);
+    drawMap(ctx, map, imgs, animFrame, cellSize);
+  }, [map, cache, animFrame, cellSize]);
 
   if (!map) {
     return <div className="map-view map-view--empty" data-testid="map-empty" />;
   }
 
   const dim = gridDim(map.size);
-  const px = dim * CHIP_SIZE;
+  const px = dim * cellSize;
   return (
     <canvas
       ref={canvasRef}

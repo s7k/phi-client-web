@@ -58,6 +58,7 @@ _DISPLAY_CHECKS = {
     "mapSize": lambda v: v in (40, 57),
     "mapStyle": lambda v: v in ("turn", "solid"),
     "eagleEye": _is_bool,
+    "cellScale": lambda v: v in (1, 2),
     "fontScale": lambda v: _is_number(v) and 0.5 <= v <= 3.0,
     "theme": lambda v: v in ("dark", "light"),
 }

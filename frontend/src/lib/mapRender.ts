@@ -83,6 +83,32 @@ export function chipSrcRect(index: number): {
   };
 }
 
+// ── チップ合成クラス(拡大表示 scale=2 用) ────────────────────
+// 64pxセルを32px原画から合成する際の埋め方。引き伸ばし一辺倒を避ける。
+//   tile   : 床/水/草など平面 → 本体32×32を2×2にタイル敷き(くっきり)
+//   center : 箱/小物など → 32×32を本体中央へ1枚
+//   stretch: 壁/木/扉など段差あり(オーバーハング)→ 2x拡大(高さ保持)
+export type ChipClass = 'tile' | 'stretch' | 'center';
+
+/** index→クラス(既定 stretch)。実画面で目視調整する前提の初期分類。 */
+export const CHIP_CLASS: Readonly<Record<number, ChipClass>> = {
+  // 平面(床/水/草系)
+  0: 'tile',
+  1: 'tile',
+  2: 'tile',
+  4: 'tile',
+  5: 'tile',
+  // 壁/木/扉/構造物は段差を保つため stretch(既定なので明示不要だが意図を残す)
+  6: 'stretch',
+  7: 'stretch',
+  8: 'stretch',
+};
+
+/** チップindexの合成クラス。未登録は 'stretch'。 */
+export function chipClass(index: number): ChipClass {
+  return CHIP_CLASS[index] ?? 'stretch';
+}
+
 // ── 看板 ────────────────────────────────────────────────
 
 /** 看板overlay用 硬質面チップbyte(壁/扉等)。 */
@@ -158,12 +184,14 @@ export const ITEM_CLIP_H = ITEM_SPRITE_SIZE - 11; // 21
  * @param chipByte 下地チップbyte(防御円判定)。
  * @param dstX     セル左上X(col*cs)。
  * @param dstY     セル左上Y(row*cs)。
+ * @param scale    描画倍率(1=等倍 / 2=拡大)。dst サイズ・オフセットに乗じる(src は不変)。
  */
 export function itemDrawRect(
   no: number,
   chipByte: number,
   dstX: number,
   dstY: number,
+  scale = 1,
 ): {
   sx: number;
   sy: number;
@@ -176,8 +204,8 @@ export function itemDrawRect(
 } {
   const s = ITEM_SPRITE_SIZE;
   const srcX = no * s;
-  // アイテムはチップ上端から8px下げ(C++ YPos+8)。
-  const drawY = dstY + 8;
+  // アイテムはチップ上端から8px下げ(C++ YPos+8)。拡大時は ×scale。
+  const drawY = dstY + 8 * scale;
 
   if (isCircleChip(chipByte)) {
     // DrawPart: 上11pxクリップで可視21pxのみ。item 5/6 は内容を src_y+5。
@@ -189,11 +217,11 @@ export function itemDrawRect(
       sh: ITEM_CLIP_H,
       dx: dstX,
       dy: drawY,
-      dw: s,
-      dh: ITEM_CLIP_H,
+      dw: s * scale,
+      dh: ITEM_CLIP_H * scale,
     };
   }
-  return { sx: srcX, sy: 0, sw: s, sh: s, dx: dstX, dy: drawY, dw: s, dh: s };
+  return { sx: srcX, sy: 0, sw: s, sh: s, dx: dstX, dy: drawY, dw: s * scale, dh: s * scale };
 }
 
 // ── キャラ ────────────────────────────────────────────────
@@ -251,18 +279,21 @@ export const CHARA_H = 32;
  * @param dir   キャラ向き(文字 or 数値)。
  * @param gigant '*'=巨大 / それ以外=通常。
  * @param animFrame アニメフレーム(0/1, 内部で &1)。
+ * @param large 拡大表示モード等で、通常キャラでも右側32×32フレームを使う。
+ *   巨大('*')は元々大フレーム。large=true で通常キャラも大フレームへ。
  */
 export function charaSrcRect(
   dir: string | number,
   gigant: string | undefined,
   animFrame = 0,
+  large = false,
 ): { sx: number; sy: number; sw: number; sh: number } {
   const row = dirToRow(dir);
   const frame = animFrame & 1;
   const sy = row * CHARA_H;
 
-  if (isGiant(gigant)) {
-    // 巨大フレームは通常2枚の後ろ: x=32(frame0) / 64(frame1)
+  if (large || isGiant(gigant)) {
+    // 大フレームは通常2枚の後ろ: x=32(frame0) / 64(frame1)
     const sx = CHARA_W_NORMAL * 2 + frame * CHARA_W_GIANT;
     return { sx, sy, sw: CHARA_W_GIANT, sh: CHARA_H };
   }

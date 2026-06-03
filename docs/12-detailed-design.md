@@ -97,9 +97,11 @@ CREATE TABLE sessions_web (        -- Webログインセッション(WSとは別
 ### 3.3 scope: `display`
 ```jsonc
 { "mapSize": 57, "mapStyle": "solid", "eagleEye": false,
-  "fontScale": 1.0, "theme": "dark" }
+  "cellScale": 1, "fontScale": 1.0, "theme": "dark" }
 ```
-(`mapSize`/`mapStyle` は `view.set`[07]§5.8 と連動しレガシーへ反映)
+- `mapSize`/`mapStyle` は `view.set`[07]§5.8 と連動しレガシーへ反映。
+- `cellScale`(1=標準32px / 2=拡大64px)は**FE描画専用**(レガシー非連動)。拡大時は
+  7×7をセル64pxで描画し、キャラは右側32×32フレーム・チップは種別合成(床=タイル/壁木=2x/小物=中央)。
 
 ### 3.4 scope: `intervals`
 ```jsonc
