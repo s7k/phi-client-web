@@ -39,6 +39,8 @@ export interface DisplaySettings {
   mapSize: 40 | 57;
   mapStyle: 'turn' | 'solid';
   eagleEye: boolean;
+  /** マップ表示倍率(1=標準32px / 2=拡大64px)。FE描画専用(レガシー非連動)。 */
+  cellScale: 1 | 2;
   fontScale: number;
   theme: 'dark' | 'light';
 }
@@ -73,6 +75,7 @@ export const DEFAULT_DISPLAY: DisplaySettings = {
   mapSize: 57,
   mapStyle: 'solid',
   eagleEye: false,
+  cellScale: 1,
   fontScale: 1.0,
   theme: 'dark',
 };

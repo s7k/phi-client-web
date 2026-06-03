@@ -11,6 +11,7 @@ import {
   CHIP_SIZE,
   boardChipIndex,
   charaSrcRect,
+  chipClass,
   chipIndices,
   chipSrcRect,
   cellIndex,
@@ -60,24 +61,25 @@ function nameInitial(name: string): string {
  * @param input map状態。
  * @param imgs  画像参照。
  * @param animFrame アニメフレーム(0/1)。
+ * @param cellSize セル1辺px(既定32)。拡大表示は64。scale=cellSize/32(1 or 2)。
  */
 export function drawMap(
   ctx: CanvasRenderingContext2D,
   input: DrawMapInput,
   imgs: ImageRefs,
   animFrame = 0,
+  cellSize: number = CHIP_SIZE,
 ): void {
   const dim = gridDim(input.size);
-  const cs = CHIP_SIZE;
-  // チップは高48px、セル32px。上16px透過分を上にずらして配置。
-  const chipYOffset = CHIP_HEIGHT - cs; // 16
+  const cs = cellSize;
+  const scale = cs / CHIP_SIZE; // 1 or 2
 
   ctx.clearRect(0, 0, dim * cs, dim * cs);
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, dim * cs, dim * cs);
 
   const chipImg = imgs.chip;
-  const half = cs / 2; // 16
+  const half = cs / 2; // 16(等倍) / 32(拡大)
   // 水有無グリッド(水縁エフェクト用)。チップ画像があれば1回構築。
   const water = chipImg ? buildWaterGrid(input.cells, dim) : null;
 
@@ -88,12 +90,8 @@ export function drawMap(
       for (let col = 0; col < dim; col++) {
         const cell = input.cells[cellIndex(col, row, dim)];
         if (!cell) continue;
-        const dstX = col * cs;
-        const dstY = row * cs - chipYOffset;
         for (const idx of chipIndices(cell.chip)) {
-          const r = chipSrcRect(idx);
-          if (!r) continue; // 未知index → 描画スキップ(index0誤描画を避ける)
-          ctx.drawImage(chipImg, r.sx, r.sy, r.sw, r.sh, dstX, dstY, cs, CHIP_HEIGHT);
+          drawChip(ctx, chipImg, idx, col, row, cs, scale);
         }
       }
     }
@@ -119,18 +117,12 @@ export function drawMap(
       }
     }
 
-    // 2. 看板overlay(attribute bit 0x08)
+    // 2. 看板overlay(attribute bit 0x08)。看板チップは段差ありのため stretch 描画。
     if (chipImg) {
       for (let col = 0; col < dim; col++) {
         const cell = input.cells[cellIndex(col, row, dim)];
         if (!cell || !hasBoard(cell.attr)) continue;
-        const r = chipSrcRect(boardChipIndex(cell.chip));
-        if (!r) continue;
-        ctx.drawImage(
-          chipImg,
-          r.sx, r.sy, r.sw, r.sh,
-          col * cs, row * cs - chipYOffset, cs, CHIP_HEIGHT,
-        );
+        drawChip(ctx, chipImg, boardChipIndex(cell.chip), col, row, cs, scale, 'stretch');
       }
     }
 
@@ -139,8 +131,8 @@ export function drawMap(
       for (let col = 0; col < dim; col++) {
         const cell = input.cells[cellIndex(col, row, dim)];
         if (!cell || !hasItem(cell.attr)) continue;
-        // 防御円('x'/'%')上は上11pxクリップで円内に収める(itemDrawRect)。
-        const r = itemDrawRect(itemNo(cell.attr), cell.chip, col * cs, row * cs);
+        // 防御円('x'/'%')上は上11pxクリップで円内に収める(itemDrawRect)。scale で拡大。
+        const r = itemDrawRect(itemNo(cell.attr), cell.chip, col * cs, row * cs, scale);
         ctx.drawImage(
           imgs.items,
           r.sx, r.sy, r.sw, r.sh,
@@ -154,12 +146,12 @@ export function drawMap(
       .filter((c) => c.y === row && c.x >= 0 && c.x < dim)
       .sort((a, b) => (a.x - b.x) || (a.layer - b.layer));
     for (const ch of rowChars) {
-      drawChara(ctx, ch, cs, imgs, animFrame);
+      drawChara(ctx, ch, cs, scale, imgs, animFrame);
     }
   }
 
   // 5. キャラ名ラベル(中心=自キャラは除外)。
-  drawCharaNames(ctx, input.chars, cs, dim);
+  drawCharaNames(ctx, input.chars, cs, scale, dim);
 
   // 6. 中心セル(自キャラ位置)ハイライト(移植元: QColor(255,255,255,40))。
   const cx = Math.floor(dim / 2);
@@ -170,11 +162,68 @@ export function drawMap(
   ctx.restore();
 }
 
+/**
+ * 1チップを1セルへ描画。scale=2(拡大)時は合成クラスで埋め方を分岐。
+ *   stretch: src 32×48 → cs × (CHIP_HEIGHT*scale)、上(16*scale)px はみ出し(段差)。
+ *   tile   : 本体 32×32 を 2×2 タイル敷き(等倍くっきり)。
+ *   center : 本体 32×32 を本体中央へ1枚。
+ * scale=1 は常に stretch(=現行の等倍描画)で挙動不変。
+ * @param klassOverride 看板等で明示クラス指定する場合に使う。
+ */
+function drawChip(
+  ctx: CanvasRenderingContext2D,
+  chipImg: HTMLImageElement,
+  index: number,
+  col: number,
+  row: number,
+  cs: number,
+  scale: number,
+  klassOverride?: 'tile' | 'stretch' | 'center',
+): void {
+  const r = chipSrcRect(index);
+  if (!r) return; // 未知index → 描画スキップ(index0誤描画を避ける)
+  const klass = scale === 2 ? (klassOverride ?? chipClass(index)) : 'stretch';
+  const cellX = col * cs;
+  const cellTop = row * cs;
+
+  if (klass === 'stretch') {
+    const overhang = (CHIP_HEIGHT - CHIP_SIZE) * scale; // 16*scale
+    ctx.drawImage(chipImg, r.sx, r.sy, r.sw, r.sh, cellX, cellTop - overhang, cs, CHIP_HEIGHT * scale);
+    return;
+  }
+
+  // tile / center: 本体 32×32 = src の下32px(上16px=オーバーハングを除く)。
+  const bodySx = r.sx;
+  const bodySy = r.sy + (CHIP_HEIGHT - CHIP_SIZE); // +16
+  const body = CHIP_SIZE; // 32
+
+  if (klass === 'tile') {
+    for (let ty = 0; ty < 2; ty++) {
+      for (let tx = 0; tx < 2; tx++) {
+        ctx.drawImage(
+          chipImg, bodySx, bodySy, body, body,
+          cellX + tx * half32(cs), cellTop + ty * half32(cs), half32(cs), half32(cs),
+        );
+      }
+    }
+    return;
+  }
+  // center
+  const off = (cs - CHIP_SIZE) / 2;
+  ctx.drawImage(chipImg, bodySx, bodySy, body, body, cellX + off, cellTop + off, CHIP_SIZE, CHIP_SIZE);
+}
+
+/** タイル1枚の1辺(セルの半分)。 */
+function half32(cs: number): number {
+  return cs / 2;
+}
+
 /** 1キャラを描画(スプライト or placeholder)。 */
 function drawChara(
   ctx: CanvasRenderingContext2D,
   ch: MapChar,
   cs: number,
+  scale: number,
   imgs: ImageRefs,
   animFrame: number,
 ): void {
@@ -184,10 +233,11 @@ function drawChara(
     return img !== null; // null=ロード失敗。undefined(未ロード)は存在候補として許可。
   });
 
+  const phFont = `bold ${14 * scale}px monospace`;
   if (resolved.kind === 'placeholder' || !resolved.url) {
     ctx.save();
     ctx.fillStyle = '#ff0';
-    ctx.font = 'bold 14px monospace';
+    ctx.font = phFont;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(resolved.initial ?? nameInitial(ch.name), ch.x * cs + cs / 2, ch.y * cs + cs / 2);
@@ -200,7 +250,7 @@ function drawChara(
     // 未ロード: placeholder頭文字を暫定描画。
     ctx.save();
     ctx.fillStyle = '#ff0';
-    ctx.font = 'bold 14px monospace';
+    ctx.font = phFont;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(nameInitial(ch.name), ch.x * cs + cs / 2, ch.y * cs + cs / 2);
@@ -208,13 +258,17 @@ function drawChara(
     return;
   }
 
-  const r = charaSrcRect(ch.dir, ch.gigant, animFrame);
+  // 拡大表示(scale=2)は通常キャラも右側32×32フレームを使い等倍中央配置。
+  const r = charaSrcRect(ch.dir, ch.gigant, animFrame, scale === 2);
   const baseX = ch.x * cs + Math.floor((cs - r.sw) / 2);
   const baseY = ch.y * cs + Math.floor((cs - CHARA_H) / 2);
 
-  // 巨大キャラ magnify(#ex-obj): 描画原点補正 + 拡大サイズ。
+  // 巨大キャラ magnify(#ex-obj): 描画原点補正 + 拡大サイズ。scale で拡大。
   if (ch.magnify) {
-    const d = magnifiedDst(baseX, baseY, ch.magnify);
+    const m = scale === 1
+      ? ch.magnify
+      : { w: ch.magnify.w * scale, h: ch.magnify.h * scale, z: ch.magnify.z * scale };
+    const d = magnifiedDst(baseX, baseY, m);
     ctx.drawImage(img, r.sx, r.sy, r.sw, r.sh, d.dx, d.dy, d.dw, d.dh);
     return;
   }
@@ -227,6 +281,7 @@ function drawCharaNames(
   ctx: CanvasRenderingContext2D,
   chars: MapChar[],
   cs: number,
+  scale: number,
   dim: number,
 ): void {
   const cx = Math.floor(dim / 2);
@@ -242,7 +297,7 @@ function drawCharaNames(
   if (perCell.size === 0) return;
 
   ctx.save();
-  ctx.font = 'bold 9px monospace';
+  ctx.font = `bold ${9 * scale}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   for (const { x, y, name } of perCell.values()) {

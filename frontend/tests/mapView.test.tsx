@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
 import { MapView, chipUrl, ITEMS_URL } from '../src/components/MapView';
 import { useMapStore } from '../src/stores/mapStore';
+import { useSettingsStore } from '../src/stores/settingsStore';
 import type { MapEvent } from '../src/types/protocol';
 
 beforeEach(() => {
   useMapStore.getState().reset();
+  useSettingsStore.getState().reset();
 });
 
 function setMap(over: Partial<MapEvent> = {}) {
@@ -45,6 +47,15 @@ describe('MapView', () => {
     const { getByTestId } = render(<MapView session="s1" disableAnimation />);
     const canvas = getByTestId('map-canvas') as HTMLCanvasElement;
     expect(canvas.width).toBe(5 * 32);
+  });
+
+  it('拡大表示(cellScale=2)は7x7=448px', () => {
+    useSettingsStore.getState().setScope('display', { cellScale: 2 });
+    setMap();
+    const { getByTestId } = render(<MapView session="s1" disableAnimation />);
+    const canvas = getByTestId('map-canvas') as HTMLCanvasElement;
+    expect(canvas.width).toBe(7 * 64);
+    expect(canvas.height).toBe(7 * 64);
   });
 
   it('チップURLをローダで要求', async () => {

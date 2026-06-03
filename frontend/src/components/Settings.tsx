@@ -206,6 +206,19 @@ export function Settings() {
               <span>EagleEye(俯瞰)</span>
             </label>
             <label className="settings__row">
+              <span>表示倍率</span>
+              <select
+                aria-label="表示倍率"
+                value={dp.cellScale}
+                onChange={(e) =>
+                  saveDisplay({ cellScale: Number(e.target.value) as DisplaySettings['cellScale'] })
+                }
+              >
+                <option value={1}>標準(32px)</option>
+                <option value={2}>拡大(64px)</option>
+              </select>
+            </label>
+            <label className="settings__row">
               <span>文字倍率</span>
               <input
                 type="range"
