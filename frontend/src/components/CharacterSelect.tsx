@@ -12,12 +12,15 @@
 import { useEffect, useState } from 'react';
 import { useWs } from '../ws/WsContext';
 import { useUiStore } from '../stores/uiStore';
+import { useAccountStore } from '../stores/accountStore';
 import type { Character } from '../api/characters';
 import './CharacterSelect.css';
 
 export function CharacterSelect({ onLoggedOut }: { onLoggedOut: () => void }) {
   const ws = useWs();
   const setActiveTab = useUiStore((s) => s.setActiveTab);
+  const setAdminOpen = useUiStore((s) => s.setAdminOpen);
+  const isAdmin = useAccountStore((s) => s.isAdmin);
 
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
@@ -148,14 +151,26 @@ export function CharacterSelect({ onLoggedOut }: { onLoggedOut: () => void }) {
       <div className="charsel__card">
         <header className="charsel__header">
           <h1 className="charsel__title">キャラクター選択</h1>
-          <button
-            className="charsel__logout"
-            type="button"
-            onClick={() => void handleLogout()}
-            disabled={busy}
-          >
-            ログアウト
-          </button>
+          <div className="charsel__header-actions">
+            {isAdmin && (
+              <button
+                className="charsel__admin"
+                type="button"
+                onClick={() => setAdminOpen(true)}
+                disabled={busy}
+              >
+                管理画面
+              </button>
+            )}
+            <button
+              className="charsel__logout"
+              type="button"
+              onClick={() => void handleLogout()}
+              disabled={busy}
+            >
+              ログアウト
+            </button>
+          </div>
         </header>
 
         {loading && <p className="charsel__hint">読み込み中…</p>}

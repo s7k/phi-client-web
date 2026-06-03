@@ -220,14 +220,15 @@ def test_graphic_gra_key_unique(store):
     assert g.orig_sha256 == "sha_b"
 
 
-def test_graphic_sha256_idempotent(store):
-    first = store.upsert_graphic("GraA", "stored_a", "p1", 48, 64, "sha_x")
-    # 同一 sha を別名でアップロード → 既存を返し再生成しない([08]§4 冪等)
-    again = store.upsert_graphic("GraB", "stored_b", "p2", 1, 1, "sha_x")
-    assert again.stored_name == first.stored_name
-    assert again.gra_name == "GraA"
+def test_graphic_same_sha_different_name_distinct_rows(store):
+    # sha 冪等は廃止: 同一 sha でも別名(別 gra_key)は別行として登録される
+    # (物理名 = lower(gra_name) で配信解決するため名前ごとに保存)。
+    first = store.upsert_graphic("GraA", "graa", "p1", 96, 160, "sha_x")
+    again = store.upsert_graphic("GraB", "grab", "p2", 96, 160, "sha_x")
+    assert again.gra_name == "GraB"
+    assert again.stored_name != first.stored_name
     rows = store.conn.execute("SELECT COUNT(*) c FROM chara_graphics").fetchone()
-    assert rows["c"] == 1
+    assert rows["c"] == 2
 
 
 def test_graphic_by_sha(store):
