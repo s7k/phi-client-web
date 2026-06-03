@@ -101,7 +101,17 @@ backend/
 
 ## 7. REST API
 
-ベース: `/api/chara`。認証必須(セッション/トークン)。レスポンスはUTF-8 JSON。
+ベース: `/api/chara`。変更系は管理者限定、GET 系は公開(レート制限のみ)。レスポンスはUTF-8 JSON。
+全 REST の as-built 一覧(認可・エラー・副作用)は [15-rest-api.md](15-rest-api.md) を参照。
+
+> **as-built 補足(実装で確定した挙動)**:
+> - 寸法は **96×160 固定**。不一致は `dimensionWarning` ではなく **`400` で拒否**。
+> - 物理名(`stored_name`)= `lower(graName)`。`/assets/chara/<lower(graName)>.png` で配信され、
+>   FE のグラ解決(§9)と一致する(旧設計の sha 由来 stored_name は廃止)。
+> - **同名(gra_key 衝突)は `409`**(sha 冪等は廃止)。差し替えは削除→再アップロード。
+> - `graName` の `/ \ .`・制御文字は `400`(path traversal 対策)。
+> - リポジトリ同梱 seed は `protected:true`(起動時 DB 登録)で **削除不可(`403`)**。
+> - マップチップは別ルータ `/api/chip`(入力 1024×96 左右分割 → 512×96)。[15-rest-api.md](15-rest-api.md) §5。
 
 ### 7.1 グラフィック
 | メソッド | パス | 説明 |
@@ -119,7 +129,8 @@ POST レスポンス例:
 ```jsonc
 { "graName": "野ネズミ", "url": "/api/chara/graphics/%E9%87%8E%E3%83%8D%E3%82%BA%E3%83%9F/png",
   "width": 96, "height": 160, "colorKey": "teal",
-  "dimensionWarning": null, "uploadedAt": "2026-06-01T14:00:00Z" }
+  "protected": false, "dimensionWarning": null, "uploadedAt": "2026-06-01T14:00:00Z" }
+// dimensionWarning は応答互換のため残置(常に null。不一致は 400 拒否)。
 ```
 
 ### 7.2 Index(エイリアス)
