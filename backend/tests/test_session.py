@@ -147,6 +147,22 @@ async def test_snapshot_includes_active_list(mgr):
     assert "list" in snap and snap["list"]["active"] is True
 
 
+async def test_list_select_cancel_closes_list(mgr):
+    # phi_dm は #ex-list-mode-end を送らない。ゲート選択でキャンセルしても残っていた。
+    out: list[dict] = []
+    sid = await mgr.open_session("char1", on_event=out.append)
+    mgr._fake.inject(b"#list", b"1: gate A", b"#end-list", b"#s-edit")
+    async def waiter():
+        while not mgr._sessions[sid].list_active:
+            await asyncio.sleep(0.005)
+    await asyncio.wait_for(waiter(), 2.0)
+    await mgr.handle_intent(sid, {"type": "list.select", "value": "cancel"})
+    assert mgr._fake.sent[-1] == b".\n"
+    assert mgr._sessions[sid].list_active is False
+    assert any(e["type"] == "list" and e["active"] is False for e in out)
+    assert "list" not in mgr.build_snapshot(sid)
+
+
 async def test_reattach_resends_snapshot(mgr):
     out: list[dict] = []
     sid = await mgr.open_session("char1", on_event=out.append)

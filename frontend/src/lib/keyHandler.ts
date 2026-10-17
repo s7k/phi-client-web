@@ -158,7 +158,6 @@ const COMMAND_RAW_WASD: Record<string, string> = {
   m: 'check\nlook',
   n: 'n',
   r: 'spells',
-  t: '#ex-map style=turn',
   y: 'y',
 };
 const COMMAND_RAW_NUMPAD: Record<string, string> = {
@@ -171,7 +170,6 @@ const COMMAND_RAW_NUMPAD: Record<string, string> = {
   n: 'n',
   r: 'spells',
   s: 'write',
-  t: '#ex-map style=turn',
   y: 'y',
 };
 

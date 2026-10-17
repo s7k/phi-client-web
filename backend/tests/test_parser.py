@@ -92,6 +92,15 @@ def test_map_full_frame(parser):
     assert len(m["chars"]) == 3
 
 
+def test_map_style_follows_server_echo(parser):
+    # 入力欄から #ex-map style=solid を直接送っても、エコーで map.style が切り替わる
+    assert "style" not in parser.feed(b"#m57 .")[0]
+    assert parser.feed(b"#ex-map style=turn") == []
+    assert parser.feed(b"#m57 .")[0]["style"] == "turn"
+    parser.feed(b"#ex-map style=solid")
+    assert parser.feed(b"#m57 .")[0]["style"] == "solid"
+
+
 def test_map_chars_normalized(parser):
     m = _feed_map_seq(parser, [
         "m57_M.bin", "m57_O_char.bin", "m57_dot.bin",
@@ -250,6 +259,8 @@ def test_list_closes_on_ex_list_mode_end(parser):
 def test_more_block(parser):
     evs = parser.feed(b"#more")
     assert any(e["type"] == "mode" and e["more"] for e in evs)
+    # 制御行 #more 自体はログに出さない(看板本文に混ざる)
+    assert not any(e["type"] == "message" for e in evs)
     # ブロック内はログ
     inner = parser.feed("続きの行".encode("cp932"))
     assert inner[0]["channel"] == "log"
