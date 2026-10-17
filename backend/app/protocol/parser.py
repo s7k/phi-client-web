@@ -175,6 +175,8 @@ class ProtocolParser:
         self._eagle = _EagleEyeAccum()
         # 直近 mapset(eagleEye payload の任意 mapset 付与用, A-19)。
         self._mapset: str | None = None
+        # サーバがエコーした表示スタイル(turn/solid)。未受信は None。
+        self._map_style: str | None = None
 
     # ------------------------------------------------------------------
     # マップフレーム
@@ -288,10 +290,9 @@ class ProtocolParser:
 
         # --- モードフラグ ---------------------------------------------
         if text == "#more":
+            # 制御行なのでログに出さない(看板本文の先頭に "#more" が混ざっていた)。
             self._in_more = True
-            evs = self._set_mode(more=True)
-            evs.append(self._message("log", text))
-            return evs
+            return self._set_mode(more=True)
         if text == "#end-more":
             self._in_more = False
             return self._set_mode(more=False)
@@ -312,9 +313,7 @@ class ProtocolParser:
             return [{"type": "list", "active": True, "lines": lines}]
         if text == "#ex-list-mode-end":
             # リストモードの真の終了 → 非表示化。
-            evs: list[dict] = [{"type": "list", "active": False}]
-            evs.extend(self._set_mode(list=False))
-            return evs
+            return self.end_list()
 
         if text == "#attack":
             return self._set_mode(attack=True)
@@ -389,8 +388,11 @@ class ProtocolParser:
             return [{"type": "notice", "area": text[16:]}]
 
         # --- 表示モード(エコー。内部状態更新用。FE は view.set で要求) ---
-        if text in ("#ex-map size=57", "#ex-map size=40",
-                    "#ex-map style=turn", "#ex-map style=solid"):
+        if text in ("#ex-map style=turn", "#ex-map style=solid"):
+            # 入力欄からの直接送信でも切り替わるので、エコーを正として map.style に載せる。
+            self._map_style = text[len("#ex-map style="):]
+            return []
+        if text in ("#ex-map size=57", "#ex-map size=40"):
             return []
 
         # --- 世界移動 --------------------------------------------------
@@ -413,6 +415,18 @@ class ProtocolParser:
     # ------------------------------------------------------------------
     # モード差分 emit
     # ------------------------------------------------------------------
+
+    def end_list(self) -> list[dict]:
+        """リストを閉じるイベントを返す。
+
+        phi_dm(v5y/fix-phidm とも)は #ex-list-mode-end を実装しておらず送ってこない。
+        選択/キャンセル送信時に session 側からも呼ぶ。
+        """
+        self._in_list = False
+        self._list_lines = []
+        evs: list[dict] = [{"type": "list", "active": False}]
+        evs.extend(self._set_mode(list=False))
+        return evs
 
     def _set_mode(self, **changes) -> list[dict]:
         """モードフラグを更新。変化があれば全量 mode イベントを返す。"""
@@ -599,6 +613,8 @@ class ProtocolParser:
             "cells": self._map_cells if self._map_cells is not None else [],
             "chars": list(self._map_chars),
         }
+        if self._map_style is not None:
+            ev["style"] = self._map_style
         # フレーム送出後、次フレームの最初の O 行で chara をクリアする予約
         # (C++ SetCharaGraDataClearFlag 相当)。chars 自体は次 O 行まで保持。
         self._chara_clear_pending = True
