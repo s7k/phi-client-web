@@ -19,6 +19,6 @@ PCGL 文書自体は自由にコピー・頒布可、**改変不可**。グラ�
 
 ## PCGL 以外のグラフィックス
 
-`assets/chara/sushi_*.png`(朱蓮の寿司の魔物 5 体)は、`tools/sushi_gra/gen.py` で描き起こした絵。
+`assets/chara/sushi_*.png`(朱蓮の回転寿司の魔物)は、`tools/sushi_gra/gen.py` で描き起こした絵。
 PCGL のグラフィックスを元にしていない為、コードと同じ MIT License([`LICENSE`](../LICENSE))で扱う。
 旧クライアント用の BMP(`tools/sushi_gra/bmp/`)も同じ。

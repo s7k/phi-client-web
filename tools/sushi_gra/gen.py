@@ -1,7 +1,8 @@
 """寿司のキャラグラ(96x160)を描く。行=向き(後/右/前/左)、列=[小0][小1][大0][大1]。
 
-朱蓮の寿司の魔物(Uni/Toro/Ika/Ebi/Tamago)用に、ネタごとに1枚描く。
-握りは底の平らな俵形のシャリに、両端が少し垂れたネタを被せる。軍艦(ウニ)は海苔の円柱に盛る。
+朱蓮の回転寿司の魔物用に、ネタごとに1枚描く。
+握りは底の平らな俵形のシャリに、両端が少し垂れたネタを被せる。軍艦(ウニ・イクラ・ネギトロ)は海苔の円柱に盛る。
+巻物(かっぱ巻き)は海苔の円柱の上面にシャリと具を見せる。
 後/前は端から見た短い形、右は横長、左は右の左右反転。コマ1は1px跳ねる。
 
     python3 tools/sushi_gra/gen.py assets/chara [BMP出力先]
@@ -25,6 +26,14 @@ NETA = {
     'ika':    dict(top=(236, 244, 255), side=(190, 210, 238), dark=(140, 166, 206), hi=(255, 255, 255)),
     'ebi':    dict(top=(255, 196, 170), side=(246, 112, 72), dark=(200, 64, 40), hi=(255, 240, 228)),
     'tamago': dict(top=(255, 228, 110), side=(240, 196, 56), dark=(196, 148, 30), hi=(255, 246, 180)),
+    'salmon':   dict(top=(255, 160, 96), side=(240, 118, 60), dark=(200, 84, 40), hi=(255, 222, 196)),
+    'maguro':   dict(top=(214, 40, 60), side=(176, 22, 44), dark=(128, 12, 32), hi=(240, 96, 110)),
+    'hamachi':  dict(top=(250, 222, 200), side=(236, 186, 164), dark=(196, 106, 100), hi=(255, 244, 232)),
+    'tako':     dict(top=(252, 244, 240), side=(230, 214, 214), dark=(150, 46, 74), hi=(255, 255, 255)),
+    'anago':    dict(top=(150, 92, 52), side=(116, 64, 34), dark=(78, 40, 20), hi=(206, 150, 96)),
+    'ikura':    dict(top=(250, 96, 40), side=(214, 54, 20), dark=(150, 28, 10), hi=(255, 220, 180), kind='gunkan'),
+    'negitoro': dict(top=(240, 150, 160), side=(214, 104, 118), dark=(170, 70, 84), hi=(255, 210, 214), kind='gunkan'),
+    'kappa':    dict(top=(110, 190, 80), side=(70, 150, 50), dark=(40, 100, 30), hi=(190, 236, 150), kind='maki'),
 }
 
 
@@ -81,7 +90,20 @@ def sushi(name, w, bob, end_view):
     ry = 4.0 if big else 2.6
     base = 31 - 3 - bob                 # 底(輪郭の分あける)
     n = NETA[name]
-    if name == 'uni':
+    if n.get('kind') == 'maki':
+        # 巻物: 海苔の円柱の上面に、シャリの輪と具
+        hgt = 10 if big else 6
+        top = base - ry - hgt
+        block(cv, cx, top, rx * .8, ry, hgt, NORI, light=False)
+        for y in range(32):
+            for x in range(w):
+                if in_ell(x, y, cx, top, rx * .8 - 1, ry - .6):
+                    cv.put(x, y, RICE['top'] if in_ell(x, y, cx - .5, top - .5, rx * .8 - 1, ry - .6) else RICE['side'])
+                if in_ell(x, y, cx, top, rx * .3, ry * .4 + .3):
+                    cv.put(x, y, n['top'] if x + .5 < cx else n['side'])
+        outline(cv)
+        return cv
+    if name == 'uni' or n.get('kind') == 'gunkan':
         hgt = 9 if big else 6
         top = base - ry - hgt
         block(cv, cx, top, rx, ry, hgt, NORI, light=False)
@@ -92,11 +114,27 @@ def sushi(name, w, bob, end_view):
             for x in range(w):
                 if dome.px[y][x] is not None:
                     cv.put(x, y, dome.px[y][x])
-        for _ in range(18 if big else 6):
-            x = int(cx - rx * .8 + rnd.random() * rx * 1.6)
-            y = int(top - ry + rnd.random() * ry * 1.8)
-            if cv.get(x, y) in (n['top'], n['hi']):
-                cv.put(x, y, n['side'] if rnd.random() < .5 else n['hi'])
+        if name == 'ikura':
+            # 粒: 暗い縁に明るい点
+            for _ in range(14 if big else 5):
+                x = int(cx - rx * .75 + rnd.random() * rx * 1.5)
+                y = int(top - ry + 1 + rnd.random() * ry * 1.6)
+                if cv.get(x, y) in (n['top'], n['hi'], n['side']):
+                    cv.put(x, y, n['hi'])
+                    cv.put(x + 1, y + 1, n['dark'])
+        elif name == 'negitoro':
+            # ネギの緑を散らす
+            for _ in range(12 if big else 4):
+                x = int(cx - rx * .75 + rnd.random() * rx * 1.5)
+                y = int(top - ry + rnd.random() * ry * 1.8)
+                if cv.get(x, y) in (n['top'], n['hi'], n['side']):
+                    cv.put(x, y, (96, 176, 64))
+        else:
+            for _ in range(18 if big else 6):
+                x = int(cx - rx * .8 + rnd.random() * rx * 1.6)
+                y = int(top - ry + rnd.random() * ry * 1.8)
+                if cv.get(x, y) in (n['top'], n['hi']):
+                    cv.put(x, y, n['side'] if rnd.random() < .5 else n['hi'])
         outline(cv)
         return cv
     # シャリ: 底を平らにした俵形。左上を明るく、右下を暗く
@@ -129,7 +167,7 @@ def sushi(name, w, bob, end_view):
             d = u * .5 + (y + .5 - (ncy - nry)) / (thick * 2 + 2)
             cv.put(x, y, n['hi'] if d < .05 else n['top'] if d < .55 else n['side'] if d < .95 else n['dark'])
     top_y = int(ncy - nry)
-    if name == 'toro':
+    if name in ('toro', 'salmon'):
         # 斜めの脂の筋
         for k in range(-5, 6, 2 if big else 3):
             for t in range(10):
@@ -149,6 +187,34 @@ def sushi(name, w, bob, end_view):
             for y in range(top_y + 1, top_y + (4 if big else 2)):
                 if cv.get(x, y) in (n['top'], n['hi']):
                     cv.put(x, y, n['side'])
+    if name == 'hamachi':
+        # 血合い: 下の縁に沿った赤い帯
+        for x in range(w):
+            for y in range(top_y, 32):
+                c = cv.get(x, y)
+                if c == n['side'] and cv.get(x, y + 1) in (n['dark'], None) or c == n['dark']:
+                    cv.put(x, y, (206, 92, 92))
+    if name == 'tako':
+        # 皮: 上の縁を赤紫に、吸盤の点
+        for x in range(w):
+            for y in range(top_y, top_y + 3):
+                if cv.get(x, y) in (n['top'], n['hi'], n['side']) and cv.get(x, y - 1) in (None, OL):
+                    cv.put(x, y, (176, 60, 90))
+                    break
+        for k in range(-3, 4, 2):
+            x = int(cx + k * nrx / 4)
+            if cv.get(x, top_y + 2) in (n['top'], n['hi']):
+                cv.put(x, top_y + 2, (200, 120, 140))
+    if name == 'anago':
+        # 焼き目の筋とタレの照り
+        for k in range(-4, 5, 2):
+            x = int(cx + k * nrx / 5)
+            for y in range(top_y, top_y + 8):
+                if cv.get(x, y) in (n['top'], n['hi']):
+                    cv.put(x, y, n['dark'])
+        for x in range(int(cx - nrx * .5), int(cx)):
+            if cv.get(x, top_y + 1) == n['top']:
+                cv.put(x, top_y + 1, n['hi'])
     if name == 'tamago':
         for x in range(int(cx - nrx * .6), int(cx + nrx * .6)):
             if rnd.random() < .35 and cv.get(x, top_y + 1) in (n['top'], n['hi']):
