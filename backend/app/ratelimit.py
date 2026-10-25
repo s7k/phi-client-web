@@ -34,7 +34,8 @@ REGISTER_RATE = (5, 3600.0)       # 5 / 1h
 # CR-11: login 総当たり抑止。account+IP 単位で失敗時のみ消費(成功はリセット)。
 LOGIN_RATE = (10, 300.0)          # 10 失敗 / 5分 / (account+IP)
 # CR-12: chara GET 系(無認証配信)の IP レート。
-CHARA_GET_RATE = (120, 60.0)      # 120 req / 60s / IP
+# 管理画面のグラ一覧は登録済み全件(300枚超)の png を一度に読む。120 では一覧の途中から 429 で欠けた
+CHARA_GET_RATE = (1000, 60.0)     # 1000 req / 60s / IP
 WS_CONN_LIMIT = 5                 # 5 同時 / account
 
 # CR-10: バケット無制限増殖(IP/session 変更による DoS)対策。
