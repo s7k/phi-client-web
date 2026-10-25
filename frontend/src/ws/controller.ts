@@ -43,6 +43,7 @@ import {
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useMapStore } from '../stores/mapStore';
+import { useAutomapStore } from '../stores/automapStore';
 import { useStatusStore } from '../stores/statusStore';
 import { useChatStore, isChatChannel } from '../stores/chatStore';
 import { useUserStore } from '../stores/userStore';
@@ -164,7 +165,13 @@ export class WsController {
 
     c.on('map', (msg) => {
       const s = resolveSession(msg.session);
-      if (s) useMapStore.getState().setMap(s, msg);
+      if (!s) return;
+      useMapStore.getState().setMap(s, msg);
+      // 盲目中の視界は霧で埋まる為、地図を霧で上書きしないよう貯めない
+      const world = useNoticeStore.getState().bySession[s]?.world;
+      if (world && !useStatusStore.getState().bySession[s]?.cond?.blind) {
+        useAutomapStore.getState().absorb(world, msg);
+      }
     });
 
     c.on('status', (msg) => {

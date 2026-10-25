@@ -25,6 +25,7 @@ import { StatusPanel } from './components/StatusPanel';
 import { Chat } from './components/Chat';
 import { MapView } from './components/MapView';
 import { EagleEyeView } from './components/EagleEyeView';
+import { AutomapView } from './components/AutomapView';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { Settings } from './components/Settings';
 import { TabBar } from './components/TabBar';
@@ -99,6 +100,7 @@ function Game({
       <div className="game__body">
         <section className={`game__map game__map--pad-${touchHand}`} ref={mainRef}>
           {eagleEye ? <EagleEyeView session={session} /> : <MapView session={session} />}
+          <AutomapView session={session} />
           {/* スマホのみ表示の操作パッド(CSS で desktop は非表示)。 */}
           <TouchControls session={session} />
         </section>

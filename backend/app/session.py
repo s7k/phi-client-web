@@ -179,6 +179,8 @@ class SessionManager:
             "#ex-switch ex-move-recv=true",
             "#ex-switch ex-list-mode-end=true",
             "#ex-switch ex-disp-magic=true",
+            # :U ZA の世界(朱蓮)だけが受け付け、#ex-pos を送ってくる。他は無視か =false
+            "#ex-switch ex-abspos=true",
         ):
             await st.socket.send_line(line)
 

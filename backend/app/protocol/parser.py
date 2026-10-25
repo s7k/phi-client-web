@@ -177,6 +177,8 @@ class ProtocolParser:
         self._mapset: str | None = None
         # サーバがエコーした表示スタイル(turn/solid)。未受信は None。
         self._map_style: str | None = None
+        # #ex-pos の絶対座標(x=東, y=南)。次の #m57 . のフレームにだけ載せる。
+        self._abs_pos: dict[str, int] | None = None
 
     # ------------------------------------------------------------------
     # マップフレーム
@@ -393,6 +395,13 @@ class ProtocolParser:
             self._map_style = text[len("#ex-map style="):]
             return []
         if text in ("#ex-map size=57", "#ex-map size=40"):
+            return []
+
+        # --- 絶対座標(v5y の :U ZA 拡張。朱蓮だけが送る) ---------------
+        if starts("#ex-pos "):
+            parts = text.split()
+            if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+                self._abs_pos = {"x": int(parts[1]), "y": int(parts[2])}
             return []
 
         # --- 世界移動 --------------------------------------------------
@@ -615,6 +624,9 @@ class ProtocolParser:
         }
         if self._map_style is not None:
             ev["style"] = self._map_style
+        if self._abs_pos is not None:
+            ev["pos"] = self._abs_pos
+            self._abs_pos = None
         # フレーム送出後、次フレームの最初の O 行で chara をクリアする予約
         # (C++ SetCharaGraDataClearFlag 相当)。chars 自体は次 O 行まで保持。
         self._chara_clear_pending = True

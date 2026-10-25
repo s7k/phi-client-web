@@ -189,6 +189,8 @@ body {
   }
   /* 操作パッドの逆側にマップを寄せ、パッドとの重なりを回避。
      右手(パッド右下)→マップ左寄せ / 左手(パッド左下)→マップ右寄せ。 */
+  /* モバイルはマップ領域が狭いので出さない */
+  .game__map .automap { display: none; }
   .game__map--pad-right { justify-content: flex-start; }
   .game__map--pad-left  { justify-content: flex-end; }
   .game__status {
@@ -208,6 +210,12 @@ body {
 
 .eagle-eye {
   display: block;
+}
+
+/* マッピング(朱蓮だけ)。マップの右に並べる */
+.automap {
+  display: block;
+  margin-left: 0.75rem;
 }
 
 /* 接続状態の帯(CR-15) */

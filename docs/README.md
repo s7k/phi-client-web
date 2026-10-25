@@ -13,6 +13,7 @@
 | [01-legacy-investigation.md](01-legacy-investigation.md) | `legacy/` 調査資料。プロトコル仕様・構成・文字コード |
 | [03-phase0-connection-test.md](03-phase0-connection-test.md) | 実サーバ疎通検証レポート。設計仮説の実証・未確認事項の解明 |
 | [04-feature-gap-analysis.md](04-feature-gap-analysis.md) | レガシーClient vs Pythonクライアントの機能ギャップ。不足機能洗い出し |
+| [16-current-feature-gap.md](16-current-feature-gap.md) | 実装済みWeb版の不足機能。旧Philly・v5y/fix-phidmサーバとの突き合わせ。マッピング(朱蓮) |
 
 ### 設計
 アーキテクチャ・責務分担・各サブシステム設計。

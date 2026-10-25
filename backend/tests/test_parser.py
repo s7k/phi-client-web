@@ -101,6 +101,18 @@ def test_map_style_follows_server_echo(parser):
     assert parser.feed(b"#m57 .")[0]["style"] == "solid"
 
 
+def test_ex_pos_attaches_to_next_frame_only(parser):
+    # :U ZA の世界(朱蓮)だけ #m57 . の直前に #ex-pos が届く。そのフレームにだけ載せる
+    assert parser.feed(b"#ex-pos 120 45") == []
+    assert parser.feed(b"#m57 .")[0]["pos"] == {"x": 120, "y": 45}
+    assert "pos" not in parser.feed(b"#m57 .")[0]
+
+
+def test_ex_pos_malformed_is_ignored(parser):
+    assert parser.feed(b"#ex-pos x 1") == []
+    assert "pos" not in parser.feed(b"#m57 .")[0]
+
+
 def test_map_chars_normalized(parser):
     m = _feed_map_seq(parser, [
         "m57_M.bin", "m57_O_char.bin", "m57_dot.bin",
