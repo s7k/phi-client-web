@@ -18,6 +18,7 @@ import { useUserStore } from '../src/stores/userStore';
 import { useUiStore } from '../src/stores/uiStore';
 import { useListStore } from '../src/stores/listStore';
 import { useEditStore } from '../src/stores/editStore';
+import { useModeStore } from '../src/stores/modeStore';
 import { useConnectionStore } from '../src/stores/connectionStore';
 
 /** controller の最小スタブ。 */
@@ -52,6 +53,7 @@ beforeEach(() => {
   useUiStore.getState().reset();
   useListStore.getState().reset();
   useEditStore.getState().reset();
+  useModeStore.getState().reset();
   useConnectionStore.getState().reset();
   localStorage.clear();  // ログインフォーム記憶等がテスト間で漏れないように
 });
@@ -351,6 +353,23 @@ describe('ListView (F9)', () => {
     fireEvent.click(screen.getByText('キャンセル (Esc)'));
     expect(sendListSelect).toHaveBeenCalledWith('s1', 'cancel');
   });
+
+  it('cast 中だけ呪文手書き欄を出し、複数行を raw で送る', () => {
+    const sendCommand = vi.fn();
+    useListStore.getState().setList('s1', { active: true, lines: ['[ 1] heal'] });
+    const { rerender } = renderWith(makeController({ sendCommand }), <ListView session="s1" />);
+    expect(screen.queryByLabelText('呪文')).toBeNull();
+    useModeStore.getState().setMode('s1', { magic: true });
+    rerender(
+      <WsProvider controller={makeController({ sendCommand })}>
+        <ListView session="s1" />
+      </WsProvider>,
+    );
+    const input = screen.getByLabelText('呪文');
+    fireEvent.change(input, { target: { value: 'appear\ngolem' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: 'appear\ngolem' });
+  });
 });
 
 describe('EditDialog (F9)', () => {
@@ -484,3 +503,22 @@ describe('EditDialog は m-edit(複数行)のみ表示', () => {
   });
 });
 
+
+describe('CommandBar', () => {
+  it('特殊コマンドを raw で送り、接続中は切断・切断後は再接続する', async () => {
+    const { CommandBar } = await import('../src/components/CommandBar');
+    const sendCommand = vi.fn();
+    const closeSession = vi.fn();
+    const reopenSession = vi.fn(async () => 's2');
+    const ctrl = makeController({ sendCommand, closeSession, reopenSession });
+    useConnectionStore.getState().setSessionConnection('s1', 'connected');
+    renderWith(ctrl, <CommandBar session="s1" />);
+    fireEvent.click(screen.getByLabelText('ウィザードアイ (wizeye)'));
+    expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: 'wizeye' });
+    fireEvent.click(screen.getByLabelText('切断'));
+    expect(closeSession).toHaveBeenCalledWith('s1');
+    useConnectionStore.getState().setSessionConnection('s1', 'closed');
+    fireEvent.click(await screen.findByLabelText('接続'));
+    expect(reopenSession).toHaveBeenCalledWith('s1');
+  });
+});

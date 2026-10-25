@@ -1,0 +1,23 @@
+.cmdbar {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.cmdbar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.cmdbar__btn:hover:not(:disabled) { background: var(--surface-2); }
+.cmdbar__btn:disabled { opacity: 0.4; cursor: default; }
+.cmdbar__conn--on { color: var(--accent); border-color: var(--accent); }
