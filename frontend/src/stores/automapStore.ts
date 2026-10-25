@@ -34,6 +34,40 @@ function save(world: string, tiles: AutomapTiles): void {
   }
 }
 
+/** 通常マップ(7x7)の外側に足す記録地図の幅(マス)。盤面は 15x15 になる。 */
+export const AUTOMAP_RING = 4;
+
+type LiveMap = AutomapFrame & Pick<MapEvent, 'chars' | 'signs'>;
+
+/**
+ * 中央に通常マップ、外周に記録地図を置いた盤面を作る。
+ * キャラと看板は中央へずらす。合成出来ない(座標無し・回転マップ等)時は null。
+ */
+export function composeAutomap(map: LiveMap, tiles: AutomapTiles | undefined) {
+  const { pos } = map;
+  if (!tiles || !pos || map.size !== 7 || map.style !== 'solid' || map.cells.length !== 49) {
+    return null;
+  }
+  const R = AUTOMAP_RING;
+  const dim = 7 + 2 * R;
+  const half = (dim - 1) / 2;
+  const cells: MapCell[] = [];
+  for (let r = 0; r < dim; r++) {
+    for (let c = 0; c < dim; c++) {
+      const inner = r >= R && r < R + 7 && c >= R && c < R + 7;
+      cells[r * dim + c] = inner
+        ? map.cells[(r - R) * 7 + (c - R)]
+        : tiles[`${pos.x + c - half},${pos.y + r - half}`];
+    }
+  }
+  return {
+    dim,
+    cells,
+    chars: map.chars.map((ch) => ({ ...ch, x: ch.x + R, y: ch.y + R })),
+    signs: map.signs?.map((s) => ({ ...s, x: s.x + R, y: s.y + R })),
+  };
+}
+
 interface AutomapState {
   byWorld: Record<string, AutomapTiles>;
   /** 1フレーム分を貯める。回転マップ(turn)は向きで座標がずれる為、北固定だけ扱う。 */

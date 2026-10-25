@@ -77,7 +77,7 @@ parser の `end_list()` は `#ex-list-mode-end` が届かない前提で既に�
 - サーバ: `phi.td` の `:U` 行に `ZA` がある世界だけ、`#ex-switch ex-abspos=true` に `=true` を返し、7x7 マップごとに `#m57 .` の直前で `#ex-pos x y` を送る（upd-phi-server-v5y `feat/ex-abspos`）。x は東、y は南へ増える。
 - 朱蓮: syuren-world の `phi.td` に `ZA` を足した（`feat/ex-abspos`）。他の世界は `=false` を返し、座標を送らない。
 - BE: parser が `#ex-pos` を次のフレームの map イベントに `pos` として載せる。ログイン時に `#ex-switch ex-abspos=true` を送る。
-- FE: `stores/automapStore.ts` が世界名ごとにタイルを貯め、localStorage（`phi_automap:<世界名>`）へ保存する。7x7 北固定の行 r・列 c は `(x+c-3, y-3+r)`。視界外（`?`）と盲目中のフレームは貯めない。`components/AutomapView.tsx` が自キャラ中心の 21×21 をマップの右に描く。モバイルでは出さない。
+- FE: `stores/automapStore.ts` が世界名ごとにタイルを貯め、localStorage（`phi_automap:<世界名>`）へ保存する。7x7 北固定の行 r・列 c は `(x+c-3, y-3+r)`。視界外（`?`）と盲目中のフレームは貯めない。`components/MapView.tsx` は中央に通常マップの 7×7、外周4マスに記録地図を置いた 15×15 を1枚に描き、外周を暗くする。モバイル幅では外周を付けない。
 
 座標は従来マスター専用の Dumapic でしか分からなかった為、`ZA` の有無で世界ごとに選べるようにした。
 

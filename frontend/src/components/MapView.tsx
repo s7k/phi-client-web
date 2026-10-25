@@ -5,9 +5,13 @@
  * - 画像ロードは useImages で抽象化(テスト時 loader 差替)。
  * - 描画ロジックは drawMap(純粋)へ委譲。
  * - アニメフレームは 250ms 間隔で 0/1 トグル(2フレーム歩行サイクル)。
+ * - 絶対座標が届く世界(朱蓮)では、外周に記録地図を暗くして敷く(automapStore)。
+ *   モバイル幅はマップ領域が狭いので敷かない。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
+import { useNoticeStore } from '../stores/noticeStore';
+import { AUTOMAP_RING, composeAutomap, useAutomapStore } from '../stores/automapStore';
 import { useSettingsStore, type DisplaySettings } from '../stores/settingsStore';
 import { CHIP_SIZE, gridDim, hasItem } from '../lib/mapRender';
 import { graCandidateUrls } from '../lib/charaGra';
@@ -36,6 +40,14 @@ export function MapView({ session, loader, disableAnimation }: MapViewProps) {
   const cellScale =
     useSettingsStore((s) => (s.byScope['display'] as DisplaySettings | undefined)?.cellScale) ?? 1;
   const cellSize = CHIP_SIZE * cellScale;
+  const world = useNoticeStore((s) => s.bySession[session]?.world);
+  const tiles = useAutomapStore((s) => (world ? s.byWorld[world] : undefined));
+  // リサイズは次のマップ更新(約1秒毎)で反映する
+  const narrow = window.matchMedia?.('(max-width: 820px)').matches ?? false;
+  const automap = useMemo(
+    () => (map && !narrow ? composeAutomap(map, tiles) : null),
+    [map, tiles, narrow],
+  );
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [animFrame, setAnimFrame] = useState(0);
 
@@ -78,14 +90,26 @@ export function MapView({ session, loader, disableAnimation }: MapViewProps) {
       items: cache.get(ITEMS_URL) ?? null,
       chara: (url) => cache.get(url) ?? null,
     };
-    drawMap(ctx, map, imgs, animFrame, cellSize);
-  }, [map, cache, animFrame, cellSize]);
+    if (!automap) {
+      drawMap(ctx, map, imgs, animFrame, cellSize);
+      return;
+    }
+    drawMap(ctx, { ...map, ...automap }, imgs, animFrame, cellSize);
+    // 外周(記録地図)を暗くし、中央の通常マップと見分ける
+    const full = automap.dim * cellSize;
+    const edge = AUTOMAP_RING * cellSize;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fillRect(0, 0, full, edge);
+    ctx.fillRect(0, full - edge, full, edge);
+    ctx.fillRect(0, edge, edge, full - 2 * edge);
+    ctx.fillRect(full - edge, edge, edge, full - 2 * edge);
+  }, [map, automap, cache, animFrame, cellSize]);
 
   if (!map) {
     return <div className="map-view map-view--empty" data-testid="map-empty" />;
   }
 
-  const dim = gridDim(map.size);
+  const dim = automap?.dim ?? gridDim(map.size);
   const px = dim * cellSize;
   return (
     <canvas
