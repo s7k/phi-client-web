@@ -11,6 +11,7 @@ import { useUserStore } from '../stores/userStore';
 import { useUiStore } from '../stores/uiStore';
 import type { ChatMode } from '../types/protocol';
 import { MarkupText } from './MarkupText';
+import { GameCommands } from './CommandBar';
 import './Chat.css';
 
 const MODE_LABELS: { mode: ChatMode; label: string }[] = [
@@ -119,6 +120,9 @@ export function Chat({ session }: { session: string }) {
               {m.label}
             </button>
           ))}
+          <div className="chat__commands">
+            <GameCommands session={session} />
+          </div>
         </div>
 
         {chatMode === 'priv' && (

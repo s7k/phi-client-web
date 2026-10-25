@@ -85,7 +85,7 @@ async def test_fetch_graphics():
 async def test_register_success_with_uid():
     def on_send(text):
         if text == "#ex-register end":
-            return [_b("#ex-put UID AAA00042pass12")]
+            return [_b("#set-user-id AAA00042pass12")]
         return []
 
     sock = ScriptedSocket(on_send=on_send)
@@ -96,18 +96,20 @@ async def test_register_success_with_uid():
     assert result.uid == "AAA00042pass12"
     # 送信順序: start → props → end
     assert sock.sent[0] == "#ex-register start"
-    assert sock.sent[1].startswith("#ex-register name=Hero pass=abc123 image=0 mail=x@y.z")
+    # 属性行は # 無し(phi_dm.c は # 行を ex_adduser_v52 へ渡さない)。
+    assert sock.sent[1] == 'name="Hero" pass=abc123 image=0 mail=x@y.z'
     assert sock.sent[2] == "#ex-register end"
+    # 登録した接続はログイン済みなのでログアウトする。
+    assert sock.sent[3] == "#x"
 
 
 @pytest.mark.asyncio
-async def test_register_success_no_uid_notification():
-    # end 後にサーバ無通知で切断 → reject でなければ成功扱い(uid None)。
+async def test_register_disconnect_before_uid():
+    # uid を受け取らずに切断 → uid 無しでは #open 出来ないので失敗。
     sock = ScriptedSocket(on_send=lambda t: [])
     reg = LegacyRegistrar("h", 0, socket_factory=lambda: sock)
-    result = await reg.register("Hero", "abc123", 1)
-    assert result.uid is None
-    assert result.name == "Hero"
+    with pytest.raises(RegisterTransport):
+        await reg.register("Hero", "abc123", 1)
 
 
 # --- reject 各項目 --------------------------------------------------------
@@ -166,6 +168,7 @@ async def test_register_timeout_sends_cancel():
 def test_validate_input():
     assert validate_register_input("Hero", "abc123", 0) == []
     assert validate_register_input("H", "abc123", 0) == ["name"]
+    assert validate_register_input('He"ro', "abc123", 0) == ["name"]
     assert validate_register_input("Hero", "short", 0) == ["pass"]
     assert validate_register_input("Hero", "abc123", -1) == ["image"]
     assert set(validate_register_input("H", "x", -1)) == {"name", "pass", "image"}

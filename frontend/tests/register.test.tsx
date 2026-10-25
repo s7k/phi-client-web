@@ -16,6 +16,19 @@ function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }) {
   } as unknown as Response;
 }
 
+/** BE の graphics 応答。 */
+function gfx(names: string[]) {
+  return { graphics: names.map((graName, index) => ({ index, graName })) };
+}
+
+/** 登録先を入れて初期グラを読み込む。 */
+async function loadTarget(firstGra: string) {
+  fireEvent.change(screen.getByLabelText('サーバIP'), { target: { value: 'h' } });
+  fireEvent.change(screen.getByLabelText('ポート'), { target: { value: '20000' } });
+  fireEvent.click(screen.getByText('初期グラを読み込む'));
+  await waitFor(() => expect(screen.getByLabelText(`gra-${firstGra}`)).toBeTruthy());
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
 });
@@ -25,10 +38,13 @@ beforeEach(() => {
 // ============================================================
 
 describe('fetchRegisterGraphics', () => {
-  it('graphics 配列を index 付きで返す', async () => {
-    const f = vi.fn().mockResolvedValue(jsonResponse({ graphics: ['elf', 'mage', 'knight'] }));
-    const list = await fetchRegisterGraphics(f as unknown as typeof fetch);
-    expect(f).toHaveBeenCalledWith('/api/register/graphics', expect.objectContaining({ method: 'GET' }));
+  it('登録先を query に付け、graphics を index 付きで返す', async () => {
+    const f = vi.fn().mockResolvedValue(jsonResponse(gfx(['elf', 'mage', 'knight'])));
+    const list = await fetchRegisterGraphics('h', 20000, f as unknown as typeof fetch);
+    expect(f).toHaveBeenCalledWith(
+      '/api/register/graphics?host=h&port=20000',
+      expect.objectContaining({ method: 'GET' }),
+    );
     expect(list).toEqual([
       { index: 0, gra: 'elf' },
       { index: 1, gra: 'mage' },
@@ -36,15 +52,9 @@ describe('fetchRegisterGraphics', () => {
     ]);
   });
 
-  it('配列直返しも許容', async () => {
-    const f = vi.fn().mockResolvedValue(jsonResponse(['a', 'b']));
-    const list = await fetchRegisterGraphics(f as unknown as typeof fetch);
-    expect(list.map((g) => g.gra)).toEqual(['a', 'b']);
-  });
-
   it('HTTP エラーで throw', async () => {
     const f = vi.fn().mockResolvedValue(jsonResponse({}, { ok: false, status: 500 }));
-    await expect(fetchRegisterGraphics(f as unknown as typeof fetch)).rejects.toThrow();
+    await expect(fetchRegisterGraphics('h', 1, f as unknown as typeof fetch)).rejects.toThrow();
   });
 });
 
@@ -52,24 +62,41 @@ describe('postRegister', () => {
   it('成功で {charId, name}', async () => {
     const f = vi.fn().mockResolvedValue(jsonResponse({ charId: 'c9', name: 'Hero' }));
     const res = await postRegister(
-      { name: 'Hero', pass: 'abc123', imageIndex: 1 },
+      { host: 'h', port: 1, name: 'Hero', pass: 'abc123', imageIndex: 1 },
       f as unknown as typeof fetch,
     );
     expect(res).toEqual({ charId: 'c9', name: 'Hero' });
     const [, init] = f.mock.calls[0];
-    expect(JSON.parse(init.body)).toEqual({ name: 'Hero', pass: 'abc123', imageIndex: 1 });
+    expect(JSON.parse(init.body)).toEqual({
+      host: 'h', port: 1, name: 'Hero', pass: 'abc123', imageIndex: 1,
+    });
   });
 
   it('REGISTER_REJECT で RegisterError(fields)', async () => {
     const f = vi.fn().mockResolvedValue(
       jsonResponse(
-        { error: { code: 'REGISTER_REJECT', fields: ['name', 'pass'] } },
+        { detail: { error: { code: 'REGISTER_REJECT', fields: ['name', 'pass'] } } },
         { ok: false, status: 400 },
       ),
     );
     await expect(
-      postRegister({ name: 'X', pass: 'abc123', imageIndex: 0 }, f as unknown as typeof fetch),
+      postRegister(
+        { host: 'h', port: 1, name: 'X', pass: 'abc123', imageIndex: 0 },
+        f as unknown as typeof fetch,
+      ),
     ).rejects.toMatchObject({ code: 'REGISTER_REJECT', fields: ['name', 'pass'] });
+  });
+
+  it('文字列 detail をそのままメッセージにする', async () => {
+    const f = vi.fn().mockResolvedValue(
+      jsonResponse({ detail: '登録代行失敗: 接続失敗' }, { ok: false, status: 502 }),
+    );
+    await expect(
+      postRegister(
+        { host: 'h', port: 1, name: 'Hero', pass: 'abc123', imageIndex: 0 },
+        f as unknown as typeof fetch,
+      ),
+    ).rejects.toThrow('登録代行失敗: 接続失敗');
   });
 });
 
@@ -79,18 +106,18 @@ describe('postRegister', () => {
 
 describe('Register コンポーネント', () => {
   it('グラ一覧を取得し選択肢を描画', async () => {
-    const f = vi.fn().mockResolvedValue(jsonResponse({ graphics: ['elf', 'mage'] }));
+    const f = vi.fn().mockResolvedValue(jsonResponse(gfx(['elf', 'mage'])));
     vi.stubGlobal('fetch', f);
     render(<Register onRegistered={() => {}} onCancel={() => {}} />);
-    await waitFor(() => expect(screen.getByLabelText('gra-elf')).toBeTruthy());
+    await loadTarget('elf');
     expect(screen.getByLabelText('gra-mage')).toBeTruthy();
   });
 
   it('パスワード6文字未満はクライアントバリデーションでエラー(送信せず)', async () => {
-    const f = vi.fn().mockResolvedValue(jsonResponse({ graphics: ['elf'] }));
+    const f = vi.fn().mockResolvedValue(jsonResponse(gfx(['elf'])));
     vi.stubGlobal('fetch', f);
     render(<Register onRegistered={() => {}} onCancel={() => {}} />);
-    await waitFor(() => expect(screen.getByLabelText('gra-elf')).toBeTruthy());
+    await loadTarget('elf');
 
     fireEvent.change(screen.getByLabelText('キャラ名'), { target: { value: 'Hero' } });
     fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'abc' } });
@@ -101,11 +128,29 @@ describe('Register コンポーネント', () => {
     expect(f.mock.calls.filter((c) => c[1]?.method === 'POST')).toHaveLength(0);
   });
 
+  it('パスワード省略で pass を送らない', async () => {
+    const f = vi.fn().mockImplementation((_url: string, init?: { method?: string }) => {
+      if (init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ charId: 'c1', name: 'Hero' }));
+      }
+      return Promise.resolve(jsonResponse(gfx(['elf'])));
+    });
+    vi.stubGlobal('fetch', f);
+    const onRegistered = vi.fn();
+    render(<Register onRegistered={onRegistered} onCancel={() => {}} />);
+    await loadTarget('elf');
+    fireEvent.change(screen.getByLabelText('キャラ名'), { target: { value: 'Hero' } });
+    fireEvent.click(screen.getByText('登録'));
+    await waitFor(() => expect(onRegistered).toHaveBeenCalledWith('Hero'));
+    const postCall = f.mock.calls.find((c) => c[1]?.method === 'POST')!;
+    expect(JSON.parse(postCall[1].body)).not.toHaveProperty('pass');
+  });
+
   it('キャラ名2文字未満でバリデーションエラー', async () => {
-    const f = vi.fn().mockResolvedValue(jsonResponse({ graphics: ['elf'] }));
+    const f = vi.fn().mockResolvedValue(jsonResponse(gfx(['elf'])));
     vi.stubGlobal('fetch', f);
     render(<Register onRegistered={() => {}} onCancel={() => {}} />);
-    await waitFor(() => expect(screen.getByLabelText('gra-elf')).toBeTruthy());
+    await loadTarget('elf');
     fireEvent.change(screen.getByLabelText('キャラ名'), { target: { value: 'A' } });
     fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'abc123' } });
     fireEvent.click(screen.getByText('登録'));
@@ -117,12 +162,12 @@ describe('Register コンポーネント', () => {
       if (init?.method === 'POST') {
         return Promise.resolve(jsonResponse({ charId: 'c1', name: 'Hero' }));
       }
-      return Promise.resolve(jsonResponse({ graphics: ['elf', 'mage'] }));
+      return Promise.resolve(jsonResponse(gfx(['elf', 'mage'])));
     });
     vi.stubGlobal('fetch', f);
     const onRegistered = vi.fn();
     render(<Register onRegistered={onRegistered} onCancel={() => {}} />);
-    await waitFor(() => expect(screen.getByLabelText('gra-elf')).toBeTruthy());
+    await loadTarget('elf');
 
     fireEvent.change(screen.getByLabelText('キャラ名'), { target: { value: 'Hero' } });
     fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'abc123' } });
@@ -131,7 +176,7 @@ describe('Register コンポーネント', () => {
 
     await waitFor(() => expect(onRegistered).toHaveBeenCalledWith('Hero'));
     const postCall = f.mock.calls.find((c) => c[1]?.method === 'POST')!;
-    expect(JSON.parse(postCall[1].body)).toMatchObject({ name: 'Hero', pass: 'abc123', imageIndex: 1 });
+    expect(JSON.parse(postCall[1].body)).toMatchObject({ host: 'h', port: 20000, name: 'Hero', pass: 'abc123', imageIndex: 1 });
   });
 
   it('reject 応答でフィールド別エラー表示', async () => {
@@ -139,16 +184,16 @@ describe('Register コンポーネント', () => {
       if (init?.method === 'POST') {
         return Promise.resolve(
           jsonResponse(
-            { error: { code: 'REGISTER_REJECT', fields: ['name', 'image'] } },
+            { detail: { error: { code: 'REGISTER_REJECT', fields: ['name', 'image'] } } },
             { ok: false, status: 400 },
           ),
         );
       }
-      return Promise.resolve(jsonResponse({ graphics: ['elf'] }));
+      return Promise.resolve(jsonResponse(gfx(['elf'])));
     });
     vi.stubGlobal('fetch', f);
     render(<Register onRegistered={() => {}} onCancel={() => {}} />);
-    await waitFor(() => expect(screen.getByLabelText('gra-elf')).toBeTruthy());
+    await loadTarget('elf');
 
     fireEvent.change(screen.getByLabelText('キャラ名'), { target: { value: 'Hero' } });
     fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'abc123' } });
@@ -158,13 +203,24 @@ describe('Register コンポーネント', () => {
     expect(screen.getByText('初期グラフィックが拒否されました')).toBeTruthy();
   });
 
+  it('グラ未読込で登録すると送信しない', async () => {
+    const f = vi.fn();
+    vi.stubGlobal('fetch', f);
+    render(<Register onRegistered={() => {}} onCancel={() => {}} />);
+    fireEvent.change(screen.getByLabelText('キャラ名'), { target: { value: 'Hero' } });
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'abc123' } });
+    fireEvent.click(screen.getByText('登録'));
+    await waitFor(() =>
+      expect(screen.getByText('先にサーバを指定して初期グラを読み込んでください')).toBeTruthy(),
+    );
+    expect(f).not.toHaveBeenCalled();
+  });
+
   it('戻るボタンで onCancel', async () => {
-    const f = vi.fn().mockResolvedValue(jsonResponse({ graphics: [] }));
+    const f = vi.fn().mockResolvedValue(jsonResponse(gfx([])));
     vi.stubGlobal('fetch', f);
     const onCancel = vi.fn();
     render(<Register onRegistered={() => {}} onCancel={onCancel} />);
-    // グラ取得(空)完了を待ってから操作(act警告回避)。
-    await waitFor(() => expect(screen.queryByText('読み込み中…')).toBeNull());
     fireEvent.click(screen.getByText('戻る'));
     expect(onCancel).toHaveBeenCalled();
   });

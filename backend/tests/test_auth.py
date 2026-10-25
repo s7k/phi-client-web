@@ -146,9 +146,10 @@ def _token(auth, now=None):
 def test_idle_expiry(auth):
     t0 = datetime(2026, 6, 1, tzinfo=timezone.utc)
     token = _token(auth, now=t0)
-    t1 = t0 + timedelta(minutes=29)
+    # 1ヶ月ログインし直さずに使える。
+    t1 = t0 + timedelta(days=29)
     assert auth.validate(token, now=t1) is not None
-    t2 = t1 + timedelta(minutes=31)
+    t2 = t1 + timedelta(days=30, minutes=1)
     assert auth.validate(token, now=t2) is None
 
 
@@ -156,17 +157,17 @@ def test_idle_sliding_window(auth):
     t0 = datetime(2026, 6, 1, tzinfo=timezone.utc)
     token = _token(auth, now=t0)
     for i in range(1, 6):
-        t = t0 + timedelta(minutes=25 * i)
+        t = t0 + timedelta(days=5 * i)
         assert auth.validate(token, now=t) is not None
 
 
 def test_absolute_expiry(auth):
     t0 = datetime(2026, 6, 1, tzinfo=timezone.utc)
     token = _token(auth, now=t0)
-    for i in range(1, 72):  # 20分 x 71 = 23h40m < 24h
-        t = t0 + timedelta(minutes=20 * i)
+    for i in range(1, 30):  # 毎日使っても 30日で切れる
+        t = t0 + timedelta(days=i)
         assert auth.validate(token, now=t) is not None
-    t_over = t0 + timedelta(hours=24, minutes=1)
+    t_over = t0 + timedelta(days=30, minutes=1)
     assert auth.validate(token, now=t_over) is None
 
 

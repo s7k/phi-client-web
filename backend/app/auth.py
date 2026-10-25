@@ -36,8 +36,10 @@ from app.store import Store
 # ----------------------------------------------------------------------
 # 期限既定([12]§1.3)
 # ----------------------------------------------------------------------
-IDLE_TIMEOUT_SEC = 30 * 60        # idle 30分
-ABSOLUTE_TIMEOUT_SEC = 24 * 3600  # absolute 24h
+# ゲーム中の WS 通信は last_seen を更新しない。短いとプレイ中に再接続や設定保存で切れる為、
+# 1ヶ月ログインし直さずに使えるようにする。
+IDLE_TIMEOUT_SEC = 30 * 24 * 3600      # idle 30日
+ABSOLUTE_TIMEOUT_SEC = 30 * 24 * 3600  # absolute 30日
 
 _TOKEN_BYTES = 32    # 256bit 不透明 token
 

@@ -3,6 +3,7 @@
  *
  * - GET /api/characters でアカウント配下のキャラ一覧を取得し、ラベル+host:port でカード表示。
  * - カードクリックで session.open {charId} → ゲーム画面(activeTab)へ。
+ * - 「新規キャラ作成」: Register 画面で世界にキャラを作り、そのまま一覧へ登録する。
  * - 「キャラを追加」フォーム: ラベル + PHI ID + サーバIP + ポート → POST /api/characters → 一覧更新。
  * - 各キャラに削除ボタン(DELETE /api/characters/{charId})。
  * - ログアウトボタン。
@@ -14,6 +15,7 @@ import { useWs } from '../ws/WsContext';
 import { useUiStore } from '../stores/uiStore';
 import { useAccountStore } from '../stores/accountStore';
 import type { Character } from '../api/characters';
+import { Register } from './Register';
 import './CharacterSelect.css';
 
 export function CharacterSelect({ onLoggedOut }: { onLoggedOut: () => void }) {
@@ -26,6 +28,7 @@ export function CharacterSelect({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [registering, setRegistering] = useState(false);
 
   // 追加フォーム
   const [label, setLabel] = useState('');
@@ -146,12 +149,32 @@ export function CharacterSelect({ onLoggedOut }: { onLoggedOut: () => void }) {
     }
   }
 
+  if (registering) {
+    return (
+      <Register
+        onRegistered={() => {
+          setRegistering(false);
+          void reload();
+        }}
+        onCancel={() => setRegistering(false)}
+      />
+    );
+  }
+
   return (
     <div className="charsel">
       <div className="charsel__card">
         <header className="charsel__header">
           <h1 className="charsel__title">キャラクター選択</h1>
           <div className="charsel__header-actions">
+            <button
+              className="charsel__admin"
+              type="button"
+              onClick={() => setRegistering(true)}
+              disabled={busy}
+            >
+              新規キャラ作成
+            </button>
             {isAdmin && (
               <button
                 className="charsel__admin"

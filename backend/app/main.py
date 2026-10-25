@@ -53,14 +53,11 @@ def build_app(config: Config | None = None):
         store=store,
     )
 
-    def registrar_factory():
-        return LegacyRegistrar(cfg.legacy_host, cfg.legacy_port)
-
     app = create_app(
         manager=manager,
         auth=auth,
         assets_dir=cfg.assets_dir,
-        registrar_factory=registrar_factory,
+        registrar_factory=LegacyRegistrar,
     )
     app.state.config = cfg
 

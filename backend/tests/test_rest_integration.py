@@ -74,7 +74,7 @@ def env(tmp_path, monkeypatch):
         if text == "#ex-get REGINFO IMG":
             return [_b("#ex-put REGINFO IMG"), _b("戦士"), _b("#ex-put .")]
         if text == "#ex-register end":
-            return [_b("#ex-put UID AAA00001abcdef")]
+            return [_b("#set-user-id AAA00001abcdef")]
         return []
 
     socket = ScriptedSocket(on_send=on_send)
@@ -82,10 +82,10 @@ def env(tmp_path, monkeypatch):
     from app.register import LegacyRegistrar
     rl = RateLimiter()
 
-    def registrar_factory():
+    def registrar_factory(host, port):
         # 各呼び出しで状態リセットした新規スクリプトソケット。
         return LegacyRegistrar(
-            "h", 0, socket_factory=lambda: ScriptedSocket(on_send=on_send)
+            host, port, socket_factory=lambda: ScriptedSocket(on_send=on_send)
         )
 
     app = create_app(
@@ -347,15 +347,22 @@ def test_get_without_origin_ok(env):
 
 def test_register_graphics(env):
     hdr = _login(env, "alice")
-    r = env.get("/api/register/graphics", headers=hdr)
+    r = env.get("/api/register/graphics?host=h&port=20000", headers=hdr)
     assert r.status_code == 200
     assert r.json()["graphics"] == [{"index": 0, "graName": "戦士"}]
+
+
+def test_register_graphics_requires_auth_and_target(env):
+    assert env.get("/api/register/graphics?host=h&port=20000").status_code == 401
+    hdr = _login(env, "alice")
+    assert env.get("/api/register/graphics", headers=hdr).status_code == 400
 
 
 def test_register_success(env):
     hdr = _login(env, "alice")
     r = env.post("/api/register",
-                 json={"name": "Hero", "pass": "abc123", "imageIndex": 0,
+                 json={"host": "h", "port": 20000,
+                       "name": "Hero", "pass": "abc123", "imageIndex": 0,
                        "mail": "h@x.z"},
                  headers=hdr)
     assert r.status_code == 200, r.text
@@ -367,12 +374,32 @@ def test_register_success(env):
     assert row is not None
     assert row["phi_uid_enc"] is not None
     assert row["account_id"] == "alice"
+    assert (row["host"], row["port"]) == ("h", 20000)
+
+
+def test_register_without_pass_uses_random(env, monkeypatch):
+    sent = []
+    from app.register import LegacyRegistrar
+    orig = LegacyRegistrar.register
+
+    async def spy(self, name, password, image_index, mail=""):
+        sent.append(password)
+        return await orig(self, name, password, image_index, mail)
+
+    monkeypatch.setattr(LegacyRegistrar, "register", spy)
+    hdr = _login(env, "alice")
+    r = env.post("/api/register",
+                 json={"host": "h", "port": 20000, "name": "Hero", "imageIndex": 0},
+                 headers=hdr)
+    assert r.status_code == 200, r.text
+    assert len(sent[0]) == 6 and sent[0].isalnum()
 
 
 def test_register_local_reject(env):
     hdr = _login(env, "alice")
     r = env.post("/api/register",
-                 json={"name": "H", "pass": "x", "imageIndex": 0},
+                 json={"host": "h", "port": 20000,
+                       "name": "H", "pass": "x", "imageIndex": 0},
                  headers=hdr)
     assert r.status_code == 400
     detail = r.json()["detail"]
@@ -382,7 +409,8 @@ def test_register_local_reject(env):
 
 def test_register_rate_limit_429(env):
     hdr = _login(env, "alice")
-    body = {"name": "Hero", "pass": "abc123", "imageIndex": 0}
+    body = {"host": "h", "port": 20000,
+            "name": "Hero", "pass": "abc123", "imageIndex": 0}
     for _ in range(5):
         r = env.post("/api/register", json=body, headers=hdr)
         assert r.status_code == 200, r.text

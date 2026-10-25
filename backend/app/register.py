@@ -8,21 +8,20 @@
 1. `#ex-register start`            … 登録モード開始(サーバ timeout 600s)。
 2. `#ex-get REGINFO IMG`           … 初期グラ一覧要求
        → `#ex-put REGINFO IMG` <グラ名...> `#ex-put .`
-3. `#ex-register name=<名> pass=<6字> image=<索引> mail=<メール>`
+3. `name="<名>" pass=<6字> image=<索引> mail=<メール>`
+       … `#` 無しの行で送る。`#ex-register` を前置すると phi_dm.c は
+         start/end/cancel 以外として捨てる(ex_adduser_v52 に届かない)
 4. `#ex-register end`              … 確定
-       OK   → new_user でキャラ生成(サーバ通知/uid)
+       OK   → new_user でキャラ生成し `#set-user-id <uid>` を返す
        NG   → `#ex-register reject [name] [pass] [image] [mail]`(欠陥項目列挙)
 5. `#ex-register cancel`           … 中止
 
-⛔ 検証はモックTCPのみ([タスク])。実サーバへ start/end は送らない
-   (実キャラ作成は迷惑/クラッタ)。
-
-uid 供給(Q-2.4)
+uid 供給
 ------------------------------------------------------------------
 uid = `<addw><5桁 s_id><6字 pass>` をサーバが組む。BE は addw/s_id を持たない
-ため、登録成功時にサーバが返す uid 通知(`#ex-put UID <uid>` 等)を捕捉する。
-通知が無い実装では uid 不明 → `phi_uid_enc=None` 保存(後続 #open は要手当)。
-本ラウンドはモック前提でこの捕捉経路を実装し、実機の供給元確認は Q-R5-1 として残す。
+ため、new_user が送る `#set-user-id <uid>` を捕捉する
+(upd-phi-server-v5y `src/core/phi_dm.c` new_user)。
+登録が通るとその接続はそのままログイン状態になるので、uid 捕捉後に `#x` で抜ける。
 """
 from __future__ import annotations
 
@@ -60,7 +59,7 @@ class RegisterResult:
 
     name: str
     image_index: int
-    # サーバが uid を通知した場合のみ(Q-R5-1)。無ければ None。
+    # `#set-user-id` で受け取った uid。
     uid: str | None = None
 
 
@@ -131,23 +130,28 @@ class LegacyRegistrar:
     ) -> RegisterResult:
         """登録代行。成功で RegisterResult、reject で RegisterReject。
 
-        ⛔ モックTCP専用。実サーバ未実行([タスク])。
         """
         sock = self._socket_factory()
         try:
             await self._connect(sock)
             await self._send(sock, "#ex-register start")
-            # key=value 行(name は空白を含み得るが本実装は単純連結)。
+            # name は空白を含み得るので "" で囲む(get_property が対応)。
             props = (
-                f"#ex-register name={name} pass={password} "
+                f'name="{name}" pass={password} '
                 f"image={image_index} mail={mail}"
             )
             await self._send(sock, props)
             await self._send(sock, "#ex-register end")
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._read_result(sock, name, image_index),
                 timeout=self._timeout,
             )
+            # 登録した接続はログイン済みになっている。ログアウトして閉じる。
+            try:
+                await self._send(sock, "#x")
+            except RegisterTransport:
+                pass
+            return result
         except asyncio.TimeoutError as exc:
             # タイムアウト時は中止を試みる(best-effort)。
             try:
@@ -164,20 +168,19 @@ class LegacyRegistrar:
         """end 後の応答を解釈。
 
         - `#ex-register reject ...` → RegisterReject(欠陥項目)
-        - `#ex-put UID <uid>`       → 成功(uid 捕捉)
-        - それ以外(無通知)は read を続け、切断 or 妥当な成功シグナルで終了。
+        - `#set-user-id <uid>`      → 成功(uid 捕捉)
+        - uid を受け取る前に切断 → RegisterTransport(uid 無しでは #open 出来ない)。
         """
         while True:
             raw = await sock.read_line()
             if raw is None:
-                # 通知無しで切断 → uid 不明だが reject では無いため成功扱い。
-                return RegisterResult(name=name, image_index=image_index)
+                raise RegisterTransport("登録結果を受け取る前に切断")
             line = raw.decode("cp932", errors="replace").rstrip("\r").strip()
             if line.startswith("#ex-register reject"):
                 fields = self._parse_reject(line)
                 raise RegisterReject(fields)
-            if line.startswith("#ex-put UID"):
-                uid = line[len("#ex-put UID"):].strip() or None
+            if line.startswith("#set-user-id"):
+                uid = line[len("#set-user-id"):].strip() or None
                 return RegisterResult(
                     name=name, image_index=image_index, uid=uid
                 )
@@ -226,7 +229,8 @@ def validate_register_input(
     サーバ側でも再検証されるが事前弾きで往復削減。
     """
     fields: list[str] = []
-    if len(name) < 2 or _has_control_chars(name):
+    # name は "" で囲んで送るので " を含めない。
+    if len(name) < 2 or _has_control_chars(name) or '"' in name:
         fields.append("name")
     if len(password) != PASS_LEN or _has_control_chars(password):
         fields.append("pass")
