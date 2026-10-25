@@ -49,8 +49,9 @@ describe('resolveKey: Shift+G(altG) ショートカット', () => {
 describe('resolveKey: 入力欄フォーカス時はゲームキー無効', () => {
   it('inputFocused なら null', () => {
     expect(resolveKey(key('w'), baseCtx({ inputFocused: true }))).toBeNull();
-    // Fnキーも無効(入力中の誤爆防止)
-    expect(resolveKey(key('F1'), baseCtx({ inputFocused: true }))).toBeNull();
+    // Shift+数字も無効(入力中は記号の入力と区別できない)
+    const ctx = baseCtx({ inputFocused: true, magic: { F1: 'heal' } });
+    expect(resolveKey(key('!', { code: 'Digit1', shiftKey: true }), ctx)).toBeNull();
   });
 });
 
@@ -218,29 +219,40 @@ describe('resolveKey: リストモード分岐', () => {
   });
 });
 
-describe('resolveKey: ファンクションキー magic/shortcut', () => {
-  it('F1 が magic 割当済 → castMagic', () => {
+describe('resolveKey: Shift+数字 magic/shortcut', () => {
+  const shift = (code: string, k = '!') => key(k, { code, shiftKey: true });
+  it('Shift+1 が magic 割当済 → castMagic', () => {
     const ctx = baseCtx({ magic: { F1: 'heal' } });
-    expect(resolveKey(key('F1'), ctx)).toEqual({
+    expect(resolveKey(shift('Digit1'), ctx)).toEqual({
       type: 'command',
       name: 'castMagic',
       spell: 'heal',
     });
   });
-  it('F3 未割当 → null', () => {
-    const ctx = baseCtx({ magic: { F1: 'heal' } });
-    expect(resolveKey(key('F3'), ctx)).toBeNull();
+  it('記号はキーボード配列で変わる為、物理キー位置で判定する', () => {
+    const ctx = baseCtx({ magic: { F2: 'cure' } });
+    expect(resolveKey(shift('Digit2', '"'), ctx)).toMatchObject({ spell: 'cure' }); // JIS
+    expect(resolveKey(shift('Digit2', '@'), ctx)).toMatchObject({ spell: 'cure' }); // US
   });
-  it('F8 が shortcut 割当済 → raw command', () => {
-    const ctx = baseCtx({ shortcuts: { F8: 'spells' } });
-    expect(resolveKey(key('F8'), ctx)).toEqual({
+  it('Shift+3 未割当 → null', () => {
+    const ctx = baseCtx({ magic: { F1: 'heal' } });
+    expect(resolveKey(shift('Digit3'), ctx)).toBeNull();
+  });
+  it('Shift+0 が shortcut(F10 枠) 割当済 → raw command', () => {
+    const ctx = baseCtx({ shortcuts: { F10: 'spells' } });
+    expect(resolveKey(shift('Digit0', '0'), ctx)).toEqual({
       type: 'command',
       name: 'raw',
       text: 'spells',
     });
   });
-  it('F12 未割当 → null', () => {
-    expect(resolveKey(key('F12'), baseCtx())).toBeNull();
+  it('F キーはブラウザに任せる(割当があっても消費しない)', () => {
+    const ctx = baseCtx({ magic: { F1: 'heal' } });
+    expect(resolveKey(key('F1'), ctx)).toBeNull();
+  });
+  it('Shift 無しの数字は従来どおり(仮想テンキーの 8 は移動)', () => {
+    const ctx = baseCtx({ layout: 'numpad', magic: { F8: 'x' }, shortcuts: { F8: 'y' } });
+    expect(resolveKey(key('8', { code: 'Digit8' }), ctx)).toMatchObject({ type: 'move' });
   });
 });
 

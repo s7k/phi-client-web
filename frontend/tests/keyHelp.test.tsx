@@ -19,15 +19,15 @@ describe('describeKeys', () => {
     expect(move.rows).toContainEqual({ keys: '←', action: '左を向く' });
   });
 
-  it('割り当てたファンクションキーと Shift+G だけ出す', () => {
+  it('割り当てた Shift+数字と Shift+G だけ出す', () => {
     const groups = describeKeys({
       layout: 'wasd', northFix: true,
-      magic: { F1: 'Cure', F2: null }, shortcuts: { F8: 'check\nlook' }, altG: 'おやすみ',
+      magic: { F1: 'Cure', F2: null }, shortcuts: { F10: 'check\nlook' }, altG: 'おやすみ',
     });
-    const fn = groups.find((g) => g.title.startsWith('ファンクションキー'))!;
+    const fn = groups.find((g) => g.title.startsWith('魔法・ショートカット'))!;
     expect(fn.rows).toEqual([
-      { keys: 'F1', action: 'Cure を唱える' },
-      { keys: 'F8', action: 'check ↵ look を送る' },
+      { keys: 'Shift+1', action: 'Cure を唱える' },
+      { keys: 'Shift+0', action: 'check ↵ look を送る' },
       { keys: 'Shift+G', action: 'おやすみ を送る' },
     ]);
   });

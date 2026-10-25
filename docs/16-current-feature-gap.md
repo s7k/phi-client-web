@@ -27,7 +27,7 @@ Philly の根拠は PhillySrc の `Philly/` からの相対パス。
 | 機能 | 現状 | Philly の動作 |
 |------|------|---------------|
 | pay（支払い） | BE の `serializer.py` は `pay` intent を整形出来る。FE に発行するキー割当とUIが無い | P キーで金額ダイアログ → `pay <n>`。隠しコマンドで `@` キーが `pay 0`（`Command.cpp:1154, 1013`） |
-| Alt 系の魔法ショートカット | F1-F7 の魔法割当（keybind.magic）だけある | Alt+W/E/I/S/L/U/D/C/A/F/B/R/P と Shift+Alt+W/L/D/C/A/U で `cast\n<魔法名>`。Search と Appear/Disappear は語を入力させる（`Command.cpp:614-655`） |
+| Alt 系の魔法ショートカット | Shift+1〜7 の魔法割当（keybind.magic）だけある | Alt+W/E/I/S/L/U/D/C/A/F/B/R/P と Shift+Alt+W/L/D/C/A/U で `cast\n<魔法名>`。Search と Appear/Disappear は語を入力させる（`Command.cpp:614-655`） |
 | Call / Return の確認 | 該当操作が無い | 唱える前に確認ダイアログ（`Command.cpp:1243, 1259`） |
 | 全自動攻撃・全自動詠唱 | `lib/keyHandler.ts` の Space は単発の `hit` を送るだけ | 隠しコマンド。`#end-at` 受信時に Space を押していれば `hit`、`#end-mg` 受信時に F1-F7 を押していれば再詠唱（`PersonalThread.cpp:1216-1254`） |
 | マップのマウス操作 | 無い（スマホ用の TouchControls だけ） | 左クリックでカーソル方向へ移動、右クリックで `hit`、中クリックでスクリーンショット（`MapForm.cpp:491-633`） |
@@ -89,7 +89,7 @@ parser の `end_list()` は `#ex-list-mode-end` が届かない前提で既に�
 - 通知（priv限定・大声・正規表現フィルタ・タイトル点滅・音）: `lib/notify.ts`
 - スクリーンショット（マップ/EagleEye）: `lib/screenshot.ts`
 - ログ内画像（`img=`）: `lib/colorMarkup.ts`、`components/MarkupText.tsx`
-- F8-F12 ショートカット、Shift+G（altG）: `lib/keyHandler.ts`
+- 魔法・ショートカット（Shift+1〜0。F キーから変更、DEVLOG A-35）、Shift+G（altG）: `lib/keyHandler.ts`
 - 世界移動（`#ch-srv`、`last_server` 永続化）
 - s-edit / m-edit 入力UI: `components/EditDialog.tsx`
 

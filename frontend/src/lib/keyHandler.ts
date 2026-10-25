@@ -12,7 +12,8 @@
  *   - turnモード(northFix=false): 前=step F / 後=step B / 左右=strafe L/R / 回転=turn l/r/b
  *   - 北固定(northFix=true): 絶対 step N/E/S/W、回転は turn l/r/b
  * - リストモード中(listActive): 数字1-9→list.select(value数値), 0/Esc→cancel, +→all。
- * - F1-F7=magic(keybind.magic→castMagic), F8-F12=shortcuts(raw command)。
+ * - Shift+1〜7=magic(keybind.magic→castMagic), Shift+8・9・0=shortcuts(raw command)。
+ *   F キーはブラウザ/OS が使う(F5 再読み込み、F11 全画面、F12 開発者ツール等)為、割り当てない。
  * - 入力欄フォーカス時(inputFocused)はゲームキー無効化。
  */
 import type { CommandSimpleRequest } from '../types/protocol';
@@ -32,9 +33,9 @@ export interface KeyContext {
   listActive: boolean;
   /** チャット/編集など入力欄にフォーカスがあるか。 */
   inputFocused: boolean;
-  /** F1-F7 → 呪文名(keybind.magic)。 */
+  /** 割当枠 F1-F7 → 呪文名(keybind.magic)。Shift+1〜7 で呼ぶ。 */
   magic: Partial<Record<string, string | null>>;
-  /** F8-F12 → コマンド語(keybind.shortcuts)。 */
+  /** 割当枠 F8-F10 → コマンド語(keybind.shortcuts)。Shift+8・9・0 で呼ぶ。 */
   shortcuts: Partial<Record<string, string | null>>;
   /** Shift+G に割り当てる raw コマンド語(keybind.altG)。空/未設定で無効。 */
   altG?: string;
@@ -218,18 +219,37 @@ export function actionToIntent(action: MoveAction, northFix: boolean): KeyIntent
   }
 }
 
-/** ファンクションキー(F1-F12) → magic/shortcut intent。 */
-function resolveFunctionKey(k: string, ctx: KeyContext): KeyIntent | null {
-  const m = /^F([1-9]|1[0-2])$/.exec(k);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (n >= 1 && n <= 7) {
-    const spell = ctx.magic[k];
-    if (spell) return { type: 'command', name: 'castMagic', spell };
-    return null;
-  }
-  // F8-F12: shortcut(raw コマンド語)
-  const cmd = ctx.shortcuts[k];
+/**
+ * Shift+数字 → 割当枠。設定の保存キーは F キーで割り当てていた頃の名前(F1〜F10)のまま使う。
+ * 記号はキーボード配列で変わる為、物理キー位置(code)で判定する。
+ */
+export const SHIFT_DIGIT_SLOT: Readonly<Record<string, string>> = {
+  Digit1: 'F1',
+  Digit2: 'F2',
+  Digit3: 'F3',
+  Digit4: 'F4',
+  Digit5: 'F5',
+  Digit6: 'F6',
+  Digit7: 'F7',
+  Digit8: 'F8',
+  Digit9: 'F9',
+  Digit0: 'F10',
+};
+
+/** 割当枠(F1〜F10) → 押すキーの表示名(Shift+1〜Shift+0)。 */
+export function slotKeyLabel(slot: string): string {
+  const code = Object.keys(SHIFT_DIGIT_SLOT).find((c) => SHIFT_DIGIT_SLOT[c] === slot);
+  return code ? `Shift+${code.slice('Digit'.length)}` : slot;
+}
+
+/** Shift+数字 → magic/shortcut intent。 */
+function resolveShiftDigit(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null {
+  if (!ev.shiftKey || ev.ctrlKey || ev.altKey || ev.metaKey) return null;
+  const slot = SHIFT_DIGIT_SLOT[ev.code];
+  if (!slot) return null;
+  const spell = ctx.magic[slot];
+  if (spell) return { type: 'command', name: 'castMagic', spell };
+  const cmd = ctx.shortcuts[slot];
   if (cmd) return { type: 'command', name: 'raw', text: cmd };
   return null;
 }
@@ -243,9 +263,9 @@ export function resolveKey(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null
 
   const k = ev.key;
 
-  // ファンクションキーはリスト/通常を問わず最優先
-  const fn = resolveFunctionKey(k, ctx);
-  if (fn) return fn;
+  // Shift+数字(魔法・ショートカット)はリスト/通常を問わず最優先
+  const slot = resolveShiftDigit(ev, ctx);
+  if (slot) return slot;
 
   // ---- リストモード: 数字選択 / cancel / all ----
   if (ctx.listActive) {
@@ -401,11 +421,11 @@ export function describeKeys(
   const raw = layout === 'wasd' ? COMMAND_RAW_WASD : COMMAND_RAW_NUMPAD;
 
   const fn: KeyHelpRow[] = [];
-  for (const [k, spell] of Object.entries(ctx.magic)) {
-    if (spell) fn.push({ keys: k, action: `${spell} を唱える` });
-  }
-  for (const [k, cmd] of Object.entries(ctx.shortcuts)) {
-    if (cmd) fn.push({ keys: k, action: rawLabel(cmd) });
+  for (const slot of Object.values(SHIFT_DIGIT_SLOT)) {
+    const spell = ctx.magic[slot];
+    const cmd = ctx.shortcuts[slot];
+    if (spell) fn.push({ keys: slotKeyLabel(slot), action: `${spell} を唱える` });
+    else if (cmd) fn.push({ keys: slotKeyLabel(slot), action: rawLabel(cmd) });
   }
   if (ctx.altG) fn.push({ keys: 'Shift+G', action: rawLabel(ctx.altG) });
 
@@ -439,8 +459,8 @@ export function describeKeys(
       ],
     },
     {
-      title: 'ファンクションキー（設定で割り当て）',
-      rows: fn.length ? fn : [{ keys: 'F1〜F12', action: '未割り当て。設定の「キーバインド」で決める' }],
+      title: '魔法・ショートカット（設定で割り当て）',
+      rows: fn.length ? fn : [{ keys: 'Shift+1〜0', action: '未割り当て。設定の「キーバインド」で決める' }],
     },
   ];
 }

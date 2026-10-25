@@ -80,8 +80,8 @@ CREATE TABLE sessions_web (        -- Webログインセッション(WSとは別
 ```jsonc
 {
   "layout": "wasd",            // "wasd" | "numpad"
-  "magic":  { "F1": "heal", "F2": "wizard eye", "F3": null, ... },  // F1-F7 → 呪文名
-  "shortcuts": { "F8": "spells", "F9": null, ... },                // F8-F12 → コマンド
+  "magic":  { "F1": "heal", "F2": "wizard eye", "F3": null, ... },  // 枠 F1-F7 → 呪文名。Shift+1〜7 で呼ぶ(A-35)
+  "shortcuts": { "F8": "spells", "F9": null, "F10": null },         // 枠 F8-F10 → コマンド。Shift+8・9・0 で呼ぶ(A-35)
   "altG": "<語>"               // Shift+G ショートカット語
 }
 ```
