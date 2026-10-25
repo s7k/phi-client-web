@@ -176,7 +176,14 @@ export class WsController {
 
     c.on('status', (msg) => {
       const s = resolveSession(msg.session);
-      if (s) useStatusStore.getState().setStatus(s, msg);
+      if (!s) return;
+      // 裏のタブで HP か MP が減ったらタブを緊急表示にする(Philly の緊急マーク)
+      const prev = useStatusStore.getState().bySession[s]?.status;
+      const ui = useUiStore.getState();
+      if (prev && s !== ui.activeTab && (msg.hp < prev.hp || msg.mp < prev.mp)) {
+        ui.setUrgent(s, true);
+      }
+      useStatusStore.getState().setStatus(s, msg);
     });
 
     c.on('cond', (msg) => {

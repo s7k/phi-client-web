@@ -3,10 +3,14 @@
  * - 接続/切断トグル(connectionStore の state で切替)。
  * - 特殊コマンド(cast/spells/wizeye/wizlist/check)を command raw で送る。
  *   cast はサーバが #list(習得呪文)を返し、ListView の手書き欄で唱える。
+ * - ログ保存(テキスト)とキー操作ヘルプ。
  */
 import { useWs } from '../ws/WsContext';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useUiStore } from '../stores/uiStore';
+import { useChatStore } from '../stores/chatStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { saveLog } from '../lib/logExport';
 import './CommandBar.css';
 
 const COMMANDS: { text: string; icon: string; label: string }[] = [
@@ -49,6 +53,20 @@ export function CommandBar({ session }: { session: string }) {
           <i className={`bi ${c.icon}`} aria-hidden="true" />
         </button>
       ))}
+      <button
+        type="button"
+        className="cmdbar__btn"
+        title="ログを保存"
+        aria-label="ログを保存"
+        onClick={() =>
+          saveLog(
+            useChatStore.getState().bySession[session] ?? [],
+            useSessionStore.getState().sessions[session]?.label ?? session,
+          )
+        }
+      >
+        <i className="bi bi-download" aria-hidden="true" />
+      </button>
       <button
         type="button"
         className="cmdbar__btn"

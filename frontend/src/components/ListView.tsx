@@ -4,10 +4,11 @@
  * - 項目を番号付きで表示。クリック/番号で list.select(数値)。
  * - 全選択(+)・キャンセル(. / Esc)ボタン。
  * - 数字キー・Esc は useKeyHandler 側でも解決(本UIはクリック操作用)。
+ * - 左のチェックで複数選び、番号を空白区切りでまとめて送る(Philly の OK ボタン。get/put 等)。
  * - cast 中(mode.magic)は呪文の手書き欄を出す。サーバは次の1行を番号か呪文として読む為、
  *   一覧に無い呪文やコマンド魔法(appear↵golem 等の複数行)を command raw で送る。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useWs } from '../ws/WsContext';
 import { useListStore } from '../stores/listStore';
 import { useModeStore } from '../stores/modeStore';
@@ -25,8 +26,20 @@ export function ListView({ session }: { session: string }) {
   const list = useListStore((s) => s.bySession[session]);
   const magic = useModeStore((s) => s.bySession[session]?.magic ?? false);
   const [spell, setSpell] = useState('');
+  const [checked, setChecked] = useState<number[]>([]);
+
+  // 新しいリストが届いたらチェックを外す
+  useEffect(() => setChecked([]), [list?.lines]);
 
   if (!list?.active) return null;
+
+  function toggle(value: number) {
+    setChecked((c) => (c.includes(value) ? c.filter((v) => v !== value) : [...c, value]));
+  }
+
+  function sendChecked() {
+    ws.sendCommand(session, { name: 'raw', text: [...checked].sort((a, b) => a - b).join(' ') });
+  }
 
   function castSpell() {
     const text = spell.replace(/\n+$/, '');
@@ -44,7 +57,14 @@ export function ListView({ session }: { session: string }) {
           const { num, label } = stripLeadingNumber(line);
           const value = num ?? i + 1;
           return (
-            <li key={`${i}:${line}`}>
+            <li key={`${i}:${line}`} className="listview__row">
+              <input
+                type="checkbox"
+                className="listview__check"
+                aria-label={`${value} を選ぶ`}
+                checked={checked.includes(value)}
+                onChange={() => toggle(value)}
+              />
               <button
                 type="button"
                 className="listview__item"
@@ -87,6 +107,11 @@ export function ListView({ session }: { session: string }) {
         </div>
       )}
       <div className="listview__actions">
+        {checked.length > 0 && (
+          <button type="button" className="listview__all" onClick={sendChecked}>
+            選んだ {checked.length} 件を送る
+          </button>
+        )}
         <button
           type="button"
           className="listview__all"

@@ -63,3 +63,19 @@
   font-size: 0.7rem;
   font-weight: 600;
 }
+
+/* 裏のタブで HP か MP が減った */
+.tabbar__tab--urgent {
+  border-color: #ef4444;
+  box-shadow: inset 0 0 0 1px #ef4444;
+  animation: tabbar-urgent 1s ease-in-out infinite alternate;
+}
+
+@keyframes tabbar-urgent {
+  from { background: var(--surface); }
+  to { background: rgba(239, 68, 68, 0.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabbar__tab--urgent { animation: none; background: rgba(239, 68, 68, 0.35); }
+}

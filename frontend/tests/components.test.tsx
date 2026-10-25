@@ -290,6 +290,31 @@ describe('Chat (F7)', () => {
     expect(sendChat).toHaveBeenCalledWith('s1', 'normal', 'hello', undefined);
   });
 
+  it('↑↓で送った発言を呼び戻す', () => {
+    renderWith(makeController({ sendChat: vi.fn() }), <Chat session="s1" />);
+    const input = screen.getByPlaceholderText('メッセージを入力') as HTMLInputElement;
+    for (const v of ['one', 'two']) {
+      fireEvent.change(input, { target: { value: v } });
+      fireEvent.click(screen.getByText('送信'));
+    }
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('two');
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('one');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input.value).toBe('');
+  });
+
+  it('Ctrl+Enter はパーティー発言', () => {
+    const sendChat = vi.fn();
+    renderWith(makeController({ sendChat }), <Chat session="s1" />);
+    const input = screen.getByPlaceholderText('メッセージを入力');
+    fireEvent.change(input, { target: { value: '集合' } });
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+    expect(sendChat).toHaveBeenCalledWith('s1', 'party', '集合', undefined);
+  });
+
   it('大声は確認ダイアログ経由(誤爆防止)', () => {
     const sendChat = vi.fn();
     renderWith(
@@ -326,6 +351,16 @@ describe('Chat (F7)', () => {
 });
 
 describe('ListView (F9)', () => {
+  it('チェックした番号を空白区切りでまとめて送る', () => {
+    const sendCommand = vi.fn();
+    useListStore.getState().setList('s1', { active: true, lines: ['1: 剣', '2: 盾', '3: 薬'] });
+    renderWith(makeController({ sendCommand }), <ListView session="s1" />);
+    fireEvent.click(screen.getByLabelText('3 を選ぶ'));
+    fireEvent.click(screen.getByLabelText('1 を選ぶ'));
+    fireEvent.click(screen.getByText('選んだ 2 件を送る'));
+    expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: '1 3' });
+  });
+
   it('非activeなら非表示', () => {
     useListStore.getState().setList('s1', { active: false });
     const { container } = renderWith(makeController(), <ListView session="s1" />);

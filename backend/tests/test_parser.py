@@ -438,3 +438,10 @@ def test_eagleeye_reset_on_new_start(parser):
     ev = parser.feed(b"#ex-eagleeye end")[0]
     assert ev["width"] == 1 and ev["height"] == 1
     assert ev["cells"] == [{"chip": 9, "attr": 0}]
+
+
+def test_ex_chr_conflict_shows_notice(parser):
+    # サーバは改行無しで送る事がある(phi_dm.c set_chr の check_write)
+    evs = parser.feed(b"#ex-chr-conflict")
+    assert evs == [{"type": "message", "channel": "system",
+                    "text": "3重状態で消えています。移動してください", "markup": False}]

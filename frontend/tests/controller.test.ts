@@ -277,6 +277,22 @@ describe('WsController イベント配線', () => {
     expect(useChatStore.getState().bySession['s1'][0].text).toBe('hi');
   });
 
+  it('裏のタブで HP か MP が減ったら緊急表示、表のタブでは出さない', async () => {
+    setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    const st = (session: string, hp: number) => ({
+      type: 'status' as const, session, name: 'X', hp, maxHp: 100, mp: 10, maxMp: 10,
+      exp: 0, gp: 0, f: 0, w: 0, m: 0, c: 0,
+    });
+    useUiStore.getState().setActiveTab('s1');
+    ws.emit(st('s2', 80));
+    ws.emit(st('s2', 60));
+    ws.emit(st('s1', 80));
+    ws.emit(st('s1', 60));
+    expect(useUiStore.getState().urgent).toEqual({ s2: true });
+  });
+
   it('session欠落時はアクティブsessionで補完(A-03)', async () => {
     setup();
     await Promise.resolve();

@@ -21,6 +21,9 @@ const MODE_LABELS: { mode: ChatMode; label: string }[] = [
   { mode: 'priv', label: 'プライベート' },
 ];
 
+/** 入力履歴に残す件数。Philly の EditMaxLine 既定と同じ。 */
+const HISTORY_MAX = 50;
+
 export function Chat({ session }: { session: string }) {
   const ws = useWs();
   const log = useChatStore((s) => s.bySession[session] ?? []);
@@ -40,13 +43,38 @@ export function Chat({ session }: { session: string }) {
   const openConfirm = useUiStore((s) => s.openConfirm);
 
   const [text, setText] = useState('');
+  // 送った発言の履歴(↑↓で呼び戻す)。cursor は履歴上の位置で、末尾=新しい入力。
+  const history = useRef<string[]>([]);
+  const cursor = useRef(0);
 
-  function doSend() {
+  function doSend(mode: ChatMode = chatMode) {
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (chatMode === 'priv' && !privTo) return;
-    ws.sendChat(session, chatMode, trimmed, privTo ?? undefined);
+    if (mode === 'priv' && !privTo) return;
+    ws.sendChat(session, mode, trimmed, privTo ?? undefined);
+    const h = history.current;
+    if (h[h.length - 1] !== trimmed) h.push(trimmed);
+    if (h.length > HISTORY_MAX) h.shift();
+    cursor.current = h.length;
     setText('');
+  }
+
+  /** ↑↓で履歴、Ctrl+Enter でパーティー発言(Philly の PartyTalkByCtrl)。 */
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.nativeEvent.isComposing) return;
+    const h = history.current;
+    if (e.key === 'ArrowUp' && cursor.current > 0) {
+      e.preventDefault();
+      cursor.current -= 1;
+      setText(h[cursor.current]);
+    } else if (e.key === 'ArrowDown' && cursor.current < h.length) {
+      e.preventDefault();
+      cursor.current += 1;
+      setText(h[cursor.current] ?? '');
+    } else if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      doSend('party');
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -57,7 +85,7 @@ export function Chat({ session }: { session: string }) {
       // 大声は誤爆防止の確認ダイアログ([05]§1)
       openConfirm({
         message: `大声で発言します:\n"${trimmed}"\nよろしいですか?`,
-        onConfirm: doSend,
+        onConfirm: () => doSend(),
       });
       return;
     }
@@ -116,6 +144,7 @@ export function Chat({ session }: { session: string }) {
             value={text}
             placeholder="メッセージを入力"
             onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
           />
           <button
             className="chat__send"

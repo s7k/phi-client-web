@@ -376,6 +376,10 @@ class ProtocolParser:
             ev = self._parse_user(raw)
             return [ev] if ev else []
 
+        # --- 同じマスに3人以上居て消えている(Philly と同じ案内を出す) ---
+        if text.startswith("#ex-chr-conflict"):
+            return [self._message("system", "3重状態で消えています。移動してください")]
+
         # --- BGM(無視) ------------------------------------------------
         if starts("#bgm "):
             return []

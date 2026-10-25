@@ -26,6 +26,7 @@ import { Chat } from './components/Chat';
 import { MapView } from './components/MapView';
 import { EagleEyeView } from './components/EagleEyeView';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { PromptDialog } from './components/PromptDialog';
 import { Settings } from './components/Settings';
 import { TabBar } from './components/TabBar';
 import { ListView } from './components/ListView';
@@ -165,6 +166,7 @@ export function App({ controller }: { controller: WsController }) {
         {screen}
       </div>
       <ConfirmDialog />
+      <PromptDialog />
       <Settings />
     </WsProvider>
   );

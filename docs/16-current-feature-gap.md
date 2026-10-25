@@ -10,55 +10,47 @@
 凡例: BE=バックエンド(`backend/`)、FE=フロントエンド(`frontend/src/`)。
 Philly の根拠は PhillySrc の `Philly/` からの相対パス。
 
-## 1. 不足機能
+## 1. Philly にあって Web版に無かった機能
 
-### 1.1 発言・入力
+2026-10-25 に、ブラウザで使えるか・使う価値があるかで仕分け、使えるものを実装した。
 
-| 機能 | 現状 | Philly の動作 |
-|------|------|---------------|
-| パーティー発言 | `serializer.py` の party は通常発言と同じ整形で送っている（A-14 の TODO） | Ctrl+Enter で先頭に `+` を付ける（`MainForm.cpp:1075`） |
-| 入力履歴 | 無い | 入力欄は複数行で送った行が残り、↑↓で戻って Enter で再送（既定50行、`MainForm.cpp:970-981`） |
-| 追加発言 | 無い | キャラごとの接頭語を新しい行へ自動で入れる（`Command.cpp:1693`） |
-| 三者以上の Priv | 宛先は1人だけ | 宛先をチェックリストで複数選び、`/*to=A*//*to=B*/本文` を宛先ごとに送る（`PrivForm.cpp:344-417`） |
-| タグメニュー | 無い | 入力欄の右クリックで色・サイズ・スタイルのタグを挿入（`TagMenu.xml`） |
+### 1.1 実装したもの
 
-### 1.2 ゲーム操作
+| 機能 | Web版の操作 | Philly の動作 | 実装 |
+|------|-------------|---------------|------|
+| パーティー発言 | パーティーボタン、またはチャット欄で Ctrl+Enter。先頭に `+` を付けて送る | Ctrl+Enter で先頭に `+`（`MainForm.cpp:1075`）。v5y も `+` をパーティー発言と読む（`phi_dm.c:4306`） | `serializer.py`、`Chat.tsx` |
+| 通常発言の誤変換防止 | 先頭が `*`（大声）・`+`（パーティー）・`&`（エリア）の通常発言に `/**/` を前置 | `LoudlyByAsterisk` で `*` だけ前置（`MainForm.cpp:1066-1074`） | `serializer.py` |
+| 入力履歴 | チャット欄で ↑↓（50件） | 送った行が入力欄に残り、↑↓で戻って再送（`MainForm.cpp:970-981`） | `Chat.tsx` |
+| pay（支払い） | P キーで金額を入力 | P キーで金額ダイアログ（`Command.cpp:1154`） | `keyHandler.ts`、`PromptDialog.tsx` |
+| マップのマウス操作 | クリックした方向へ1歩、右クリックで攻撃 | 左クリックで移動、右クリックで `hit`（`MapForm.cpp:491-633`） | `MapView.tsx` |
+| リストの複数選択 | 行のチェックで選び、「選んだ N 件を送る」で番号を空白区切りで送る | チェックした番号を空白区切りで送る（`MainForm.cpp:653-764`） | `ListView.tsx` |
+| ログ保存 | 上部バーのボタンで表示中のログをテキスト保存（マークアップは除く） | バッファの HTML 保存（`CharacterCommon.cpp:668`） | `lib/logExport.ts` |
+| 裏タブの緊急表示 | 裏のタブで HP か MP が減るとタブが赤く点滅し、開くと消える | 緊急アイコンとフラッシュ（`CharacterCommon.cpp:370`） | `controller.ts`、`TabBar.tsx` |
+| `#ex-chr-conflict` | 「3重状態で消えています。移動してください」を表示 | 同じ文言をログとステータスバーに出す（`PersonalThread.cpp:1353`） | `parser.py` |
 
-| 機能 | 現状 | Philly の動作 |
-|------|------|---------------|
-| pay（支払い） | BE の `serializer.py` は `pay` intent を整形出来る。FE に発行するキー割当とUIが無い | P キーで金額ダイアログ → `pay <n>`。隠しコマンドで `@` キーが `pay 0`（`Command.cpp:1154, 1013`） |
-| Alt 系の魔法ショートカット | Shift+1〜7 の魔法割当（keybind.magic）だけある | Alt+W/E/I/S/L/U/D/C/A/F/B/R/P と Shift+Alt+W/L/D/C/A/U で `cast\n<魔法名>`。Search と Appear/Disappear は語を入力させる（`Command.cpp:614-655`） |
-| Call / Return の確認 | 該当操作が無い | 唱える前に確認ダイアログ（`Command.cpp:1243, 1259`） |
-| 全自動攻撃・全自動詠唱 | `lib/keyHandler.ts` の Space は単発の `hit` を送るだけ | 隠しコマンド。`#end-at` 受信時に Space を押していれば `hit`、`#end-mg` 受信時に F1-F7 を押していれば再詠唱（`PersonalThread.cpp:1216-1254`） |
-| マップのマウス操作 | 無い（スマホ用の TouchControls だけ） | 左クリックでカーソル方向へ移動、右クリックで `hit`、中クリックでスクリーンショット（`MapForm.cpp:491-633`） |
-| Home / End | 無い | `equip\nsort` / `unequip\n1`（`Command.cpp:522-523`） |
-| Eagle eye text | 無い | Shift+Alt+E でテキスト版の Eagle eye を唱える（`Command.cpp:1098`） |
-| リストの複数選択 | 1つ選ぶとすぐ送る | Space でチェックを付け、Enter でチェックした番号をまとめて送る（`Command.cpp:741-743`） |
-| リスト書き出し | 無い | 表示中のリストをテキストに保存（`CharacterCommon.cpp:3312`） |
-| 超魔法メニュー | 無い（入力欄から手で送る） | Exp が 99999999 のキャラにマスター魔法のメニューを出す（`MainForm.cpp:436-546`） |
-
-`#more` 送信は不足ではない。
+`#more` 送信は元から不足していなかった。
 Philly はリストの9番目を「more」として番号 `9` を送るだけで、Web版もリスト中の `9` キーで同じ `9` を送る。
 
-### 1.3 ログ・通知
+### 1.2 見送ったもの
 
-| 機能 | 現状 | Philly の動作 |
-|------|------|---------------|
-| ログ保存 | `stores/chatStore.ts` は1000件のリングバッファで、古いログは消える。保存手段が無い | 日付ごとのファイルへ自動保存、バッファの HTML 保存（`CharacterCommon.cpp:525-589, 668`） |
-| コピー時のタグ処理 | 無い | コピー時に時刻・キャラ名・タグを除く（`Command.cpp:1590-1615`） |
-| ログ削除の正規表現 | 無い | 一致した行をログに出さない（`PersonalThread.cpp:948-957`） |
-| 裏タブの緊急表示 | 未読数のバッジだけ | 裏のタブで HP か MP が減るとタブを緊急表示にする（`CharacterCommon.cpp:370`） |
-| Ctrl+Tab | 無い | 次/前のタブへ。設定で未読・緊急のタブを優先（`Command.cpp:592, 603`） |
-| 別窓画像 `img_wnd=` | 無い（`img=` は対応済み） | 画像窓に表示（`TagToHtml.cpp:65`） |
-| `#ex-chr-conflict` | parser が捨てている | 「3重状態で消えています。移動してください」を出す（`PersonalThread.cpp:1353`） |
-| BGM | `protocol/parser.py` が `#bgm` を捨てている | `sound\bgm\` の MIDI を再生。`#ex-bgm-speed` で速度変更、タブ切替で一時停止（`PersonalThread.cpp:1327, 1511`） |
+| 機能 | Philly の動作 | 見送った理由 |
+|------|---------------|--------------|
+| Alt 系の魔法ショートカット | Alt+英字で `cast\n<魔法名>`（`Command.cpp:614-655`） | Alt+英字はブラウザのメニューと衝突する。Shift+数字の枠へ `cast\n<魔法名>` を割り当てれば同じ事が出来る |
+| Call / Return の確認 | 唱える前に確認（`Command.cpp:1243, 1259`） | Alt 系の魔法を見送った為、確認を出す操作が無い |
+| Ctrl+Tab のタブ切替 | 次/前のタブへ（`Command.cpp:592`） | ブラウザがタブ切替に使い、ページ側で取り消せない |
+| 全自動攻撃・全自動詠唱 | 押し続けると自動で再送（`PersonalThread.cpp:1216-1254`） | Philly でも署名付きの隠しコマンドで、一般の利用者には開放していない |
+| BGM | MIDI を再生（`PersonalThread.cpp:1327`） | MIDI を変換して配信する仕組みが別途要る |
+| コピー時のタグ処理 | コピー時にタグを除く（`Command.cpp:1590-1615`） | Web版は描画済みの文字をコピーするので、元からタグが付かない |
+| 三者以上の Priv、追加発言、タグメニュー | `PrivForm.cpp`、`Command.cpp:1693`、`TagMenu.xml` | 利用場面が限られる |
+| Home / End、Eagle eye text、リスト書き出し、超魔法メニュー | `Command.cpp:522, 1098`、`CharacterCommon.cpp:3312`、`MainForm.cpp:436` | 利用場面が限られる。超魔法はマスターだけが使う |
+| ログ削除の正規表現、別窓画像 `img_wnd=` | `PersonalThread.cpp:948`、`TagToHtml.cpp:65` | 利用場面が限られる |
+| `#enter-win` / `#leave-win` | アクティブ化で送る（`Character.cpp:267`） | 受け取る側の Philly も処理せず捨てていた（`PersonalThread.cpp:1047-1073`） |
 
-### 1.4 プロトコル・周辺
+### 1.3 プロトコル・周辺
 
 | 機能 | 現状 | 対応案 |
 |------|------|--------|
 | 新規キャラ作成（`#ex-register`） | `components/Register.tsx` と `api/register.ts` はあるが、どの画面からも開けない（[DEVLOG](DEVLOG.md) §6.14 で温存扱い） | キャラ選択画面から開けるようにし、作成したキャラを characters へ登録する |
-| `#enter-win` / `#leave-win` | 送っていない。Philly はタブとアプリのアクティブ化で送る（`Character.cpp:267, 318`）。サーバは同じ場の相手へ `#enter-win <名前>` を通知する | FE の `visibilitychange` を WS 経由で BE へ伝え、BE が送信 |
 | v6 プロトコル（`#hello phi/6`） | fix-phidm は `#hello phi/6` を送った接続だけ v6 で応答する。本番の v5y とは非互換 | 本番が v6 へ移るまで対応しない |
 
 ## 2. 効果の無い送信
@@ -85,7 +77,7 @@ parser の `end_list()` は `#ex-list-mode-end` が届かない前提で既に�
 
 [04] で不足としていた項目のうち、以下は Web版で実装済み。
 
-- 発言種別（通常/大声/全タブ/プライベート）: `components/Chat.tsx`。パーティーは §1.1 のとおり整形が未確定
+- 発言種別（通常/大声/パーティー/全タブ/プライベート）: `components/Chat.tsx`
 - 通知（priv限定・大声・正規表現フィルタ・タイトル点滅・音）: `lib/notify.ts`
 - スクリーンショット（マップ/EagleEye）: `lib/screenshot.ts`
 - ログ内画像（`img=`）: `lib/colorMarkup.ts`、`components/MarkupText.tsx`

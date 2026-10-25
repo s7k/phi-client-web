@@ -13,6 +13,14 @@ export interface ConfirmDialog {
   onCancel?: () => void;
 }
 
+/** 1行入力ダイアログ要求(pay の金額等)。 */
+export interface PromptDialog {
+  message: string;
+  /** 数値だけ受け付ける。 */
+  numeric?: boolean;
+  onSubmit: (value: string) => void;
+}
+
 /** 世界移動進行状態([07]§6.10)。FEは進行表示のみ。 */
 export interface WorldTransferState {
   session?: string;
@@ -37,6 +45,8 @@ interface UiStoreState {
   privTo: string | null;
   /** 表示中の確認ダイアログ(null=非表示)。 */
   confirm: ConfirmDialog | null;
+  /** 表示中の1行入力ダイアログ(null=非表示)。 */
+  prompt: PromptDialog | null;
   /** 設定パネル(F10)表示中か。 */
   settingsOpen: boolean;
   /** キー操作ヘルプ表示中か。 */
@@ -47,18 +57,23 @@ interface UiStoreState {
   worldTransfer: WorldTransferState | null;
   /** 表示中のエラーバナー/トースト。 */
   errors: ErrorBanner[];
+  /** 裏のタブで HP か MP が減った session(タブを開くまで緊急表示)。 */
+  urgent: Record<string, boolean>;
 
   setActiveTab: (tab: string | null) => void;
   setChatMode: (mode: ChatMode) => void;
   setPrivTo: (to: string | null) => void;
   openConfirm: (dialog: ConfirmDialog) => void;
   closeConfirm: () => void;
+  openPrompt: (dialog: PromptDialog) => void;
+  closePrompt: () => void;
   setSettingsOpen: (open: boolean) => void;
   setHelpOpen: (open: boolean) => void;
   setAdminOpen: (open: boolean) => void;
   setWorldTransfer: (t: WorldTransferState | null) => void;
   pushError: (err: ProtocolError, session?: string) => void;
   dismissError: (id: number) => void;
+  setUrgent: (session: string, on: boolean) => void;
   reset: () => void;
 }
 
@@ -67,11 +82,13 @@ const initial = {
   chatMode: 'normal' as ChatMode,
   privTo: null as string | null,
   confirm: null as ConfirmDialog | null,
+  prompt: null as PromptDialog | null,
   settingsOpen: false,
   helpOpen: false,
   adminOpen: false,
   worldTransfer: null as WorldTransferState | null,
   errors: [] as ErrorBanner[],
+  urgent: {} as Record<string, boolean>,
 };
 
 let errorSeq = 0;
@@ -82,6 +99,9 @@ export const useUiStore = create<UiStoreState>((set) => ({
   setChatMode: (chatMode) => set({ chatMode }),
   setPrivTo: (privTo) => set({ privTo }),
   openConfirm: (confirm) => set({ confirm }),
+  openPrompt: (prompt) => set({ prompt }),
+  setUrgent: (session, on) => set((s) => ({ urgent: { ...s.urgent, [session]: on } })),
+  closePrompt: () => set({ prompt: null }),
   closeConfirm: () => set({ confirm: null }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),

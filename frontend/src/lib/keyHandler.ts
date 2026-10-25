@@ -51,7 +51,9 @@ export type KeyIntent =
   | { type: 'list.select'; value: number | 'all' | 'cancel' }
   | { type: 'command'; name: SimpleCommandName }
   | { type: 'command'; name: 'castMagic'; spell: string }
-  | { type: 'command'; name: 'raw'; text: string };
+  | { type: 'command'; name: 'raw'; text: string }
+  /** 金額を入力させてから pay を送る(Philly の P キー)。 */
+  | { type: 'pay' };
 
 // ----------------------------------------------------------------------------
 // 移動アクションの抽象表現(レイアウト非依存)
@@ -325,6 +327,8 @@ export function resolveKey(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null
   if (lower in raw) {
     return { type: 'command', name: 'raw', text: raw[lower] };
   }
+  // P: 支払い(両レイアウトとも空きキー)
+  if (lower === 'p' && !ev.ctrlKey && !ev.altKey && !ev.metaKey) return { type: 'pay' };
 
   return null;
 }
@@ -444,6 +448,7 @@ export function describeKeys(
         { keys: 'Space', action: COMMAND_LABEL.hit },
         ...Object.entries(known).map(([k, n]) => ({ keys: keyLabel(k), action: COMMAND_LABEL[n] })),
         ...Object.entries(raw).map(([k, t]) => ({ keys: keyLabel(k), action: rawLabel(t) })),
+        { keys: 'P', action: '金額を入れて支払う (pay)' },
         ...Object.entries(NUMPAD_OP_COMMAND).map(([k, n]) => ({
           keys: `テンキー${k}`,
           action: COMMAND_LABEL[n],

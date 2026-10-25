@@ -67,6 +67,13 @@ function dispatch(
     case 'list.select':
       controller.sendListSelect(session, intent.value);
       break;
+    case 'pay':
+      useUiStore.getState().openPrompt({
+        message: '支払う金額',
+        numeric: true,
+        onSubmit: (v) => controller.sendCommand(session, { name: 'pay', amount: Number(v) }),
+      });
+      break;
     case 'command':
       if (intent.name === 'castMagic') {
         controller.sendCommand(session, { name: 'castMagic', spell: intent.spell });
