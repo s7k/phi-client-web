@@ -24,7 +24,7 @@
   1. `POST /api/auth/login` (accountId, password) → 検証 → `sessions_web` にトークン発行、**レスポンス body** で返却(`{ok, token, isAdmin}`)。
   2. REST 変更系: `Authorization: Bearer <token>`。WS: 接続後 first message `auth {token}` で検証。
   3. `POST /api/auth/logout` (Bearer) → トークン失効。
-- 有効期限: idle 30分 / absolute 24h(設定可)。WS切断中もゲームセッション([07]§4.2)は別タイムアウトで保持。
+- 有効期限: idle 30日 / absolute 30日(設定可)。WS切断中もゲームセッション([07]§4.2)は別タイムアウトで保持。
 - CSRF: cookie 廃止により CSRF/Origin 検査とも**不要**(A-33)。token は JS が明示付与し、ブラウザが自動送信するアンビエント資格(cookie)が無いため CSRF が原理的に発生しない。token はログ非出力。
 
 ### 1.4 スキーマ追補（[02]§6 / [08]§4 に追加）
