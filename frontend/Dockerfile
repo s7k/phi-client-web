@@ -1,7 +1,7 @@
 # phi-web フロントエンド + エッジ(nginx)
 # build context = ./frontend
 # Stage1: Vite ビルド(静的成果物は dist/。JS/CSSは dist/app/, index.html は dist/)
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
