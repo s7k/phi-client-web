@@ -361,6 +361,17 @@ describe('ListView (F9)', () => {
     expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: '1 3' });
   });
 
+  it('項目名のタグは表示しない(色は付け、解釈出来ないタグは隠す)', () => {
+    useListStore.getState().setList('s1', {
+      active: true,
+      lines: ['1: /*color=red*/炎の剣/*.*/', '2: /*SY*/盾'],
+    });
+    const { container } = renderWith(makeController(), <ListView session="s1" />);
+    expect(container.textContent).not.toContain('/*');
+    expect(screen.getByText('炎の剣')).toBeInTheDocument();
+    expect(screen.getByText('盾')).toBeInTheDocument();
+  });
+
   it('非activeなら非表示', () => {
     useListStore.getState().setList('s1', { active: false });
     const { container } = renderWith(makeController(), <ListView session="s1" />);

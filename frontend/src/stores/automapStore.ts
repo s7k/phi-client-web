@@ -40,29 +40,43 @@ export const AUTOMAP_RING = 4;
 type LiveMap = AutomapFrame & Pick<MapEvent, 'chars' | 'signs'>;
 
 /**
- * 中央に通常マップ、外周に記録地図を置いた盤面を作る。
+ * 中央に通常マップ、外周(幅 ring)に記録地図を置いた盤面を作る。
+ * 中央の視界外('?')のマスも、記録があれば記録地図で埋める。
+ * recalled は記録地図から描くマス(外周と埋めた '?')。描画側で暗くする。
  * キャラと看板は中央へずらす。合成出来ない(座標無し・回転マップ等)時は null。
  */
-export function composeAutomap(map: LiveMap, tiles: AutomapTiles | undefined) {
+export function composeAutomap(
+  map: LiveMap,
+  tiles: AutomapTiles | undefined,
+  ring: number = AUTOMAP_RING,
+) {
   const { pos } = map;
   if (!tiles || !pos || map.size !== 7 || map.style !== 'solid' || map.cells.length !== 49) {
     return null;
   }
-  const R = AUTOMAP_RING;
+  const R = ring;
   const dim = 7 + 2 * R;
   const half = (dim - 1) / 2;
   const cells: MapCell[] = [];
+  const recalled: boolean[] = [];
   for (let r = 0; r < dim; r++) {
     for (let c = 0; c < dim; c++) {
+      const i = r * dim + c;
       const inner = r >= R && r < R + 7 && c >= R && c < R + 7;
-      cells[r * dim + c] = inner
-        ? map.cells[(r - R) * 7 + (c - R)]
-        : tiles[`${pos.x + c - half},${pos.y + r - half}`];
+      const live = inner ? map.cells[(r - R) * 7 + (c - R)] : undefined;
+      if (live && live.chip !== UNKNOWN) {
+        cells[i] = live;
+        continue;
+      }
+      const tile = tiles[`${pos.x + c - half},${pos.y + r - half}`];
+      cells[i] = tile ?? live!;
+      recalled[i] = !inner || tile !== undefined;
     }
   }
   return {
     dim,
     cells,
+    recalled,
     chars: map.chars.map((ch) => ({ ...ch, x: ch.x + R, y: ch.y + R })),
     signs: map.signs?.map((s) => ({ ...s, x: s.x + R, y: s.y + R })),
   };
