@@ -121,3 +121,15 @@ describe('empty tag /**/ is hidden', () => {
     expect(text).toBe('X');
   });
 });
+
+describe('解釈できないタグ', () => {
+  it('/*SY*/ のような未知のタグは表示しない(Philly と同じ)', () => {
+    const segs = parseMarkup('/*SY*/こんにちは/*to=Alice*/');
+    expect(segs.map((s) => (s.kind === 'text' ? s.text : '')).join('')).toBe('こんにちは');
+  });
+
+  it('既知のタグは従来どおり色を付ける', () => {
+    const segs = parseMarkup('/*SY*//*r*/赤/*.*/');
+    expect(segs).toEqual([{ kind: 'text', text: '赤', color: '#D32F2F' }]);
+  });
+});

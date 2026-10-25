@@ -9,7 +9,8 @@
  *          /*attr=.*​/       当該属性の最内タグを1つクローズ
  *   画像:  /*img=URL*​/       インライン画像(F11, [05]§13)。http/https のみ許可・サニタイズ。
  *
- * 未対応タグ(size=,font=,style=)は黙って除去。
+ * 未対応タグ(size=,font=,style=)と、解釈できないタグ(/*SY*​/ 等)は表示しない。
+ * Philly も解釈できなかったタグをコメントにして隠していた(TagToHtml.cpp, NotInterpretedTagDisp=オフ)。
  * 戻り値: セグメント配列。text セグメント({text,color}) または image セグメント({img})。
  */
 
@@ -70,10 +71,11 @@ const CSS_COLORS: Record<string, string> = {
   black: '#212121',
 };
 
-// TagToHtml.cpp のパターンに対応。
-// group1=inner(全体), group2=attr(color/cl/c/size/font/ft/style/img), group3=value。
-const TAG_RE =
-  /\/\*(\.|[a-zA-Z]|(color|cl|c|size|font|ft|style|img)=(.+?))\*\//gi;
+// /* と */ で囲んだものは全てタグとして扱い、解釈できないものは捨てる。
+// group1=inner(/* と */ の間)。
+const TAG_RE = /\/\*(.*?)\*\//g;
+// 属性付きタグ。group1=attr(color/cl/c/size/font/ft/style/img), group2=value。
+const ATTR_RE = /^(color|cl|c|size|font|ft|style|img)=(.+)$/i;
 const COLOR_ATTR_RE = /^(?:color|cl|c)$/i;
 const HEX3 = /^#[0-9a-fA-F]{3}$/;
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
@@ -146,8 +148,9 @@ export function parseMarkup(text: string): MarkupSegment[] {
     pos = TAG_RE.lastIndex;
 
     const inner = m[1]; // /* と */ の間の全内容
-    const attr = m[2] as string | undefined; // color/c/size/img/...
-    const value = m[3] as string | undefined; // '=' 以降
+    const am = ATTR_RE.exec(inner);
+    const attr = am?.[1]; // color/c/size/img/...
+    const value = am?.[2]; // '=' 以降
 
     if (inner === '.') {
       // /*.*​/ — 全タグクローズ
@@ -165,10 +168,11 @@ export function parseMarkup(text: string): MarkupSegment[] {
         stack.push(resolve(value ?? '')); // 未知は null をプレースホルダで push
       }
       // size=/font=/style= は無視(push しない)
-    } else if (inner.length === 1) {
+    } else if (/^[a-zA-Z]$/.test(inner)) {
       // /*x*​/ — 単レター色
       stack.push(LETTER_COLORS[inner.toLowerCase()] ?? null);
     }
+    // それ以外(/*SY*​/ 等)は解釈できないタグとして表示しない
   }
 
   const tail = text.slice(pos);
