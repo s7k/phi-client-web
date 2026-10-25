@@ -1,0 +1,60 @@
+.help-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.65);
+  z-index: 100;
+}
+
+.help-box {
+  width: 100%;
+  max-width: 880px;
+  max-height: 100%;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem 1.25rem;
+  color: var(--text);
+}
+
+.help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.help-head h2 { margin: 0; font-size: 1.1rem; }
+
+.help-close {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.help-note { margin: 0.25rem 0 0.75rem; font-size: 0.8rem; opacity: 0.75; }
+
+.help-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.75rem 1.25rem;
+}
+
+.help-group h3 { margin: 0 0 0.25rem; font-size: 0.9rem; }
+.help-group table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+.help-group th { text-align: left; font-weight: normal; white-space: nowrap; padding: 0.15rem 0.6rem 0.15rem 0; vertical-align: top; }
+.help-group td { padding: 0.15rem 0; }
+
+.help-group kbd {
+  display: inline-block;
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-family: inherit;
+}

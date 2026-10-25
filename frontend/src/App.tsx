@@ -37,6 +37,7 @@ import { ErrorBanners } from './components/ErrorBanners';
 import { WorldTransferIndicator } from './components/WorldTransferIndicator';
 import { WorldArea } from './components/WorldArea';
 import { CommandBar } from './components/CommandBar';
+import { HelpDialog } from './components/HelpDialog';
 import './App.css';
 
 function Game({
@@ -96,6 +97,7 @@ function Game({
         </div>
       </header>
       <WorldTransferIndicator />
+      <HelpDialog session={session} />
       {/* 本体: デスクトップ=左(マップ+ステータス)/右(チャット)。
           モバイル=チャット(ログ+入力)上→マップ→ステータス下 */}
       <div className="game__body">

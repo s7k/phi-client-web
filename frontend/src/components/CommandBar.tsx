@@ -6,6 +6,7 @@
  */
 import { useWs } from '../ws/WsContext';
 import { useConnectionStore } from '../stores/connectionStore';
+import { useUiStore } from '../stores/uiStore';
 import './CommandBar.css';
 
 const COMMANDS: { text: string; icon: string; label: string }[] = [
@@ -48,6 +49,15 @@ export function CommandBar({ session }: { session: string }) {
           <i className={`bi ${c.icon}`} aria-hidden="true" />
         </button>
       ))}
+      <button
+        type="button"
+        className="cmdbar__btn"
+        title="キー操作 (?)"
+        aria-label="キー操作"
+        onClick={() => useUiStore.getState().setHelpOpen(true)}
+      >
+        <i className="bi bi-question-circle" aria-hidden="true" />
+      </button>
     </div>
   );
 }

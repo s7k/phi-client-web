@@ -308,3 +308,139 @@ export function resolveKey(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null
 
   return null;
 }
+
+// ----------------------------------------------------------------------------
+// ヘルプ用のキー一覧。上の対応表から作るので、割当を変えるとヘルプも変わる。
+// ----------------------------------------------------------------------------
+
+/** ヘルプの1行。 */
+export interface KeyHelpRow {
+  keys: string;
+  action: string;
+}
+
+/** ヘルプの1区分。 */
+export interface KeyHelpGroup {
+  title: string;
+  rows: KeyHelpRow[];
+}
+
+const KEY_LABEL: Record<string, string> = {
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+};
+
+const COMMAND_LABEL: Record<SimpleCommandName, string> = {
+  board: '看板に注意 (board)',
+  equip: '自動装備 (equip)',
+  unequip: '装備を外す (unequip)',
+  sort: '持ち物の整理 (sort)',
+  get: '拾う (get)',
+  put: '置く (put)',
+  hit: '攻撃 (hit)',
+  use: '使う (use)',
+  read: '看板を読む (read)',
+  write: '看板に書く (write)',
+};
+
+function keyLabel(k: string): string {
+  return KEY_LABEL[k] ?? (k.length === 1 ? k.toUpperCase() : k);
+}
+
+function moveLabel(action: MoveAction, northFix: boolean): string {
+  switch (action) {
+    case 'turnL':
+      return '左を向く';
+    case 'turnR':
+      return '右を向く';
+    case 'turnB':
+      return '後ろを向く';
+    case 'absN':
+      return '北へ';
+    case 'absS':
+      return '南へ';
+    case 'absW':
+      return '西へ';
+    case 'absE':
+      return '東へ';
+    case 'forward':
+      return northFix ? '北へ' : '前へ';
+    case 'back':
+      return northFix ? '南へ' : '後ろへ';
+    case 'strafeL':
+      return northFix ? '西へ' : '左へ平行移動';
+    case 'strafeR':
+      return northFix ? '東へ' : '右へ平行移動';
+  }
+}
+
+/** 複数行のコマンド語は ↵ で区切って見せる。 */
+function rawLabel(text: string): string {
+  return `${text.replace(/\n/g, ' ↵ ')} を送る`;
+}
+
+function moveRows(table: Record<string, MoveAction>, northFix: boolean, prefix = ''): KeyHelpRow[] {
+  return Object.entries(table).map(([k, a]) => ({
+    keys: prefix + keyLabel(k),
+    action: moveLabel(a, northFix),
+  }));
+}
+
+/**
+ * 現在の操作設定で使えるキーの一覧。
+ * F1-F12・Shift+G は設定で割り当てたものだけ出す。
+ */
+export function describeKeys(
+  ctx: Pick<KeyContext, 'layout' | 'northFix' | 'magic' | 'shortcuts' | 'altG'>,
+): KeyHelpGroup[] {
+  const { layout, northFix } = ctx;
+  const letterMove = layout === 'wasd' ? WASD_MOVE : NUMPAD_LETTER_MOVE;
+  const known = layout === 'wasd' ? COMMAND_KNOWN_WASD : COMMAND_KNOWN_NUMPAD;
+  const raw = layout === 'wasd' ? COMMAND_RAW_WASD : COMMAND_RAW_NUMPAD;
+
+  const fn: KeyHelpRow[] = [];
+  for (const [k, spell] of Object.entries(ctx.magic)) {
+    if (spell) fn.push({ keys: k, action: `${spell} を唱える` });
+  }
+  for (const [k, cmd] of Object.entries(ctx.shortcuts)) {
+    if (cmd) fn.push({ keys: k, action: rawLabel(cmd) });
+  }
+  if (ctx.altG) fn.push({ keys: 'Shift+G', action: rawLabel(ctx.altG) });
+
+  return [
+    {
+      title: `移動（${layout === 'wasd' ? 'WASD' : '仮想テンキー'}・${northFix ? '北固定' : '回転'}）`,
+      rows: [
+        ...moveRows(letterMove, northFix),
+        ...moveRows(northFix ? CURSOR_NF : CURSOR_TURN, northFix),
+        ...moveRows(NUMPAD_KEY_MOVE, northFix, 'テンキー'),
+      ],
+    },
+    {
+      title: '行動',
+      rows: [
+        { keys: 'Space', action: COMMAND_LABEL.hit },
+        ...Object.entries(known).map(([k, n]) => ({ keys: keyLabel(k), action: COMMAND_LABEL[n] })),
+        ...Object.entries(raw).map(([k, t]) => ({ keys: keyLabel(k), action: rawLabel(t) })),
+        ...Object.entries(NUMPAD_OP_COMMAND).map(([k, n]) => ({
+          keys: `テンキー${k}`,
+          action: COMMAND_LABEL[n],
+        })),
+      ],
+    },
+    {
+      title: 'リスト表示中',
+      rows: [
+        { keys: '1〜9', action: '番号を選ぶ（9 は次のページ）' },
+        { keys: '0 / Esc', action: 'キャンセル' },
+        { keys: '+', action: '全て選ぶ' },
+      ],
+    },
+    {
+      title: 'ファンクションキー（設定で割り当て）',
+      rows: fn.length ? fn : [{ keys: 'F1〜F12', action: '未割り当て。設定の「キーバインド」で決める' }],
+    },
+  ];
+}

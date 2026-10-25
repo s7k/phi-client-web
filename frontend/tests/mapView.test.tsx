@@ -98,3 +98,16 @@ describe('MapView', () => {
     expect(loaded).toContain('/assets/chara/t_elf.png');
   });
 });
+
+describe('MapView 記録地図の外周', () => {
+  it('座標と記録地図があれば 15x15 で描く', async () => {
+    const { useNoticeStore } = await import('../src/stores/noticeStore');
+    const { useAutomapStore } = await import('../src/stores/automapStore');
+    useNoticeStore.getState().setNotice('s1', { world: 'SYUREN' });
+    useAutomapStore.setState({ byWorld: { SYUREN: { '0,0': { chip: 0x20, attr: 0 } } } });
+    setMap({ style: 'solid', pos: { x: 10, y: 10 } });
+    const { getByTestId } = render(<MapView session="s1" disableAnimation />);
+    const canvas = getByTestId('map-canvas') as HTMLCanvasElement;
+    expect(canvas.width).toBe(15 * 32);
+  });
+});

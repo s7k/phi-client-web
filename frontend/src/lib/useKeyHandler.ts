@@ -13,14 +13,35 @@ import { useListStore } from '../stores/listStore';
 import { useEditStore } from '../stores/editStore';
 import { useMapStore } from '../stores/mapStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useUiStore } from '../stores/uiStore';
 import type { DisplaySettings } from '../stores/settingsStore';
 
 /** keybind scope の形([12]§3.1)。 */
-interface KeybindSettings {
+export interface KeybindSettings {
   layout?: KeyLayout;
   magic?: Record<string, string | null>;
   shortcuts?: Record<string, string | null>;
   altG?: string;
+}
+
+/**
+ * 設定とライブのマップから、レイアウト・北固定・F キー割当を決める。
+ * 北固定は style の解決順 ライブmap.style → 設定display → 既定'solid'。ヘルプも同じ判定を使う。
+ */
+export function keyContextBase(
+  keybind: KeybindSettings | undefined,
+  display: DisplaySettings | undefined,
+  mapStyle: string | undefined,
+): Pick<KeyContext, 'layout' | 'northFix' | 'magic' | 'shortcuts' | 'altG'> {
+  const effStyle = mapStyle ?? display?.mapStyle ?? 'solid';
+  return {
+    layout: keybind?.layout ?? 'numpad',
+    // 北固定: style === 'solid'(turn=視点固定)。([07]§6.2, key_handler north_fix)
+    northFix: effStyle === 'solid',
+    magic: keybind?.magic ?? {},
+    shortcuts: keybind?.shortcuts ?? {},
+    altG: keybind?.altG,
+  };
 }
 
 /** 入力系要素にフォーカスがあるか。 */
@@ -79,23 +100,21 @@ export function useKeyHandler(
     if (!session) return;
 
     const handler = (ev: KeyboardEvent) => {
-      // style 解決順: ライブmap.style → 設定display → 既定'solid'。
-      const effStyle = mapStyle ?? display?.mapStyle ?? 'solid';
       const ctx: KeyContext = {
-        layout: keybind?.layout ?? 'numpad',
-        // 北固定: style === 'solid'(turn=視点固定)。([07]§6.2, key_handler north_fix)
-        northFix: effStyle === 'solid',
+        ...keyContextBase(keybind, display, mapStyle),
         listActive: list?.active ?? false,
         inputFocused: isInputFocused(),
-        magic: keybind?.magic ?? {},
-        shortcuts: keybind?.shortcuts ?? {},
-        altG: keybind?.altG,
       };
       // 編集ダイアログ表示中はゲームキー無効(編集UI側でキー処理)
       // ゲームキー無効化は **複数行編集(#m-edit)モーダル表示中のみ**。
       // #s-edit(1行)はPHIの通常入力待ち状態でモーダルも出ない(下部入力欄で応答)
       // ため、テンキー等の移動キーは有効のまま(s-editでテンキーが効かない不具合の修正)。
       if (edit?.active && edit.mode === 'multi' && !ctx.listActive) return;
+      if (ev.key === '?' && !ctx.inputFocused) {
+        ev.preventDefault();
+        useUiStore.getState().setHelpOpen(true);
+        return;
+      }
 
       const intent = resolveKey(ev, ctx);
       if (intent) {
