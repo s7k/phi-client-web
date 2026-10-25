@@ -27,6 +27,7 @@ Philly の根拠は PhillySrc の `Philly/` からの相対パス。
 | ログ保存 | 上部バーのボタンで表示中のログをテキスト保存（マークアップは除く） | バッファの HTML 保存（`CharacterCommon.cpp:668`） | `lib/logExport.ts` |
 | 裏タブの緊急表示 | 裏のタブで HP か MP が減るとタブが赤く点滅し、開くと消える | 緊急アイコンとフラッシュ（`CharacterCommon.cpp:370`） | `controller.ts`、`TabBar.tsx` |
 | `#ex-chr-conflict` | 「3重状態で消えています。移動してください」を表示 | 同じ文言をログとステータスバーに出す（`PersonalThread.cpp:1353`） | `parser.py` |
+| キャラグラ拡大（`#ex-obj`） | サーバが指定した表示名のキャラ・オブジェを拡大して描く。Web版は受信と描画を実装済みだったが、v5y に送る仕組みが無かった。v5y に `phi.td` の `:X w h z 名前` を足し、朱蓮はセントラルの女神像 (187,65) を 64×64 にした | `CharaGraExpand` 設定がオンの時、`#ex-obj S` の表示名に一致するキャラを拡大（`MakeMap.cpp:713-731`） | `parser.py`、`drawMap.ts`（既存）。サーバは upd-phi-server-v5y 0f76587 |
 
 `#more` 送信は元から不足していなかった。
 Philly はリストの9番目を「more」として番号 `9` を送るだけで、Web版もリスト中の `9` キーで同じ `9` を送る。
