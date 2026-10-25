@@ -125,7 +125,7 @@ body {
   }
   .game__actions--open { display: flex; }
   .game__actions button { width: 100%; text-align: left; }
-  .game__topbar { position: relative; }
+  .game__topbar { position: relative; flex-wrap: wrap; }
 }
 
 /* 本体: デスクトップ grid(左 map+status / 右 chat) */

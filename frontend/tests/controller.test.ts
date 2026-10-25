@@ -224,6 +224,26 @@ describe('WsController.openSession (charId, A-34)', () => {
     expect(useSessionStore.getState().sessions['s2'].opener.charId).toBe('c2');
   });
 
+  it('closeSession→reopenSession: 同じ charId で繋ぎ直し、旧タブを新タブへ差し替える', async () => {
+    const { controller } = setup();
+    await Promise.resolve();
+    const ws = MockWebSocket.last!;
+    const p1 = controller.openSession('c1', 'Hero');
+    ws.emit({ type: 'session.open', session: 's1', reqId: ws.lastSent().reqId as string, ok: true } as ServerMessage);
+    await p1;
+    controller.closeSession('s1');
+    expect(ws.lastSent()).toMatchObject({ type: 'session.close', session: 's1' });
+    expect(useConnectionStore.getState().sessions['s1']).toBe('closed');
+    const p2 = controller.reopenSession('s1');
+    const req = ws.lastSent();
+    expect(req).toMatchObject({ type: 'session.open', charId: 'c1' });
+    ws.emit({ type: 'session.open', session: 's9', reqId: req.reqId as string, ok: true } as ServerMessage);
+    expect(await p2).toBe('s9');
+    expect(Object.keys(useSessionStore.getState().sessions)).toEqual(['s9']);
+    expect(useSessionStore.getState().sessions['s9'].label).toBe('Hero');
+    expect(useUiStore.getState().activeTab).toBe('s9');
+  });
+
   it('charId 無し(空文字)は throw', async () => {
     const { controller } = setup();
     await Promise.resolve();

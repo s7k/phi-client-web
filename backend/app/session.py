@@ -346,7 +346,10 @@ class SessionManager:
         data = st.serializer.serialize(intent)
         # サーバはリスト終了を通知しないため、選択/キャンセル送信で閉じる。
         # ページ送り等でサーバが #list を再送すれば再表示される。送信前に閉じ、再送の追い越しを防ぐ。
-        if intent.get("type") == "list.select" and st.list_active:
+        # cast の呪文手書き(command raw)もリストへの応答なので同様に閉じる。
+        answers_list = intent.get("type") == "list.select" or (
+            intent.get("type") == "command" and intent.get("name") == "raw")
+        if answers_list and st.list_active:
             for ev in st.parser.end_list():
                 await self._handle_parser_event(st, ev)
         await st.socket.send_bytes(data + b"\n")

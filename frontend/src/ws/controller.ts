@@ -435,6 +435,25 @@ export class WsController {
     return session;
   }
 
+  /** レガシー接続を切る(BE が `#x` 送信→切断)。タブは残し、再接続を待つ。 */
+  closeSession(session: string): void {
+    this.client.send({ type: 'session.close', session });
+    useConnectionStore.getState().setSessionConnection(session, 'closed');
+  }
+
+  /**
+   * 切断済みタブを同じキャラで繋ぎ直す。BE は新しい session を払い出すので、
+   * 旧タブを外して新タブをアクティブにする。
+   */
+  async reopenSession(session: string): Promise<string> {
+    const info = useSessionStore.getState().sessions[session];
+    if (!info) throw new Error(`session not found: ${session}`);
+    const next = await this.openSession(info.opener.charId, info.label);
+    if (next !== session) useSessionStore.getState().removeSession(session);
+    useUiStore.getState().setActiveTab(next);
+    return next;
+  }
+
   /**
    * チャット送信。priv は to(userKey)必須。
    * all は全アクティブsessionへ同報(A-08: SessionManager同報相当をFEループで代替。

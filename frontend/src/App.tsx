@@ -36,6 +36,7 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { ErrorBanners } from './components/ErrorBanners';
 import { WorldTransferIndicator } from './components/WorldTransferIndicator';
 import { WorldArea } from './components/WorldArea';
+import { CommandBar } from './components/CommandBar';
 import './App.css';
 
 function Game({
@@ -72,6 +73,7 @@ function Game({
       {/* 上部バー: 世界/エリア + 操作ボタン */}
       <header className="game__topbar">
         <WorldArea session={session} />
+        <CommandBar session={session} />
         {/* モバイル用ハンバーガー(デスクトップはCSSで非表示) */}
         <button
           type="button"
