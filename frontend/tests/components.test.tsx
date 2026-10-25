@@ -547,7 +547,8 @@ describe('CommandBar', () => {
     const reopenSession = vi.fn(async () => 's2');
     const ctrl = makeController({ sendCommand, closeSession, reopenSession });
     useConnectionStore.getState().setSessionConnection('s1', 'connected');
-    renderWith(ctrl, <CommandBar session="s1" />);
+    const { GameCommands } = await import('../src/components/CommandBar');
+    renderWith(ctrl, <><CommandBar session="s1" /><GameCommands session="s1" /></>);
     fireEvent.click(screen.getByLabelText('ウィザードアイ (wizeye)'));
     expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: 'wizeye' });
     fireEvent.click(screen.getByLabelText('切断'));
