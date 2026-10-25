@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { useWs } from '../ws/WsContext';
 import { useListStore } from '../stores/listStore';
 import { useModeStore } from '../stores/modeStore';
+import { MarkupText } from './MarkupText';
 import './ListView.css';
 
 /** 行頭の "<n>:" や "<n>." を剥がして表示名のみにする(番号はUIが付与)。 */
@@ -73,7 +74,10 @@ export function ListView({ session }: { session: string }) {
                 onClick={() => ws.sendListSelect(session, value)}
               >
                 <span className="listview__num">{value}</span>
-                <span className="listview__label">{label}</span>
+                {/* 項目名に色タグ等が付く事がある(チャットと同じく解釈し、解釈出来ないタグは隠す) */}
+                <span className="listview__label">
+                  <MarkupText text={label} markup />
+                </span>
               </button>
             </li>
           );
