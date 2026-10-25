@@ -56,7 +56,7 @@ export const DEFAULT_KEYBIND: KeybindSettings = {
   // PHI Client デフォルトは仮想Numpad(789uiojklm,.)。既定を numpad に。
   layout: 'numpad',
   magic: { F1: null, F2: null, F3: null, F4: null, F5: null, F6: null, F7: null },
-  shortcuts: { F8: null, F9: null, F10: null, F11: null, F12: null },
+  shortcuts: { F8: null, F9: null, F10: null },
   altG: '',
   touchHand: 'right',
 };

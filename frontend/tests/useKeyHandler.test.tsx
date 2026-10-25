@@ -71,11 +71,11 @@ describe('useKeyHandler 配線', () => {
     expect(sendListSelect).toHaveBeenCalledWith('s1', 1);
   });
 
-  it('F1(magic割当) で sendCommand(castMagic)', () => {
+  it('Shift+1(magic割当) で sendCommand(castMagic)', () => {
     const sendCommand = vi.fn();
     useSettingsStore.getState().setScope('keybind', { magic: { F1: 'heal' } });
     render(<Harness controller={makeController({ sendCommand })} session="s1" />);
-    fireEvent.keyDown(document, { key: 'F1' });
+    fireEvent.keyDown(document, { key: '!', code: 'Digit1', shiftKey: true });
     expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'castMagic', spell: 'heal' });
   });
 

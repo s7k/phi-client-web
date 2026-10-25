@@ -43,6 +43,7 @@ import {
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useMapStore } from '../stores/mapStore';
+import { useAutomapStore } from '../stores/automapStore';
 import { useStatusStore } from '../stores/statusStore';
 import { useChatStore, isChatChannel } from '../stores/chatStore';
 import { useUserStore } from '../stores/userStore';
@@ -164,12 +165,25 @@ export class WsController {
 
     c.on('map', (msg) => {
       const s = resolveSession(msg.session);
-      if (s) useMapStore.getState().setMap(s, msg);
+      if (!s) return;
+      useMapStore.getState().setMap(s, msg);
+      // 盲目中の視界は霧で埋まる為、地図を霧で上書きしないよう貯めない
+      const world = useNoticeStore.getState().bySession[s]?.world;
+      if (world && !useStatusStore.getState().bySession[s]?.cond?.blind) {
+        useAutomapStore.getState().absorb(world, msg);
+      }
     });
 
     c.on('status', (msg) => {
       const s = resolveSession(msg.session);
-      if (s) useStatusStore.getState().setStatus(s, msg);
+      if (!s) return;
+      // 裏のタブで HP か MP が減ったらタブを緊急表示にする(Philly の緊急マーク)
+      const prev = useStatusStore.getState().bySession[s]?.status;
+      const ui = useUiStore.getState();
+      if (prev && s !== ui.activeTab && (msg.hp < prev.hp || msg.mp < prev.mp)) {
+        ui.setUrgent(s, true);
+      }
+      useStatusStore.getState().setStatus(s, msg);
     });
 
     c.on('cond', (msg) => {
@@ -426,6 +440,25 @@ export class WsController {
     });
     useSessionStore.getState().setActive(session);
     return session;
+  }
+
+  /** レガシー接続を切る(BE が `#x` 送信→切断)。タブは残し、再接続を待つ。 */
+  closeSession(session: string): void {
+    this.client.send({ type: 'session.close', session });
+    useConnectionStore.getState().setSessionConnection(session, 'closed');
+  }
+
+  /**
+   * 切断済みタブを同じキャラで繋ぎ直す。BE は新しい session を払い出すので、
+   * 旧タブを外して新タブをアクティブにする。
+   */
+  async reopenSession(session: string): Promise<string> {
+    const info = useSessionStore.getState().sessions[session];
+    if (!info) throw new Error(`session not found: ${session}`);
+    const next = await this.openSession(info.opener.charId, info.label);
+    if (next !== session) useSessionStore.getState().removeSession(session);
+    useUiStore.getState().setActiveTab(next);
+    return next;
   }
 
   /**

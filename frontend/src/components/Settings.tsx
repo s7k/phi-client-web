@@ -2,7 +2,7 @@
  * F10 設定UI([12]§3, [05]§6,10)。
  *
  * scope 別に編集:
- *   - keybind: layout(wasd/numpad)・magic(F1-F7→呪文名)・shortcuts(F8-F12→語)・altG。
+ *   - keybind: layout(wasd/numpad)・magic(Shift+1〜7→呪文名)・shortcuts(Shift+8・9・0→語)・altG。
  *   - display: mapSize/mapStyle/eagleEye/fontScale/theme。
  *   - notify : enabled/privOnly/loud/regexInclude/regexExclude/sound/titleFlash。
  *   - intervals: mapUpdate/statusUpdate。
@@ -25,10 +25,12 @@ import {
   type NotifySettings,
 } from '../stores/settingsStore';
 import { requestNotificationPermission } from '../lib/notify';
+import { slotKeyLabel } from '../lib/keyHandler';
 import './Settings.css';
 
 const MAGIC_KEYS = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7'];
-const SHORTCUT_KEYS = ['F8', 'F9', 'F10', 'F11', 'F12'];
+// 保存キーは F キー時代の名前のまま。押すキーは slotKeyLabel で表示する。
+const SHORTCUT_KEYS = ['F8', 'F9', 'F10'];
 
 export function Settings() {
   const ws = useWs();
@@ -121,10 +123,10 @@ export function Settings() {
             </label>
 
             <fieldset className="settings__group">
-              <legend>魔法(F1-F7 → 呪文名)</legend>
+              <legend>魔法(Shift+1〜7 → 呪文名)</legend>
               {MAGIC_KEYS.map((k) => (
                 <label key={k} className="settings__row">
-                  <span>{k}</span>
+                  <span>{slotKeyLabel(k)}</span>
                   <input
                     type="text"
                     aria-label={`magic-${k}`}
@@ -139,10 +141,10 @@ export function Settings() {
             </fieldset>
 
             <fieldset className="settings__group">
-              <legend>ショートカット(F8-F12 → コマンド語)</legend>
+              <legend>ショートカット(Shift+8・9・0 → コマンド語)</legend>
               {SHORTCUT_KEYS.map((k) => (
                 <label key={k} className="settings__row">
-                  <span>{k}</span>
+                  <span>{slotKeyLabel(k)}</span>
                   <input
                     type="text"
                     aria-label={`shortcut-${k}`}

@@ -163,6 +163,20 @@ async def test_list_select_cancel_closes_list(mgr):
     assert "list" not in mgr.build_snapshot(sid)
 
 
+async def test_raw_spell_closes_cast_list(mgr):
+    # cast → #list(習得呪文) → 手書きの呪文を raw で送るとリストを閉じる。
+    out: list[dict] = []
+    sid = await mgr.open_session("char1", on_event=out.append)
+    mgr._fake.inject(b"#list", b"[ 1] heal ", b"#end-list", b"#magic", b"#s-edit")
+    async def waiter():
+        while not mgr._sessions[sid].list_active:
+            await asyncio.sleep(0.005)
+    await asyncio.wait_for(waiter(), 2.0)
+    await mgr.handle_intent(sid, {"type": "command", "name": "raw", "text": "appear\ngolem"})
+    assert mgr._fake.sent[-1] == b"appear\ngolem\n"
+    assert mgr._sessions[sid].list_active is False
+
+
 async def test_reattach_resends_snapshot(mgr):
     out: list[dict] = []
     sid = await mgr.open_session("char1", on_event=out.append)

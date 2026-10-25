@@ -101,6 +101,18 @@ def test_map_style_follows_server_echo(parser):
     assert parser.feed(b"#m57 .")[0]["style"] == "solid"
 
 
+def test_ex_pos_attaches_to_next_frame_only(parser):
+    # :U ZA の世界(朱蓮)だけ #m57 . の直前に #ex-pos が届く。そのフレームにだけ載せる
+    assert parser.feed(b"#ex-pos 120 45") == []
+    assert parser.feed(b"#m57 .")[0]["pos"] == {"x": 120, "y": 45}
+    assert "pos" not in parser.feed(b"#m57 .")[0]
+
+
+def test_ex_pos_malformed_is_ignored(parser):
+    assert parser.feed(b"#ex-pos x 1") == []
+    assert "pos" not in parser.feed(b"#m57 .")[0]
+
+
 def test_map_chars_normalized(parser):
     m = _feed_map_seq(parser, [
         "m57_M.bin", "m57_O_char.bin", "m57_dot.bin",
@@ -426,3 +438,10 @@ def test_eagleeye_reset_on_new_start(parser):
     ev = parser.feed(b"#ex-eagleeye end")[0]
     assert ev["width"] == 1 and ev["height"] == 1
     assert ev["cells"] == [{"chip": 9, "attr": 0}]
+
+
+def test_ex_chr_conflict_shows_notice(parser):
+    # サーバは改行無しで送る事がある(phi_dm.c set_chr の check_write)
+    evs = parser.feed(b"#ex-chr-conflict")
+    assert evs == [{"type": "message", "channel": "system",
+                    "text": "3重状態で消えています。移動してください", "markup": False}]

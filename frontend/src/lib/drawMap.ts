@@ -46,6 +46,8 @@ export interface DrawMapInput {
   chars: MapChar[];
   signs?: MapSign[];
   cells0Based?: boolean;
+  /** 盤面の一辺(マス)。省略時は size から決める。マッピングの外周付き表示で使う。 */
+  dim?: number;
 }
 
 /** マークアップ除去後の名前頭文字(placeholder用)。 */
@@ -70,7 +72,7 @@ export function drawMap(
   animFrame = 0,
   cellSize: number = CHIP_SIZE,
 ): void {
-  const dim = gridDim(input.size);
+  const dim = input.dim ?? gridDim(input.size);
   const cs = cellSize;
   const scale = cs / CHIP_SIZE; // 1 or 2
 

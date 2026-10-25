@@ -16,8 +16,8 @@ interface MapStoreState {
 }
 
 function toState(map: MapEvent | MapState): MapState {
-  const { size, dir, style, mapset, cells, chars, signs } = map as MapEvent;
-  return { size, dir, style, mapset, cells, chars, signs };
+  const { size, dir, style, mapset, cells, chars, signs, pos } = map as MapEvent;
+  return { size, dir, style, mapset, cells, chars, signs, pos };
 }
 
 export const useMapStore = create<MapStoreState>((set) => ({

@@ -18,6 +18,7 @@ import { useUserStore } from '../src/stores/userStore';
 import { useUiStore } from '../src/stores/uiStore';
 import { useListStore } from '../src/stores/listStore';
 import { useEditStore } from '../src/stores/editStore';
+import { useModeStore } from '../src/stores/modeStore';
 import { useConnectionStore } from '../src/stores/connectionStore';
 
 /** controller の最小スタブ。 */
@@ -52,6 +53,7 @@ beforeEach(() => {
   useUiStore.getState().reset();
   useListStore.getState().reset();
   useEditStore.getState().reset();
+  useModeStore.getState().reset();
   useConnectionStore.getState().reset();
   localStorage.clear();  // ログインフォーム記憶等がテスト間で漏れないように
 });
@@ -288,6 +290,31 @@ describe('Chat (F7)', () => {
     expect(sendChat).toHaveBeenCalledWith('s1', 'normal', 'hello', undefined);
   });
 
+  it('↑↓で送った発言を呼び戻す', () => {
+    renderWith(makeController({ sendChat: vi.fn() }), <Chat session="s1" />);
+    const input = screen.getByPlaceholderText('メッセージを入力') as HTMLInputElement;
+    for (const v of ['one', 'two']) {
+      fireEvent.change(input, { target: { value: v } });
+      fireEvent.click(screen.getByText('送信'));
+    }
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('two');
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('one');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input.value).toBe('');
+  });
+
+  it('Ctrl+Enter はパーティー発言', () => {
+    const sendChat = vi.fn();
+    renderWith(makeController({ sendChat }), <Chat session="s1" />);
+    const input = screen.getByPlaceholderText('メッセージを入力');
+    fireEvent.change(input, { target: { value: '集合' } });
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+    expect(sendChat).toHaveBeenCalledWith('s1', 'party', '集合', undefined);
+  });
+
   it('大声は確認ダイアログ経由(誤爆防止)', () => {
     const sendChat = vi.fn();
     renderWith(
@@ -324,6 +351,16 @@ describe('Chat (F7)', () => {
 });
 
 describe('ListView (F9)', () => {
+  it('チェックした番号を空白区切りでまとめて送る', () => {
+    const sendCommand = vi.fn();
+    useListStore.getState().setList('s1', { active: true, lines: ['1: 剣', '2: 盾', '3: 薬'] });
+    renderWith(makeController({ sendCommand }), <ListView session="s1" />);
+    fireEvent.click(screen.getByLabelText('3 を選ぶ'));
+    fireEvent.click(screen.getByLabelText('1 を選ぶ'));
+    fireEvent.click(screen.getByText('選んだ 2 件を送る'));
+    expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: '1 3' });
+  });
+
   it('非activeなら非表示', () => {
     useListStore.getState().setList('s1', { active: false });
     const { container } = renderWith(makeController(), <ListView session="s1" />);
@@ -350,6 +387,23 @@ describe('ListView (F9)', () => {
     expect(sendListSelect).toHaveBeenCalledWith('s1', 'all');
     fireEvent.click(screen.getByText('キャンセル (Esc)'));
     expect(sendListSelect).toHaveBeenCalledWith('s1', 'cancel');
+  });
+
+  it('cast 中だけ呪文手書き欄を出し、複数行を raw で送る', () => {
+    const sendCommand = vi.fn();
+    useListStore.getState().setList('s1', { active: true, lines: ['[ 1] heal'] });
+    const { rerender } = renderWith(makeController({ sendCommand }), <ListView session="s1" />);
+    expect(screen.queryByLabelText('呪文')).toBeNull();
+    useModeStore.getState().setMode('s1', { magic: true });
+    rerender(
+      <WsProvider controller={makeController({ sendCommand })}>
+        <ListView session="s1" />
+      </WsProvider>,
+    );
+    const input = screen.getByLabelText('呪文');
+    fireEvent.change(input, { target: { value: 'appear\ngolem' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: 'appear\ngolem' });
   });
 });
 
@@ -484,3 +538,22 @@ describe('EditDialog は m-edit(複数行)のみ表示', () => {
   });
 });
 
+
+describe('CommandBar', () => {
+  it('特殊コマンドを raw で送り、接続中は切断・切断後は再接続する', async () => {
+    const { CommandBar } = await import('../src/components/CommandBar');
+    const sendCommand = vi.fn();
+    const closeSession = vi.fn();
+    const reopenSession = vi.fn(async () => 's2');
+    const ctrl = makeController({ sendCommand, closeSession, reopenSession });
+    useConnectionStore.getState().setSessionConnection('s1', 'connected');
+    renderWith(ctrl, <CommandBar session="s1" />);
+    fireEvent.click(screen.getByLabelText('ウィザードアイ (wizeye)'));
+    expect(sendCommand).toHaveBeenCalledWith('s1', { name: 'raw', text: 'wizeye' });
+    fireEvent.click(screen.getByLabelText('切断'));
+    expect(closeSession).toHaveBeenCalledWith('s1');
+    useConnectionStore.getState().setSessionConnection('s1', 'closed');
+    fireEvent.click(await screen.findByLabelText('接続'));
+    expect(reopenSession).toHaveBeenCalledWith('s1');
+  });
+});

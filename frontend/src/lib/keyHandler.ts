@@ -12,7 +12,8 @@
  *   - turnモード(northFix=false): 前=step F / 後=step B / 左右=strafe L/R / 回転=turn l/r/b
  *   - 北固定(northFix=true): 絶対 step N/E/S/W、回転は turn l/r/b
  * - リストモード中(listActive): 数字1-9→list.select(value数値), 0/Esc→cancel, +→all。
- * - F1-F7=magic(keybind.magic→castMagic), F8-F12=shortcuts(raw command)。
+ * - Shift+1〜7=magic(keybind.magic→castMagic), Shift+8・9・0=shortcuts(raw command)。
+ *   F キーはブラウザ/OS が使う(F5 再読み込み、F11 全画面、F12 開発者ツール等)為、割り当てない。
  * - 入力欄フォーカス時(inputFocused)はゲームキー無効化。
  */
 import type { CommandSimpleRequest } from '../types/protocol';
@@ -32,9 +33,9 @@ export interface KeyContext {
   listActive: boolean;
   /** チャット/編集など入力欄にフォーカスがあるか。 */
   inputFocused: boolean;
-  /** F1-F7 → 呪文名(keybind.magic)。 */
+  /** 割当枠 F1-F7 → 呪文名(keybind.magic)。Shift+1〜7 で呼ぶ。 */
   magic: Partial<Record<string, string | null>>;
-  /** F8-F12 → コマンド語(keybind.shortcuts)。 */
+  /** 割当枠 F8-F10 → コマンド語(keybind.shortcuts)。Shift+8・9・0 で呼ぶ。 */
   shortcuts: Partial<Record<string, string | null>>;
   /** Shift+G に割り当てる raw コマンド語(keybind.altG)。空/未設定で無効。 */
   altG?: string;
@@ -50,7 +51,9 @@ export type KeyIntent =
   | { type: 'list.select'; value: number | 'all' | 'cancel' }
   | { type: 'command'; name: SimpleCommandName }
   | { type: 'command'; name: 'castMagic'; spell: string }
-  | { type: 'command'; name: 'raw'; text: string };
+  | { type: 'command'; name: 'raw'; text: string }
+  /** 金額を入力させてから pay を送る(Philly の P キー)。 */
+  | { type: 'pay' };
 
 // ----------------------------------------------------------------------------
 // 移動アクションの抽象表現(レイアウト非依存)
@@ -218,18 +221,37 @@ export function actionToIntent(action: MoveAction, northFix: boolean): KeyIntent
   }
 }
 
-/** ファンクションキー(F1-F12) → magic/shortcut intent。 */
-function resolveFunctionKey(k: string, ctx: KeyContext): KeyIntent | null {
-  const m = /^F([1-9]|1[0-2])$/.exec(k);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (n >= 1 && n <= 7) {
-    const spell = ctx.magic[k];
-    if (spell) return { type: 'command', name: 'castMagic', spell };
-    return null;
-  }
-  // F8-F12: shortcut(raw コマンド語)
-  const cmd = ctx.shortcuts[k];
+/**
+ * Shift+数字 → 割当枠。設定の保存キーは F キーで割り当てていた頃の名前(F1〜F10)のまま使う。
+ * 記号はキーボード配列で変わる為、物理キー位置(code)で判定する。
+ */
+export const SHIFT_DIGIT_SLOT: Readonly<Record<string, string>> = {
+  Digit1: 'F1',
+  Digit2: 'F2',
+  Digit3: 'F3',
+  Digit4: 'F4',
+  Digit5: 'F5',
+  Digit6: 'F6',
+  Digit7: 'F7',
+  Digit8: 'F8',
+  Digit9: 'F9',
+  Digit0: 'F10',
+};
+
+/** 割当枠(F1〜F10) → 押すキーの表示名(Shift+1〜Shift+0)。 */
+export function slotKeyLabel(slot: string): string {
+  const code = Object.keys(SHIFT_DIGIT_SLOT).find((c) => SHIFT_DIGIT_SLOT[c] === slot);
+  return code ? `Shift+${code.slice('Digit'.length)}` : slot;
+}
+
+/** Shift+数字 → magic/shortcut intent。 */
+function resolveShiftDigit(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null {
+  if (!ev.shiftKey || ev.ctrlKey || ev.altKey || ev.metaKey) return null;
+  const slot = SHIFT_DIGIT_SLOT[ev.code];
+  if (!slot) return null;
+  const spell = ctx.magic[slot];
+  if (spell) return { type: 'command', name: 'castMagic', spell };
+  const cmd = ctx.shortcuts[slot];
   if (cmd) return { type: 'command', name: 'raw', text: cmd };
   return null;
 }
@@ -243,9 +265,9 @@ export function resolveKey(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null
 
   const k = ev.key;
 
-  // ファンクションキーはリスト/通常を問わず最優先
-  const fn = resolveFunctionKey(k, ctx);
-  if (fn) return fn;
+  // Shift+数字(魔法・ショートカット)はリスト/通常を問わず最優先
+  const slot = resolveShiftDigit(ev, ctx);
+  if (slot) return slot;
 
   // ---- リストモード: 数字選択 / cancel / all ----
   if (ctx.listActive) {
@@ -305,6 +327,145 @@ export function resolveKey(ev: KeyboardEvent, ctx: KeyContext): KeyIntent | null
   if (lower in raw) {
     return { type: 'command', name: 'raw', text: raw[lower] };
   }
+  // P: 支払い(両レイアウトとも空きキー)
+  if (lower === 'p' && !ev.ctrlKey && !ev.altKey && !ev.metaKey) return { type: 'pay' };
 
   return null;
+}
+
+// ----------------------------------------------------------------------------
+// ヘルプ用のキー一覧。上の対応表から作るので、割当を変えるとヘルプも変わる。
+// ----------------------------------------------------------------------------
+
+/** ヘルプの1行。 */
+export interface KeyHelpRow {
+  keys: string;
+  action: string;
+}
+
+/** ヘルプの1区分。 */
+export interface KeyHelpGroup {
+  title: string;
+  rows: KeyHelpRow[];
+}
+
+const KEY_LABEL: Record<string, string> = {
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+};
+
+const COMMAND_LABEL: Record<SimpleCommandName, string> = {
+  board: '看板に注意 (board)',
+  equip: '自動装備 (equip)',
+  unequip: '装備を外す (unequip)',
+  sort: '持ち物の整理 (sort)',
+  get: '拾う (get)',
+  put: '置く (put)',
+  hit: '攻撃 (hit)',
+  use: '使う (use)',
+  read: '看板を読む (read)',
+  write: '看板に書く (write)',
+};
+
+function keyLabel(k: string): string {
+  return KEY_LABEL[k] ?? (k.length === 1 ? k.toUpperCase() : k);
+}
+
+function moveLabel(action: MoveAction, northFix: boolean): string {
+  switch (action) {
+    case 'turnL':
+      return '左を向く';
+    case 'turnR':
+      return '右を向く';
+    case 'turnB':
+      return '後ろを向く';
+    case 'absN':
+      return '北へ';
+    case 'absS':
+      return '南へ';
+    case 'absW':
+      return '西へ';
+    case 'absE':
+      return '東へ';
+    case 'forward':
+      return northFix ? '北へ' : '前へ';
+    case 'back':
+      return northFix ? '南へ' : '後ろへ';
+    case 'strafeL':
+      return northFix ? '西へ' : '左へ平行移動';
+    case 'strafeR':
+      return northFix ? '東へ' : '右へ平行移動';
+  }
+}
+
+/** 複数行のコマンド語は ↵ で区切って見せる。 */
+function rawLabel(text: string): string {
+  return `${text.replace(/\n/g, ' ↵ ')} を送る`;
+}
+
+function moveRows(table: Record<string, MoveAction>, northFix: boolean, prefix = ''): KeyHelpRow[] {
+  return Object.entries(table).map(([k, a]) => ({
+    keys: prefix + keyLabel(k),
+    action: moveLabel(a, northFix),
+  }));
+}
+
+/**
+ * 現在の操作設定で使えるキーの一覧。
+ * F1-F12・Shift+G は設定で割り当てたものだけ出す。
+ */
+export function describeKeys(
+  ctx: Pick<KeyContext, 'layout' | 'northFix' | 'magic' | 'shortcuts' | 'altG'>,
+): KeyHelpGroup[] {
+  const { layout, northFix } = ctx;
+  const letterMove = layout === 'wasd' ? WASD_MOVE : NUMPAD_LETTER_MOVE;
+  const known = layout === 'wasd' ? COMMAND_KNOWN_WASD : COMMAND_KNOWN_NUMPAD;
+  const raw = layout === 'wasd' ? COMMAND_RAW_WASD : COMMAND_RAW_NUMPAD;
+
+  const fn: KeyHelpRow[] = [];
+  for (const slot of Object.values(SHIFT_DIGIT_SLOT)) {
+    const spell = ctx.magic[slot];
+    const cmd = ctx.shortcuts[slot];
+    if (spell) fn.push({ keys: slotKeyLabel(slot), action: `${spell} を唱える` });
+    else if (cmd) fn.push({ keys: slotKeyLabel(slot), action: rawLabel(cmd) });
+  }
+  if (ctx.altG) fn.push({ keys: 'Shift+G', action: rawLabel(ctx.altG) });
+
+  return [
+    {
+      title: `移動（${layout === 'wasd' ? 'WASD' : '仮想テンキー'}・${northFix ? '北固定' : '回転'}）`,
+      rows: [
+        ...moveRows(letterMove, northFix),
+        ...moveRows(northFix ? CURSOR_NF : CURSOR_TURN, northFix),
+        ...moveRows(NUMPAD_KEY_MOVE, northFix, 'テンキー'),
+      ],
+    },
+    {
+      title: '行動',
+      rows: [
+        { keys: 'Space', action: COMMAND_LABEL.hit },
+        ...Object.entries(known).map(([k, n]) => ({ keys: keyLabel(k), action: COMMAND_LABEL[n] })),
+        ...Object.entries(raw).map(([k, t]) => ({ keys: keyLabel(k), action: rawLabel(t) })),
+        { keys: 'P', action: '金額を入れて支払う (pay)' },
+        ...Object.entries(NUMPAD_OP_COMMAND).map(([k, n]) => ({
+          keys: `テンキー${k}`,
+          action: COMMAND_LABEL[n],
+        })),
+      ],
+    },
+    {
+      title: 'リスト表示中',
+      rows: [
+        { keys: '1〜9', action: '番号を選ぶ（9 は次のページ）' },
+        { keys: '0 / Esc', action: 'キャンセル' },
+        { keys: '+', action: '全て選ぶ' },
+      ],
+    },
+    {
+      title: '魔法・ショートカット（設定で割り当て）',
+      rows: fn.length ? fn : [{ keys: 'Shift+1〜0', action: '未割り当て。設定の「キーバインド」で決める' }],
+    },
+  ];
 }

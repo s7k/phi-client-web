@@ -105,10 +105,9 @@ class CommandSerializer:
             return "*" + text
 
         if mode == "party":
-            # A-14: '%' プレフィクスは実機で否定済。party 送信仕様は未確定
-            # (ユーザーが別途実機検証, §0)。当面 normal 整形で送出 + TODO。
-            # TODO(A-14): party の実機送信仕様を確認後に整形を差し替える。
-            return self._normal_chat(text)
+            # A-14: v5y は先頭 '+' をパーティー発言として扱う(phi_dm.c TLK_PARTY)。
+            # Philly も Ctrl+Enter で '+' を付けて送っていた。
+            return "+" + text
 
         if mode == "all":
             # 全セッション同報は上位(SessionManager)が各 session へ展開。
@@ -120,8 +119,9 @@ class CommandSerializer:
 
     @staticmethod
     def _normal_chat(text: str) -> str:
-        """通常発言。先頭が '*' の通常発言は loud 誤認回避で /**/ を付与。"""
-        if text.startswith("*"):
+        """通常発言。サーバは先頭 '*'=大声 '+'=パーティー '&'=エリア と読む為、
+        これらで始まる通常発言には /**/ を前置して化けないようにする。"""
+        if text[:1] in ("*", "+", "&"):
             return "/**/" + text
         return text
 

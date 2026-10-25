@@ -28,6 +28,8 @@ export function TabBar() {
   const activeTab = useUiStore((s) => s.activeTab);
   const setActiveTab = useUiStore((s) => s.setActiveTab);
   const markRead = useChatStore((s) => s.markRead);
+  const urgent = useUiStore((s) => s.urgent);
+  const setUrgent = useUiStore((s) => s.setUrgent);
 
   const entries = Object.values(sessions);
   if (entries.length === 0) return null;
@@ -36,6 +38,7 @@ export function TabBar() {
     setActive(session);
     setActiveTab(session);
     markRead(session);
+    setUrgent(session, false);
   }
 
   return (
@@ -49,7 +52,12 @@ export function TabBar() {
           <button
             key={info.session}
             type="button"
-            className={'tabbar__tab' + (active ? ' tabbar__tab--active' : '')}
+            className={
+              'tabbar__tab' +
+              (active ? ' tabbar__tab--active' : '') +
+              (urgent[info.session] ? ' tabbar__tab--urgent' : '')
+            }
+            title={urgent[info.session] ? 'HP か MP が減った' : undefined}
             aria-current={active ? 'true' : undefined}
             onClick={() => select(info.session)}
           >

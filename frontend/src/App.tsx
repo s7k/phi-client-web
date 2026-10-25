@@ -26,6 +26,7 @@ import { Chat } from './components/Chat';
 import { MapView } from './components/MapView';
 import { EagleEyeView } from './components/EagleEyeView';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { PromptDialog } from './components/PromptDialog';
 import { Settings } from './components/Settings';
 import { TabBar } from './components/TabBar';
 import { ListView } from './components/ListView';
@@ -36,6 +37,8 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { ErrorBanners } from './components/ErrorBanners';
 import { WorldTransferIndicator } from './components/WorldTransferIndicator';
 import { WorldArea } from './components/WorldArea';
+import { CommandBar } from './components/CommandBar';
+import { HelpDialog } from './components/HelpDialog';
 import './App.css';
 
 function Game({
@@ -72,6 +75,7 @@ function Game({
       {/* 上部バー: 世界/エリア + 操作ボタン */}
       <header className="game__topbar">
         <WorldArea session={session} />
+        <CommandBar session={session} />
         {/* モバイル用ハンバーガー(デスクトップはCSSで非表示) */}
         <button
           type="button"
@@ -94,6 +98,7 @@ function Game({
         </div>
       </header>
       <WorldTransferIndicator />
+      <HelpDialog session={session} />
       {/* 本体: デスクトップ=左(マップ+ステータス)/右(チャット)。
           モバイル=チャット(ログ+入力)上→マップ→ステータス下 */}
       <div className="game__body">
@@ -161,6 +166,7 @@ export function App({ controller }: { controller: WsController }) {
         {screen}
       </div>
       <ConfirmDialog />
+      <PromptDialog />
       <Settings />
     </WsProvider>
   );

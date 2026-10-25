@@ -12,8 +12,8 @@ export function screenshotFilename(now: Date = new Date()): string {
   return `phi-map-${d}.png`;
 }
 
-/** ブラウザでの Blob ダウンロード(a要素クリック)。 */
-function triggerDownload(blob: Blob, filename: string): void {
+/** ブラウザでの Blob ダウンロード(a要素クリック)。ログ保存でも使う。 */
+export function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

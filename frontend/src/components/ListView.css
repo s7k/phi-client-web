@@ -82,3 +82,54 @@
   background: #1d4ed8;
   color: #fff;
 }
+
+.listview__spell {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.listview__spell-input {
+  flex: 1;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border-faint);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.listview__spell-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.listview__spell-cast {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  padding: 0 0.9rem;
+  color: #fff;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.listview__spell-cast:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.listview__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.listview__check {
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--accent);
+}

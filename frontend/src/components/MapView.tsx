@@ -5,19 +5,36 @@
  * - 画像ロードは useImages で抽象化(テスト時 loader 差替)。
  * - 描画ロジックは drawMap(純粋)へ委譲。
  * - アニメフレームは 250ms 間隔で 0/1 トグル(2フレーム歩行サイクル)。
+ * - 左クリックでクリックした方向へ1歩、右クリックで攻撃(Philly のマップ操作)。
+ * - 絶対座標が届く世界(朱蓮)では、外周に記録地図を暗くして敷く(automapStore)。
+ *   モバイル幅はマップ領域が狭いので敷かない。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
+import { useNoticeStore } from '../stores/noticeStore';
+import { AUTOMAP_RING, composeAutomap, useAutomapStore } from '../stores/automapStore';
 import { useSettingsStore, type DisplaySettings } from '../stores/settingsStore';
 import { CHIP_SIZE, gridDim, hasItem } from '../lib/mapRender';
 import { graCandidateUrls } from '../lib/charaGra';
 import { drawMap, type ImageRefs } from '../lib/drawMap';
+import { actionToIntent, type MoveAction } from '../lib/keyHandler';
+import { useWs } from '../ws/WsContext';
 import { useImages, type ImageLoader } from '../lib/useImage';
 
 /** mapsetチップシート配信URL(小文字化)。 */
 export function chipUrl(mapset: string): string {
   const name = mapset && mapset.trim() ? mapset.toLowerCase() : 'default';
   return `/assets/chip/${name}.png`;
+}
+
+/**
+ * 盤面中心からのクリック位置(セル単位) → 移動アクション。縦横の大きい方を採る。
+ * 自キャラのマス内(中心から半マス以内)は null。
+ */
+export function clickToMove(dx: number, dy: number): MoveAction | null {
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return null;
+  if (Math.abs(dy) >= Math.abs(dx)) return dy < 0 ? 'forward' : 'back';
+  return dx < 0 ? 'strafeL' : 'strafeR';
 }
 
 /** items.png 配信URL。 */
@@ -36,6 +53,15 @@ export function MapView({ session, loader, disableAnimation }: MapViewProps) {
   const cellScale =
     useSettingsStore((s) => (s.byScope['display'] as DisplaySettings | undefined)?.cellScale) ?? 1;
   const cellSize = CHIP_SIZE * cellScale;
+  const ws = useWs();
+  const world = useNoticeStore((s) => s.bySession[session]?.world);
+  const tiles = useAutomapStore((s) => (world ? s.byWorld[world] : undefined));
+  // リサイズは次のマップ更新(約1秒毎)で反映する
+  const narrow = window.matchMedia?.('(max-width: 820px)').matches ?? false;
+  const automap = useMemo(
+    () => (map && !narrow ? composeAutomap(map, tiles) : null),
+    [map, tiles, narrow],
+  );
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [animFrame, setAnimFrame] = useState(0);
 
@@ -78,20 +104,53 @@ export function MapView({ session, loader, disableAnimation }: MapViewProps) {
       items: cache.get(ITEMS_URL) ?? null,
       chara: (url) => cache.get(url) ?? null,
     };
-    drawMap(ctx, map, imgs, animFrame, cellSize);
-  }, [map, cache, animFrame, cellSize]);
+    if (!automap) {
+      drawMap(ctx, map, imgs, animFrame, cellSize);
+      return;
+    }
+    drawMap(ctx, { ...map, ...automap }, imgs, animFrame, cellSize);
+    // 外周(記録地図)を暗くし、中央の通常マップと見分ける
+    const full = automap.dim * cellSize;
+    const edge = AUTOMAP_RING * cellSize;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fillRect(0, 0, full, edge);
+    ctx.fillRect(0, full - edge, full, edge);
+    ctx.fillRect(0, edge, edge, full - 2 * edge);
+    ctx.fillRect(full - edge, edge, edge, full - 2 * edge);
+  }, [map, automap, cache, animFrame, cellSize]);
 
   if (!map) {
     return <div className="map-view map-view--empty" data-testid="map-empty" />;
   }
 
-  const dim = gridDim(map.size);
+  const dim = automap?.dim ?? gridDim(map.size);
   const px = dim * cellSize;
+
+  function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
+    // CSS で縮小表示している事がある(モバイル)為、表示サイズからセル単位へ直す
+    const r = e.currentTarget.getBoundingClientRect();
+    const cell = r.width / dim;
+    const action = clickToMove(
+      (e.clientX - r.left - r.width / 2) / cell,
+      (e.clientY - r.top - r.height / 2) / cell,
+    );
+    if (!action) return;
+    const intent = actionToIntent(action, map!.style === 'solid');
+    if (intent.type === 'move') ws.sendMove(session, { mode: intent.mode, dir: intent.dir });
+  }
+
+  function handleContextMenu(e: React.MouseEvent<HTMLCanvasElement>) {
+    e.preventDefault();
+    ws.sendCommand(session, { name: 'hit' });
+  }
   return (
     <canvas
       ref={canvasRef}
       className="map-view"
       data-testid="map-canvas"
+      title="クリックで移動 / 右クリックで攻撃"
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
       width={px}
       height={px}
       style={{ width: px, height: px, imageRendering: 'pixelated', background: '#000' }}

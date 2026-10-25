@@ -393,6 +393,8 @@ interface MapEventPayload {
   cells: MapCell[];
   chars: MapChar[];
   signs?: MapSign[];
+  /** 自キャラの絶対座標(x=東, y=南)。v5y の :U ZA 拡張で、朱蓮だけが送る。 */
+  pos?: { x: number; y: number };
 }
 
 export interface MapEvent extends Envelope, MapEventPayload {

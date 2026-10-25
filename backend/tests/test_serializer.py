@@ -56,20 +56,17 @@ def test_chat_priv_unknown_raises(ser):
         _txt(ser, {"type": "chat", "mode": "priv", "to": "nobody", "text": "x"})
 
 
-def test_chat_party_normal_format_a14(ser):
-    # CR-21/A-14: party は '%' を付与せず normal 整形で送出。
-    assert _txt(ser, {"type": "chat", "mode": "party", "text": "集合"}) == "集合"
+def test_chat_party_plus_prefix(ser):
+    # A-14 確定: v5y は先頭 '+' をパーティー発言として扱う(phi_dm.c TLK_PARTY)。Philly も Ctrl+Enter で '+'。
+    assert _txt(ser, {"type": "chat", "mode": "party", "text": "集合"}) == "+集合"
+    # 本文の先頭記号はそのまま後ろに付く('+' の後ろは本文として読まれる)
+    assert _txt(ser, {"type": "chat", "mode": "party", "text": "*x"}) == "+*x"
 
 
-def test_chat_party_no_percent_prefix(ser):
-    out = _txt(ser, {"type": "chat", "mode": "party", "text": "hello"})
-    assert not out.startswith("%")
-    assert out == "hello"
-
-
-def test_chat_party_leading_asterisk_escaped(ser):
-    # party でも normal 整形なので先頭 '*' は /**/ 付与(loud 誤認回避)。
-    assert _txt(ser, {"type": "chat", "mode": "party", "text": "*x"}) == "/**/*x"
+@pytest.mark.parametrize("head", ["*", "+", "&"])
+def test_chat_normal_escapes_talk_prefixes(ser, head):
+    # 先頭 '*'=大声 '+'=パーティー '&'=エリア。通常発言が化けないよう /**/ を前置する。
+    assert _txt(ser, {"type": "chat", "mode": "normal", "text": head + "x"}) == "/**/" + head + "x"
 
 
 # --- move -----------------------------------------------------------------
