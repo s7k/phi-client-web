@@ -72,6 +72,25 @@ describe('composeAutomap', () => {
     expect(b.signs![0]).toMatchObject({ x: AUTOMAP_RING, y: AUTOMAP_RING });
   });
 
+  it('中央の視界外(?)は記録があれば記録地図で埋め、暗くする印を付ける', () => {
+    const m = { ...live({ x: 100, y: 50 }), cells: frame((i) => (i === 0 || i === 1 ? Q : 1)) };
+    // 中央 7x7 の左上(i=0)は (97,47)。記録あり。i=1 (98,47) は記録なし。
+    const b = composeAutomap(m, { '97,47': { chip: 9, attr: 0 } }, 0)!;
+    expect(b.dim).toBe(7);
+    expect(b.cells[0].chip).toBe(9);
+    expect(b.recalled[0]).toBe(true);
+    expect(b.cells[1].chip).toBe(Q);
+    expect(b.recalled[1]).toBe(false);
+    expect(b.recalled[2]).toBeFalsy();
+  });
+
+  it('外周は記録の有無にかかわらず暗くする', () => {
+    const b = composeAutomap(live({ x: 100, y: 50 }), {})!;
+    expect(b.recalled[0]).toBe(true);
+    const mid = (b.dim - 1) / 2;
+    expect(b.recalled[mid * b.dim + mid]).toBeFalsy();
+  });
+
   it('座標が無ければ合成しない', () => {
     expect(composeAutomap(live(), {})).toBeNull();
   });

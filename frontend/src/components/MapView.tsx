@@ -8,6 +8,7 @@
  * - 左クリックでクリックした方向へ1歩、右クリックで攻撃(Philly のマップ操作)。
  * - 絶対座標が届く世界(朱蓮)では、外周に記録地図を暗くして敷く(automapStore)。
  *   モバイル幅はマップ領域が狭いので敷かない。
+ *   通常マップの視界外('?')も、記録があれば暗くして記録地図で埋める。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
@@ -59,7 +60,7 @@ export function MapView({ session, loader, disableAnimation }: MapViewProps) {
   // リサイズは次のマップ更新(約1秒毎)で反映する
   const narrow = window.matchMedia?.('(max-width: 820px)').matches ?? false;
   const automap = useMemo(
-    () => (map && !narrow ? composeAutomap(map, tiles) : null),
+    () => (map ? composeAutomap(map, tiles, narrow ? 0 : AUTOMAP_RING) : null),
     [map, tiles, narrow],
   );
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -109,14 +110,13 @@ export function MapView({ session, loader, disableAnimation }: MapViewProps) {
       return;
     }
     drawMap(ctx, { ...map, ...automap }, imgs, animFrame, cellSize);
-    // 外周(記録地図)を暗くし、中央の通常マップと見分ける
-    const full = automap.dim * cellSize;
-    const edge = AUTOMAP_RING * cellSize;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-    ctx.fillRect(0, 0, full, edge);
-    ctx.fillRect(0, full - edge, full, edge);
-    ctx.fillRect(0, edge, edge, full - 2 * edge);
-    ctx.fillRect(full - edge, edge, edge, full - 2 * edge);
+    // 記録地図から描いたマスを暗くし、今見えているマスと見分ける
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    automap.recalled.forEach((on, i) => {
+      if (on) {
+        ctx.fillRect((i % automap.dim) * cellSize, Math.floor(i / automap.dim) * cellSize, cellSize, cellSize);
+      }
+    });
   }, [map, automap, cache, animFrame, cellSize]);
 
   if (!map) {
