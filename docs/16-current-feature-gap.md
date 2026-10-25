@@ -51,7 +51,6 @@ Philly はリストの9番目を「more」として番号 `9` を送るだけで
 
 | 機能 | 現状 | 対応案 |
 |------|------|--------|
-| 新規キャラ作成（`#ex-register`） | `components/Register.tsx` と `api/register.ts` はあるが、どの画面からも開けない（[DEVLOG](DEVLOG.md) §6.14 で温存扱い） | キャラ選択画面から開けるようにし、作成したキャラを characters へ登録する |
 | v6 プロトコル（`#hello phi/6`） | fix-phidm は `#hello phi/6` を送った接続だけ v6 で応答する。本番の v5y とは非互換 | 本番が v6 へ移るまで対応しない |
 
 ## 2. 効果の無い送信

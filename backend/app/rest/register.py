@@ -4,10 +4,11 @@
 
 | メソッド | パス | 説明 |
 |----------|------|------|
-| `GET`  | `/api/register/graphics` | 初期グラ一覧(`#ex-get REGINFO IMG`, キャッシュ) |
-| `POST` | `/api/register`          | `{name, pass(6), imageIndex, mail?}` → 代行 → characters 登録 |
+| `GET`  | `/api/register/graphics?host=&port=` | 初期グラ一覧(`#ex-get REGINFO IMG`) |
+| `POST` | `/api/register` | `{host, port, name, pass?(6), imageIndex, mail?}` → 代行 → characters 登録 |
 
-- 代行は `LegacyRegistrar`(一時レガシー接続)。⛔ モックTCPのみ検証([タスク])。
+- 代行は `LegacyRegistrar`(登録先 host:port への一時レガシー接続)。
+- どちらも要認証。host:port は利用者が選ぶ為、未認証で任意の宛先へ接続させない。
 - 成功で uid 組立/捕捉 → `UidCipher` 暗号化 → `Store.create_character`
   (A-34: account_id 配下のキャラとして phi_uid_enc 保存)。
 - レート制限: `POST /api/register` 5/h/IP(`RateLimiter`)→ 超過 429。
@@ -16,16 +17,20 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
+import string
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.register import (
+    PASS_LEN,
     LegacyRegistrar,
     RegisterReject,
     RegisterTransport,
     validate_register_input,
 )
+from app.rest.characters import _coerce_host, _coerce_port
 from app.store.db import Store
 
 logger = logging.getLogger("app.rest.register")
@@ -69,6 +74,12 @@ def client_ip(request: Request, *, trusted_hops: int | None = None) -> str:
     return parts[idx]
 
 
+def _random_pass() -> str:
+    """6字の英数字。uid に埋まるので空白・記号は使わない。"""
+    chars = string.ascii_letters + string.digits
+    return "".join(secrets.choice(chars) for _ in range(PASS_LEN))
+
+
 # 後方互換エイリアス。
 _client_ip = client_ip
 
@@ -83,7 +94,7 @@ def build_register_router(
 ) -> APIRouter:
     """`/api/register` ルータを構築。
 
-    registrar_factory: () -> LegacyRegistrar(テストはモック socket 注入済を返す)。
+    registrar_factory: (host, port) -> LegacyRegistrar(テストはモック socket 注入済を返す)。
     cipher: UidCipher(uid 暗号化)。
     require_account: 認証依存(成功で account_id)。None なら未認証許可(account_id=None)。
     rate_limiter: RateLimiter(register 5/h/IP)。None なら無制限。
@@ -97,9 +108,22 @@ def build_register_router(
     else:
         account_dep = require_account
 
+    def _target(host, port) -> tuple[str, int]:
+        try:
+            h, p = _coerce_host(host), _coerce_port(port)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if h is None or p is None:
+            raise HTTPException(400, "host と port は必須")
+        return h, p
+
     @router.get("/graphics")
-    async def get_graphics() -> dict:
-        registrar: LegacyRegistrar = registrar_factory()
+    async def get_graphics(
+        host: str = "",
+        port: str = "",
+        _account_id: str | None = Depends(account_dep),
+    ) -> dict:
+        registrar: LegacyRegistrar = registrar_factory(*_target(host, port))
         try:
             graphics = await registrar.fetch_graphics()
         except RegisterTransport as exc:
@@ -120,8 +144,10 @@ def build_register_router(
             if not rate_limiter.allow("register", ip):
                 raise HTTPException(429, "登録レート超過(5/時/IP)")
 
+        host, port = _target(body.get("host"), body.get("port"))
         name = str(body.get("name", ""))
-        password = str(body.get("pass", ""))
+        # 省略時は BE が決める。uid は暗号化して保存するので利用者は覚えなくてよい。
+        password = str(body.get("pass", "") or "") or _random_pass()
         mail = str(body.get("mail", "") or "")
         try:
             image_index = int(body.get("imageIndex"))
@@ -136,7 +162,7 @@ def build_register_router(
                 detail={"error": {"code": "REGISTER_REJECT", "fields": bad}},
             )
 
-        registrar: LegacyRegistrar = registrar_factory()
+        registrar: LegacyRegistrar = registrar_factory(host, port)
         try:
             result = await registrar.register(name, password, image_index, mail)
         except RegisterReject as exc:
@@ -149,14 +175,17 @@ def build_register_router(
 
         # 内部 charId(レガシー char_id とは別の内部識別子)。
         char_id = uuid.uuid4().hex
-        # uid 捕捉時のみ暗号化保存(Q-R5-1: 無通知時 None)。
-        uid_enc = cipher.encrypt(result.uid) if result.uid else None
+        if not result.uid:
+            raise HTTPException(502, "登録代行失敗: uid を受け取れなかった")
+        uid_enc = cipher.encrypt(result.uid)
         try:
             store.create_character(
                 char_id,
                 account_id or "",
                 label=result.name,
                 phi_uid_enc=uid_enc,
+                host=host,
+                port=port,
             )
         except Exception as exc:  # noqa: BLE001 - FK 等
             # L-4: 内部例外文字列はレスポンスに載せず、詳細はサーバログのみ。

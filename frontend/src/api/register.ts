@@ -1,9 +1,9 @@
 /**
  * F12 登録REST クライアント([12]§2.3)。
  *
- * - GET  /api/register/graphics → 初期グラ一覧(BEが`#ex-get REGINFO IMG`取得しキャッシュ)。
- * - POST /api/register {name, pass(6), imageIndex, mail?} → BEが`#ex-register`代行。
- *   成功: {charId, name} / 失敗: {error:{code:"REGISTER_REJECT", fields:[...]}}。
+ * - GET  /api/register/graphics?host=&port= → 登録先サーバの初期グラ一覧(BEが`#ex-get REGINFO IMG`)。
+ * - POST /api/register {host, port, name, pass?(6), imageIndex, mail?} → BEが`#ex-register`代行。
+ *   成功: {charId, name} / 失敗: {detail:{error:{code:"REGISTER_REJECT", fields:[...]}}}。
  *
  * fetch ベース。テストでは fetch を差し替え可。
  * 保護APIは Authorization: Bearer <token>(localStorage)を付与(A-33)。
@@ -20,9 +20,12 @@ export interface RegisterGraphic {
 
 /** POST /api/register リクエストボディ([12]§2.3)。 */
 export interface RegisterRequestBody {
+  /** 登録先サーバ。作成したキャラはこの host:port で characters に入る。 */
+  host: string;
+  port: number;
   name: string;
-  /** 正確に6文字([12]§2.1)。 */
-  pass: string;
+  /** 正確に6文字([12]§2.1)。省略時は BE がランダムに決める。 */
+  pass?: string;
   /** 初期グラ索引(graphics 配列位置)。 */
   imageIndex: number;
   /** メール(任意)。 */
@@ -71,22 +74,24 @@ function authHeaders(base: Record<string, string>): Record<string, string> {
 
 /**
  * 初期グラ一覧取得。
- * BE応答は `{graphics: string[]}`(順序付き名前配列)想定。配列直返しも許容。
+ * BE応答は `{graphics: [{index, graName}]}`。
  */
 export async function fetchRegisterGraphics(
+  host: string,
+  port: number,
   fetchImpl?: FetchLike,
 ): Promise<RegisterGraphic[]> {
   const f = resolveFetch(fetchImpl);
-  const res = await f('/api/register/graphics', {
+  const q = new URLSearchParams({ host, port: String(port) });
+  const res = await f(`/api/register/graphics?${q}`, {
     method: 'GET',
     headers: authHeaders({ Accept: 'application/json' }),
   });
   if (!res.ok) {
     throw new Error(`グラ一覧取得に失敗しました (HTTP ${res.status})`);
   }
-  const body = (await res.json()) as { graphics?: string[] } | string[];
-  const names = Array.isArray(body) ? body : (body.graphics ?? []);
-  return names.map((gra, index) => ({ index, gra }));
+  const body = (await res.json()) as { graphics?: { index: number; graName: string }[] };
+  return (body.graphics ?? []).map((g) => ({ index: g.index, gra: g.graName }));
 }
 
 /**
@@ -107,18 +112,22 @@ export async function postRegister(
     body: JSON.stringify(body),
   });
   const data = (await res.json().catch(() => null)) as
-    | (RegisterSuccess & { error?: RegisterErrorDetail })
-    | { error?: RegisterErrorDetail }
+    | (Partial<RegisterSuccess> & { detail?: string | { error?: RegisterErrorDetail } })
     | null;
 
-  if (!res.ok || (data && 'error' in data && data.error)) {
-    const detail = (data && 'error' in data && data.error) || {
-      code: 'INTERNAL',
-      message: `登録に失敗しました (HTTP ${res.status})`,
-    };
-    throw new RegisterError(detail);
+  if (!res.ok) {
+    // FastAPI の HTTPException は {detail: ...}。reject は detail.error、それ以外は文字列。
+    const d = data?.detail;
+    throw new RegisterError(
+      typeof d === 'object' && d?.error
+        ? d.error
+        : {
+            code: 'INTERNAL',
+            message: typeof d === 'string' ? d : `登録に失敗しました (HTTP ${res.status})`,
+          },
+    );
   }
-  if (!data || !('charId' in data)) {
+  if (!data?.charId || !data.name) {
     throw new RegisterError({ code: 'INTERNAL', message: '不正な応答' });
   }
   return { charId: data.charId, name: data.name };

@@ -34,7 +34,7 @@ WebSocket(ゲーム本体の通信)は対象外 → [07-ws-protocol.md](07-ws-pr
 - register: パスワードは8文字以上(未満 `400`)、既存 accountId は `409`。
   **アカウント0件の状態での初回登録は自動的に管理者化**(`isAdmin:true`)。
 - login: 失敗 `401`、総当たり抑止で `429`(account+IP レート)。
-- token 期限: idle 30分 / absolute 24h(超過で失効、`401`)。
+- token 期限: idle 30日 / absolute 30日(超過で失効、`401`)。
 
 ## 2. キャラクター `/api/characters`(要認証・所有検証)
 
@@ -52,12 +52,15 @@ WebSocket(ゲーム本体の通信)は対象外 → [07-ws-protocol.md](07-ws-pr
 
 | メソッド | パス | 認可 | body | 応答 |
 |----|----|----|----|----|
-| GET | `/api/register/graphics` | 要認証 | — | `{graphics:[{index, graName}]}` |
-| POST | `/api/register` | 要認証 | `{name, pass, imageIndex, mail?}` | `{charId, name}` |
+| GET | `/api/register/graphics?host=&port=` | 要認証 | — | `{graphics:[{index, graName}]}` |
+| POST | `/api/register` | 要認証 | `{host, port, name, pass?, imageIndex, mail?}` | `{charId, name}` |
 
-- レガシーサーバへ `#ex-register` を代行送出。レート 5/時/IP(超過 `429`)。
-- 入力検証失敗/サーバ拒否は `400`(`{detail:{error:{code:"REGISTER_REJECT", fields}}}`)。
-  レガシー通信失敗は `502`。
+- 指定した host:port のレガシーサーバへ `#ex-register` を代行送出。レート 5/時/IP(超過 `429`)。
+- `pass` 省略時は BE が6字の英数字をランダムに決めて送る。`mail` も省略可。
+- 成功時はサーバが返す `#set-user-id` の uid を暗号化し、host:port 付きで characters へ入れる。
+- host/port 欠落・不正、入力検証失敗は `400`。サーバ拒否も `400`(`{detail:{error:{code:"REGISTER_REJECT", fields}}}`)。
+  レガシー通信失敗と uid 未受信は `502`。
+- サーバ側は `phi.td` の `:O` 行に `A <x> <y> <世界識別子>` が無いと uid を組めず、常に `pass` で拒否する。
 
 ## 4. キャラグラフィック `/api/chara`
 

@@ -533,7 +533,7 @@ def create_app(
 
     引数:
     - assets_dir       : キャラグラ保存先(既定 env `PHI_ASSETS_DIR` or `./assets`)。
-    - registrar_factory: () -> LegacyRegistrar(既定は env のレガシー接続情報)。
+    - registrar_factory: (host, port) -> LegacyRegistrar(既定は LegacyRegistrar)。
     - rate_limiter     : RateLimiter(既定で生成)。
     - conn_limiter     : ConcurrencyLimiter(既定で生成)。
 
@@ -674,12 +674,7 @@ def create_app(
     ))
 
     if registrar_factory is None:  # pragma: no cover - 統合層(本番起動)
-        from app.register import LegacyRegistrar
-        reg_host = os.environ.get("PHI_HOST", "")
-        reg_port = int(os.environ.get("PHI_PORT", "0") or 0)
-
-        def registrar_factory():  # type: ignore[misc]
-            return LegacyRegistrar(reg_host, reg_port)
+        from app.register import LegacyRegistrar as registrar_factory
 
     app.include_router(build_register_router(
         store, registrar_factory, auth.cipher,
